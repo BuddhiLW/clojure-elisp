@@ -137,6 +137,34 @@ Examples:
       new))
    (t (error "clel-into: unsupported target collection type: %s" (type-of to)))))
 
+;;; Collection Predicates
+
+(defun clel-coll-p (x)
+  "Return t if X is a collection (list, vector, or hash-table)."
+  (or (listp x) (vectorp x) (hash-table-p x)))
+
+(defun clel-sequential-p (x)
+  "Return t if X is sequential (list or vector)."
+  (or (listp x) (vectorp x)))
+
+(defun clel-associative-p (x)
+  "Return t if X is associative (list or hash-table)."
+  (or (listp x) (hash-table-p x)))
+
+;;; Boolean/Nil Predicates
+
+(defun clel-some-p (x)
+  "Return t if X is not nil."
+  (not (null x)))
+
+(defun clel-true-p (x)
+  "Return t if X is exactly t."
+  (eq x t))
+
+(defun clel-false-p (x)
+  "Return t if X is exactly nil."
+  (null x))
+
 ;;; String Operations
 
 (defun clel-str (&rest args)

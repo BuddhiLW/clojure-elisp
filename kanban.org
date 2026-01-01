@@ -3,14 +3,15 @@
 #+TODO: TODO IN-PROGRESS IN-REVIEW | DONE CANCELLED
 
 * Backlog
-** TODO Add more predicate functions to runtime
+** DONE Add more predicate functions to runtime
 :PROPERTIES:
 :ID: clel-014
 :PRIORITY: C
 :END:
-- zero?, pos?, neg?, even?, odd?
-- some?, true?, false?
-- coll?, sequential?, associative?
+- zero?, pos?, neg?, even?, odd? → zerop, cl-plusp, cl-minusp, cl-evenp, cl-oddp
+- some?, true?, false? → clel-some-p, clel-true-p, clel-false-p
+- coll?, sequential?, associative? → clel-coll-p, clel-sequential-p, clel-associative-p
+- 90 tests, 556 assertions total
 
 ** TODO Implement atom watch functions
 :PROPERTIES:

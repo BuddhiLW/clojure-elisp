@@ -71,6 +71,23 @@
    'fn? "functionp"
    'keyword? "keywordp"
 
+   ;; Numeric predicates
+   'zero? "zerop"
+   'pos? "cl-plusp"
+   'neg? "cl-minusp"
+   'even? "cl-evenp"
+   'odd? "cl-oddp"
+
+;; Collection predicates
+   'coll? "clel-coll-p"
+   'sequential? "clel-sequential-p"
+   'associative? "clel-associative-p"
+
+   ;; Boolean/nil predicates
+   'some? "clel-some-p"
+   'true? "clel-true-p"
+   'false? "clel-false-p"
+
    ;; Collections
    'first "car"
    'rest "cdr"
