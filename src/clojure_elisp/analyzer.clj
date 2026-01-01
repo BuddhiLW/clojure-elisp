@@ -93,12 +93,12 @@
             params-vec (if (vector? params) params (first params))
             {:keys [simple-params rest-param destructure-bindings all-locals]}
             (process-fn-params params-vec)
-            
+
             ;; Build effective params for AST
             effective-params (if rest-param
                                (conj simple-params '& rest-param)
                                simple-params)
-            
+
             ;; Wrap body in let if destructuring needed
             effective-body
             (if (seq destructure-bindings)
@@ -152,7 +152,6 @@
 ;; ============================================================================
 ;; Destructuring Support
 ;; ============================================================================
-
 
 (defn destructure-pattern?
   "Returns true if pattern requires destructuring (is a vector or map)."
@@ -427,11 +426,41 @@
                                   {:test (analyze test)
                                    :expr (analyze expr)})))))
 
+(defn analyze-case
+  "Analyze (case expr clause...) forms.
+   Clauses are test-val expr pairs, with optional default at the end."
+  [[_ expr & clauses]]
+  (let [;; If odd number of clauses, last is default
+        has-default? (odd? (count clauses))
+        pairs (if has-default?
+                (partition 2 (butlast clauses))
+                (partition 2 clauses))
+        default (when has-default? (last clauses))]
+    (ast-node :case
+              :expr (analyze expr)
+              :clauses (mapv (fn [[test-val result]]
+                               {:test test-val ;; Keep raw value, not analyzed (it's a constant)
+                                :expr (analyze result)})
+                             pairs)
+              :default (when default (analyze default)))))
+
 (defn analyze-do
   "Analyze (do expr...) forms."
   [[_ & body]]
   (ast-node :do
             :body (mapv analyze body)))
+
+(defn analyze-and
+  "Analyze (and expr...) forms for short-circuit evaluation."
+  [[_ & exprs]]
+  (ast-node :and
+            :exprs (mapv analyze exprs)))
+
+(defn analyze-or
+  "Analyze (or expr...) forms for short-circuit evaluation."
+  [[_ & exprs]]
+  (ast-node :or
+            :exprs (mapv analyze exprs)))
 
 (defn analyze-ns
   "Analyze (ns name ...) forms."
@@ -522,6 +551,26 @@
               :exception analyzed-ex
               :exception-type ex-type)))
 
+(defn analyze-letfn
+  "Analyze (letfn [(name [params] body)...] body) forms.
+   Creates local recursive function bindings that can reference each other."
+  [[_ fn-specs & body]]
+  (let [;; First pass: collect all function names for mutual recursion
+        fn-names (mapv first fn-specs)
+        ;; Add all fn names to environment before analyzing bodies
+        new-env (with-locals *env* (set fn-names))
+        ;; Analyze each function spec
+        fns (binding [*env* new-env]
+              (mapv (fn [[fname params & fn-body]]
+                      {:name fname
+                       :params (vec params)
+                       :body (mapv analyze fn-body)})
+                    fn-specs))]
+    (ast-node :letfn
+              :fns fns
+              :body (binding [*env* new-env]
+                      (mapv analyze body)))))
+
 ;; ============================================================================
 ;; Collection Analyzers
 ;; ============================================================================
@@ -568,10 +617,14 @@
    'fn* analyze-fn
    'let analyze-let
    'let* analyze-let
+   'letfn analyze-letfn
    'if analyze-if
    'when analyze-when
    'cond analyze-cond
+   'case analyze-case
    'do analyze-do
+   'and analyze-and
+   'or analyze-or
    'ns analyze-ns
    'quote analyze-quote
    'loop analyze-loop

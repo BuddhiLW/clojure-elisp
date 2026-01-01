@@ -167,7 +167,6 @@
     (let [result (analyze-and-emit '(defn nil? [x] x))]
       (is (clojure.string/includes? result "nil-p")))))
 
-
 (deftest emit-defn-multi-arity-test
   (testing "multi-arity defn emits cl-case dispatch"
     (let [result (analyze-and-emit '(defn foo ([x] x) ([x y] (+ x y))))]
@@ -261,6 +260,24 @@
       (is (clojure.string/includes? result "(t 1)"))
       (is (clojure.string/includes? result "(nil 2)")))))
 
+(deftest emit-case-test
+  (testing "case without default"
+    (let [result (analyze-and-emit '(case x :a 1 :b 2))]
+      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result ":a"))
+      (is (clojure.string/includes? result ":b"))))
+
+  (testing "case with default"
+    (let [result (analyze-and-emit '(case x :a 1 :b 2 :default-val))]
+      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "(t :default-val)"))))
+
+  (testing "case with numeric tests"
+    (let [result (analyze-and-emit '(case n 1 "one" 2 "two" "other"))]
+      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "(1 \"one\")"))
+      (is (clojure.string/includes? result "(t \"other\")")))))
+
 ;; ============================================================================
 ;; do
 ;; ============================================================================
@@ -272,6 +289,22 @@
       (is (clojure.string/includes? result "1"))
       (is (clojure.string/includes? result "2"))
       (is (clojure.string/includes? result "3")))))
+
+(deftest emit-and-test
+  (testing "and emits Elisp and form"
+    (is (= "(and a b c)" (analyze-and-emit '(and a b c)))))
+  (testing "empty and returns t"
+    (is (= "t" (analyze-and-emit '(and)))))
+  (testing "and with single expression"
+    (is (= "(and t)" (analyze-and-emit '(and true))))))
+
+(deftest emit-or-test
+  (testing "or emits Elisp or form"
+    (is (= "(or a b c)" (analyze-and-emit '(or a b c)))))
+  (testing "empty or returns nil"
+    (is (= "nil" (analyze-and-emit '(or)))))
+  (testing "or with single expression"
+    (is (= "(or nil)" (analyze-and-emit '(or false))))))
 
 ;; ============================================================================
 ;; ns
@@ -293,6 +326,25 @@
     (let [result (analyze-and-emit '(loop [x 0] x))]
       (is (clojure.string/includes? result "cl-labels"))
       (is (clojure.string/includes? result "recur")))))
+
+(deftest emit-letfn-test
+  (testing "letfn emits cl-labels"
+    (let [result (analyze-and-emit '(letfn [(foo [x] (+ x 1))] (foo 5)))]
+      (is (clojure.string/includes? result "cl-labels"))
+      (is (clojure.string/includes? result "foo"))))
+
+  (testing "letfn with mutual recursion"
+    (let [result (analyze-and-emit '(letfn [(a [x] (b x))
+                                            (b [y] (+ y 1))]
+                                      (a 5)))]
+      (is (clojure.string/includes? result "cl-labels"))
+      (is (clojure.string/includes? result "(a (x)"))
+      (is (clojure.string/includes? result "(b (y)"))))
+
+  (testing "letfn with predicate function names"
+    (let [result (analyze-and-emit '(letfn [(even? [n] n)] (even? 2)))]
+      ;; Function name should be mangled: even? -> even-p
+      (is (clojure.string/includes? result "even-p")))))
 
 (deftest emit-recur-test
   (testing "recur call"

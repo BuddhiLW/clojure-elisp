@@ -57,8 +57,8 @@
 
    ;; Logic
    'not "not"
-   'and "and"
-   'or "or"
+   ;; NOTE: 'and and 'or are special forms (for short-circuit evaluation),
+   ;; handled in analyzer.clj and emitted via emit-node :and/:or
 
    ;; Type predicates
    'nil? "null"
@@ -305,6 +305,21 @@
         body-str (str/join "\n    " (map emit body))]
     (format "(let* %s\n    %s)" bindings-block body-str)))
 
+(defmethod emit-node :letfn
+  [{:keys [fns body]}]
+  (let [fn-strs (map (fn [{:keys [name params body]}]
+                       (let [param-str (str/join " " (map mangle-name params))
+                             body-str (str/join "\n      " (map emit body))]
+                         (format "(%s (%s)\n      %s)"
+                                 (mangle-name name)
+                                 param-str
+                                 body-str)))
+                     fns)
+        body-str (str/join "\n  " (map emit body))]
+    (format "(cl-labels (%s)\n  %s)"
+            (str/join "\n            " fn-strs)
+            body-str)))
+
 (defmethod emit-node :if
   [{:keys [test then else]}]
   (if else
@@ -324,9 +339,35 @@
                          clauses)]
     (format "(cond\n  %s)" (str/join "\n  " clause-strs))))
 
+(defmethod emit-node :case
+  [{:keys [expr clauses default]}]
+  (let [clause-strs (map (fn [{:keys [test expr]}]
+                           (format "(%s %s)"
+                                   (emit {:op :const :val test :type (type test)})
+                                   (emit expr)))
+                         clauses)
+        all-clauses (if default
+                      (conj (vec clause-strs) (format "(t %s)" (emit default)))
+                      clause-strs)]
+    (format "(cl-case %s\n  %s)"
+            (emit expr)
+            (str/join "\n  " all-clauses))))
+
 (defmethod emit-node :do
   [{:keys [body]}]
   (format "(progn\n  %s)" (str/join "\n  " (map emit body))))
+
+(defmethod emit-node :and
+  [{:keys [exprs]}]
+  (if (empty? exprs)
+    "t" ;; (and) returns true in Clojure
+    (format "(and %s)" (str/join " " (map emit exprs)))))
+
+(defmethod emit-node :or
+  [{:keys [exprs]}]
+  (if (empty? exprs)
+    "nil" ;; (or) returns nil in Clojure
+    (format "(or %s)" (str/join " " (map emit exprs)))))
 
 (defmethod emit-node :ns
   [{:keys [name clauses]}]

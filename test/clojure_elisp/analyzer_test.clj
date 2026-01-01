@@ -194,7 +194,6 @@
       (is (= :defn (:op result)))
       (is (= 2 (count (:body result)))))))
 
-
 (deftest analyze-defn-multi-arity-test
   (testing "multi-arity defn"
     (let [result (analyze '(defn foo ([x] x) ([x y] (+ x y))))]
@@ -345,6 +344,30 @@
       (is (= :cond (:op result)))
       (is (empty? (:clauses result))))))
 
+(deftest analyze-case-test
+  (testing "case with keyword tests"
+    (let [ast (analyze '(case x :a 1 :b 2))]
+      (is (= :case (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (nil? (:default ast)))))
+
+  (testing "case with default"
+    (let [ast (analyze '(case x :a 1 :b 2 :unknown))]
+      (is (= :case (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (some? (:default ast)))
+      (is (= :const (get-in ast [:default :op])))))
+
+  (testing "case with single clause and default"
+    (let [ast (analyze '(case x :only 42 :fallback))]
+      (is (= :case (:op ast)))
+      (is (= 1 (count (:clauses ast))))
+      (is (some? (:default ast)))))
+
+  (testing "case expr is analyzed"
+    (let [ast (analyze '(case (+ 1 2) :a 1))]
+      (is (= :invoke (get-in ast [:expr :op]))))))
+
 ;; ============================================================================
 ;; Special Forms - do
 ;; ============================================================================
@@ -363,6 +386,34 @@
       (is (= :do (:op result)))
       (is (= 2 (count (:body result)))))))
 
+(deftest analyze-and-test
+  (testing "and with multiple expressions"
+    (let [ast (analyze '(and a b c))]
+      (is (= :and (:op ast)))
+      (is (= 3 (count (:exprs ast))))))
+  (testing "empty and"
+    (let [ast (analyze '(and))]
+      (is (= :and (:op ast)))
+      (is (empty? (:exprs ast)))))
+  (testing "and with single expression"
+    (let [ast (analyze '(and true))]
+      (is (= :and (:op ast)))
+      (is (= 1 (count (:exprs ast)))))))
+
+(deftest analyze-or-test
+  (testing "or with multiple expressions"
+    (let [ast (analyze '(or a b c))]
+      (is (= :or (:op ast)))
+      (is (= 3 (count (:exprs ast))))))
+  (testing "empty or"
+    (let [ast (analyze '(or))]
+      (is (= :or (:op ast)))
+      (is (empty? (:exprs ast)))))
+  (testing "or with single expression"
+    (let [ast (analyze '(or false))]
+      (is (= :or (:op ast)))
+      (is (= 1 (count (:exprs ast)))))))
+
 ;; ============================================================================
 ;; Special Forms - loop/recur
 ;; ============================================================================
@@ -378,6 +429,39 @@
     (let [result (analyze '(loop [a 1 b 2] (+ a b)))]
       (is (= :loop (:op result)))
       (is (= 2 (count (:bindings result)))))))
+
+(deftest analyze-letfn-test
+  (testing "letfn with single function"
+    (let [ast (analyze '(letfn [(foo [x] (+ x 1))] (foo 5)))]
+      (is (= :letfn (:op ast)))
+      (is (= 1 (count (:fns ast))))
+      (is (= 'foo (get-in ast [:fns 0 :name])))
+      (is (= '[x] (get-in ast [:fns 0 :params])))))
+
+  (testing "letfn with mutually recursive functions"
+    (let [ast (analyze '(letfn [(even? [n] (if (= n 0) true (odd? (- n 1))))
+                                (odd? [n] (if (= n 0) false (even? (- n 1))))]
+                          (even? 10)))]
+      (is (= :letfn (:op ast)))
+      (is (= 2 (count (:fns ast))))
+      (is (= '[even? odd?] (mapv :name (:fns ast))))))
+
+  (testing "letfn function names are in scope in bodies"
+    (let [ast (analyze '(letfn [(a [x] (b x))
+                                (b [y] y)]
+                          (a 1)))]
+      ;; In 'a's body, 'b' should be resolved as a local
+      (let [a-body (get-in ast [:fns 0 :body 0])
+            b-ref (get-in a-body [:fn])]
+        (is (= :local (:op b-ref)))
+        (is (= 'b (:name b-ref))))))
+
+  (testing "letfn function names are in scope in main body"
+    (let [ast (analyze '(letfn [(foo [x] x)] (foo 5)))]
+      (let [body-invoke (first (:body ast))
+            foo-ref (:fn body-invoke)]
+        (is (= :local (:op foo-ref)))
+        (is (= 'foo (:name foo-ref)))))))
 
 (deftest analyze-recur-test
   (testing "simple recur"
