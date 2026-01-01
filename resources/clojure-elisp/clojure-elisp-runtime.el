@@ -102,6 +102,28 @@
       pairs))
    (t nil)))
 
+(defun clel-into (to from)
+  "Add all items FROM collection into TO collection.
+Supports vectors, lists, and hash-tables.
+Examples:
+  (clel-into [] '(1 2 3)) => [1 2 3]
+  (clel-into '() [1 2 3]) => (1 2 3)
+  (clel-into {} '((:a . 1) (:b . 2))) => hash-table"
+  (cond
+   ;; into vector
+   ((vectorp to)
+    (vconcat to (if (vectorp from) from (apply #'vector (clel-seq from)))))
+   ;; into list
+   ((listp to)
+    (append to (if (listp from) from (append (clel-seq from) nil))))
+   ;; into hash-table
+   ((hash-table-p to)
+    (let ((new (copy-hash-table to)))
+      (dolist (pair (clel-seq from))
+        (puthash (car pair) (cdr pair) new))
+      new))
+   (t (error "clel-into: unsupported target collection type: %s" (type-of to)))))
+
 ;;; String Operations
 
 (defun clel-str (&rest args)

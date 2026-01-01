@@ -317,6 +317,32 @@
       (is (clojure.string/includes? result "lexical-binding: t"))
       (is (clojure.string/includes? result "clojure-elisp-runtime")))))
 
+(deftest emit-ns-require-test
+  (testing "emits require for simple dependency"
+    (let [code (analyze-and-emit '(ns my.app (:require [foo.bar])))]
+      (is (clojure.string/includes? code "(require 'foo-bar)"))))
+
+  (testing "emits require with alias"
+    (let [code (analyze-and-emit '(ns my.app (:require [foo.bar :as fb])))]
+      (is (clojure.string/includes? code "(require 'foo-bar)"))))
+
+  (testing "emits require for bare symbol"
+    (let [code (analyze-and-emit '(ns my.app (:require clojure.set)))]
+      (is (clojure.string/includes? code "(require 'clojure-set)"))))
+
+  (testing "emits multiple requires"
+    (let [code (analyze-and-emit '(ns my.app
+                                    (:require [foo.bar :as fb]
+                                              [baz.qux :as bq])))]
+      (is (clojure.string/includes? code "(require 'foo-bar)"))
+      (is (clojure.string/includes? code "(require 'baz-qux)"))))
+
+  (testing "ns header structure"
+    (let [code (analyze-and-emit '(ns my.app (:require [foo.bar])))]
+      (is (clojure.string/includes? code ";;; my-app.el"))
+      (is (clojure.string/includes? code "lexical-binding: t"))
+      (is (clojure.string/includes? code "(require 'clojure-elisp-runtime)")))))
+
 ;; ============================================================================
 ;; loop/recur
 ;; ============================================================================
@@ -451,3 +477,35 @@
     (let [result (analyze-and-emit "hello world")]
       (is (clojure.string/starts-with? result "\""))
       (is (clojure.string/ends-with? result "\"")))))
+
+;; ============================================================================
+;; Multimethods - defmulti/defmethod
+;; ============================================================================
+
+(deftest emit-defmulti-test
+  (testing "defmulti emits cl-defgeneric"
+    (let [code (analyze-and-emit '(defmulti area :shape))]
+      (is (clojure.string/includes? code "cl-defgeneric"))
+      (is (clojure.string/includes? code "area"))))
+
+  (testing "defmulti with function dispatch"
+    (let [code (analyze-and-emit '(defmulti process class))]
+      (is (clojure.string/includes? code "cl-defgeneric"))
+      (is (clojure.string/includes? code "process")))))
+
+(deftest emit-defmethod-test
+  (testing "defmethod emits cl-defmethod with eql"
+    (let [code (analyze-and-emit '(defmethod area :circle [{:keys [r]}] (* 3.14 r r)))]
+      (is (clojure.string/includes? code "cl-defmethod"))
+      (is (clojure.string/includes? code "eql"))
+      (is (clojure.string/includes? code ":circle"))))
+
+  (testing "defmethod with :default dispatch"
+    (let [code (analyze-and-emit '(defmethod area :default [shape] 0))]
+      (is (clojure.string/includes? code "cl-defmethod"))
+      (is (clojure.string/includes? code "(arg t)")))) ;; :default maps to t in elisp
+
+  (testing "defmethod body is emitted"
+    (let [code (analyze-and-emit '(defmethod area :rectangle [{:keys [w h]}] (* w h)))]
+      (is (clojure.string/includes? code "*")))))
+

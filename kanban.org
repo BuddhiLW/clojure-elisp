@@ -3,30 +3,6 @@
 #+TODO: TODO IN-PROGRESS IN-REVIEW | DONE CANCELLED
 
 * Backlog
-** TODO Implement defmulti/defmethod
-:PROPERTIES:
-:ID: clel-009
-:PRIORITY: B
-:END:
-Basic polymorphism support using Elisp cl-defgeneric/cl-defmethod or custom dispatch
-
-** TODO Proper namespace :require handling
-:PROPERTIES:
-:ID: clel-011
-:PRIORITY: B
-:END:
-Parse (:require [foo.bar :as fb :refer [baz]])
-- Track aliases in *env*
-- Resolve qualified symbols fb/something
-- Emit proper (require 'foo-bar)
-
-** TODO Add clel-into to runtime
-:PROPERTIES:
-:ID: clel-012
-:PRIORITY: B
-:END:
-(into [] coll), (into {} pairs), (into #{} coll)
-
 ** TODO Add clel-dissoc to runtime
 :PROPERTIES:
 :ID: clel-013
@@ -187,5 +163,31 @@ Optionally emit comments with source locations
 - Short-circuit evaluation using native Elisp and/or
 - Empty (and) → t, empty (or) → nil (Clojure semantics)
 - 79 tests, 449 assertions
+
+** DONE Implement defmulti/defmethod
+:PROPERTIES:
+:ID: clel-009
+:END:
+- Analyzer: analyze-defmulti, analyze-defmethod added
+- Emitter: cl-defgeneric for defmulti, cl-defmethod with eql type dispatch
+- :default dispatch maps to t (catch-all)
+- Destructuring in defmethod params supported
+
+** DONE Proper namespace :require handling
+:PROPERTIES:
+:ID: clel-011
+:END:
+- parse-require-spec handles :as, :refer options
+- analyze-ns extracts :requires from ns form
+- Emitter uses parsed requires for (require 'ns) statements
+- Supports multiple require clauses
+
+** DONE Add clel-into to runtime
+:PROPERTIES:
+:ID: clel-012
+:END:
+- clel-into function in clojure-elisp-runtime.el
+- Supports vectors (into [] coll), lists (into '() coll), hash-tables
+- 86 tests, 509 assertions total
 
 * Cancelled

@@ -502,6 +502,44 @@
       (is (= 'my.namespace (:name result)))
       (is (seq (:clauses result))))))
 
+(deftest analyze-ns-require-test
+  (testing "parse simple require"
+    (let [ast (analyze '(ns my.app (:require [clojure.string])))]
+      (is (= 1 (count (:requires ast))))
+      (is (= 'clojure.string (get-in ast [:requires 0 :ns])))))
+
+  (testing "parse bare symbol require"
+    (let [ast (analyze '(ns my.app (:require clojure.set)))]
+      (is (= 1 (count (:requires ast))))
+      (is (= 'clojure.set (get-in ast [:requires 0 :ns])))))
+
+  (testing "parse require with :as"
+    (let [ast (analyze '(ns my.app (:require [clojure.string :as str])))]
+      (is (= 'str (get-in ast [:requires 0 :as])))))
+
+  (testing "parse require with :refer"
+    (let [ast (analyze '(ns my.app (:require [clojure.string :refer [join split]])))]
+      (is (= '[join split] (get-in ast [:requires 0 :refer])))))
+
+  (testing "parse require with :as and :refer"
+    (let [ast (analyze '(ns my.app (:require [clojure.string :as str :refer [join]])))]
+      (is (= 'str (get-in ast [:requires 0 :as])))
+      (is (= '[join] (get-in ast [:requires 0 :refer])))))
+
+  (testing "parse multiple requires"
+    (let [ast (analyze '(ns my.app
+                          (:require [clojure.string :as str]
+                                    [clojure.set :as set])))]
+      (is (= 2 (count (:requires ast))))
+      (is (= 'clojure.string (get-in ast [:requires 0 :ns])))
+      (is (= 'clojure.set (get-in ast [:requires 1 :ns])))))
+
+  (testing "parse multiple require clauses"
+    (let [ast (analyze '(ns my.app
+                          (:require [clojure.string :as str])
+                          (:require [clojure.set :as set])))]
+      (is (= 2 (count (:requires ast)))))))
+
 ;; ============================================================================
 ;; Function Invocation
 ;; ============================================================================
@@ -547,3 +585,54 @@
       (is (map? (:env result)))
       (is (contains? (:env result) :ns))
       (is (contains? (:env result) :locals)))))
+
+;; ============================================================================
+;; Multimethods - defmulti/defmethod
+;; ============================================================================
+
+(deftest analyze-defmulti-test
+  (testing "basic defmulti with keyword dispatch"
+    (let [ast (analyze '(defmulti area :shape))]
+      (is (= :defmulti (:op ast)))
+      (is (= 'area (:name ast)))
+      (is (= :const (get-in ast [:dispatch-fn :op])))
+      (is (= :keyword (get-in ast [:dispatch-fn :type])))))
+
+  (testing "defmulti with function dispatch"
+    (let [ast (analyze '(defmulti dispatch-example class))]
+      (is (= :defmulti (:op ast)))
+      (is (= 'dispatch-example (:name ast)))
+      (is (= :var (get-in ast [:dispatch-fn :op])))))
+
+  (testing "defmulti with lambda dispatch"
+    (let [ast (analyze '(defmulti complex-dispatch (fn [x] (:type x))))]
+      (is (= :defmulti (:op ast)))
+      (is (= :fn (get-in ast [:dispatch-fn :op]))))))
+
+(deftest analyze-defmethod-test
+  (testing "basic defmethod with keyword dispatch value"
+    (let [ast (analyze '(defmethod area :rectangle [{:keys [w h]}] (* w h)))]
+      (is (= :defmethod (:op ast)))
+      (is (= 'area (:name ast)))
+      (is (= :rectangle (:dispatch-val ast)))
+      (is (vector? (:params ast)))
+      (is (= 1 (count (:body ast))))))
+
+  (testing "defmethod with symbol dispatch value"
+    (let [ast (analyze '(defmethod process String [s] (str s)))]
+      (is (= :defmethod (:op ast)))
+      (is (= 'process (:name ast)))
+      (is (= 'String (:dispatch-val ast)))))
+
+  (testing "defmethod with :default dispatch"
+    (let [ast (analyze '(defmethod area :default [shape] 0))]
+      (is (= :defmethod (:op ast)))
+      (is (= :default (:dispatch-val ast)))))
+
+  (testing "defmethod with multiple body forms"
+    (let [ast (analyze '(defmethod area :circle [{:keys [r]}]
+                          (println "calculating circle area")
+                          (* 3.14159 r r)))]
+      (is (= :defmethod (:op ast)))
+      (is (= 2 (count (:body ast)))))))
+

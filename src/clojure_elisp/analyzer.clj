@@ -462,12 +462,35 @@
   (ast-node :or
             :exprs (mapv analyze exprs)))
 
+(defn parse-require-spec
+  "Parse a single require spec.
+   Examples:
+     clojure.string                    -> {:ns clojure.string}
+     [clojure.string]                  -> {:ns clojure.string}
+     [clojure.string :as str]          -> {:ns clojure.string :as str}
+     [clojure.string :refer [join]]    -> {:ns clojure.string :refer [join]}"
+  [spec]
+  (if (vector? spec)
+    (let [[ns-name & opts] spec
+          opts-map (apply hash-map opts)]
+      {:ns ns-name
+       :as (:as opts-map)
+       :refer (:refer opts-map)})
+    {:ns spec}))
+
 (defn analyze-ns
-  "Analyze (ns name ...) forms."
+  "Analyze (ns name ...) forms.
+   Parses :require clauses into structured data with :as and :refer options."
   [[_ ns-name & clauses]]
-  (ast-node :ns
-            :name ns-name
-            :clauses clauses))
+  (let [requires (->> clauses
+                      (filter #(and (sequential? %) (= :require (first %))))
+                      (mapcat rest)
+                      (map parse-require-spec)
+                      vec)]
+    (ast-node :ns
+              :name ns-name
+              :requires requires
+              :clauses clauses)))
 
 (defn analyze-quote
   "Analyze (quote form) forms."
@@ -571,6 +594,50 @@
               :body (binding [*env* new-env]
                       (mapv analyze body)))))
 
+(defn analyze-defmulti
+  "Analyze (defmulti name dispatch-fn & options) forms.
+   Creates a multimethod definition with a dispatch function."
+  [[_ name dispatch-fn & options]]
+  (ast-node :defmulti
+            :name name
+            :dispatch-fn (analyze dispatch-fn)
+            :options options))
+
+(defn analyze-defmethod
+  "Analyze (defmethod name dispatch-val [params] body) forms.
+   Creates a method implementation for a multimethod."
+  [[_ name dispatch-val params & body]]
+  (let [;; Handle destructuring in params - use 'arg' as the single param name
+        has-destructure? (destructure-pattern? params)
+        expanded-pairs (if has-destructure?
+                         (expand-destructuring params 'arg)
+                         nil)
+        ;; Analyze bindings sequentially like let does
+        binding-nodes (when has-destructure?
+                        (loop [remaining expanded-pairs
+                               nodes []
+                               env (with-locals *env* #{'arg})]
+                          (if (empty? remaining)
+                            nodes
+                            (let [[sym init] (first remaining)
+                                  analyzed (binding [*env* env]
+                                             (analyze init))
+                                  new-env (with-locals env #{sym})]
+                              (recur (rest remaining)
+                                     (conj nodes {:name sym :init analyzed})
+                                     new-env)))))
+        ;; All locals for body analysis
+        all-locals (if has-destructure?
+                     (into #{'arg} (map first expanded-pairs))
+                     #{params})]
+    (ast-node :defmethod
+              :name name
+              :dispatch-val dispatch-val
+              :params (if has-destructure? '[arg] [params])
+              :destructure-bindings binding-nodes
+              :body (binding [*env* (with-locals *env* all-locals)]
+                      (mapv analyze body)))))
+
 ;; ============================================================================
 ;; Collection Analyzers
 ;; ============================================================================
@@ -613,6 +680,8 @@
   "Map of special form symbols to their analyzers."
   {'def analyze-def
    'defn analyze-defn
+   'defmulti analyze-defmulti
+   'defmethod analyze-defmethod
    'fn analyze-fn
    'fn* analyze-fn
    'let analyze-let
