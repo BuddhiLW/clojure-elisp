@@ -63,6 +63,28 @@ Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen) → Elisp (.el
 (clel/compile-file "src/my_package.cljel" "out/my-package.el")
 ```
 
+## Progress Log
+
+### 2026-01-01: Swarm Batch Implementation
+
+**Implemented via emacs-mcp swarm (3 parallel slaves):**
+- Test infrastructure: 71 tests, 395 assertions (Kaocha)
+- Destructuring in let: vector `[a b]`, map `{:keys [x]}`, `:as`, `:or`
+- Destructuring in fn/defn params: `& rest` → `(&rest args)` with `nthcdr`
+- try/catch/finally: `condition-case` + `unwind-protect`
+- throw: `(signal 'error ...)` for ex-info, Exception., rethrow
+- Multi-arity: `cl-case` dispatch on `(length args)`
+
+**Files modified:**
+- `src/clojure_elisp/analyzer.clj` - Added special forms, destructuring expansion
+- `src/clojure_elisp/emitter.clj` - Added emit-node methods for new forms
+- `test/` - Created analyzer_test.clj, emitter_test.clj, core_test.clj
+- `kanban.org` - Task tracking
+
+**Workflow notes added to project memory:**
+- Swarm conventions (monitoring, unsticking slaves, broadcasts)
+- Session startup/wrap conventions (/catchup, /wrap, git)
+
 ## Key Mappings
 
 The `core-fn-mapping` in emitter.clj defines Clojure→Elisp translations:
