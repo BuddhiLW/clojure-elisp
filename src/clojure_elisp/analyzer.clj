@@ -607,16 +607,32 @@
   "Analyze (defmethod name dispatch-val [params] body) forms.
    Creates a method implementation for a multimethod."
   [[_ name dispatch-val params & body]]
-  (let [;; Handle destructuring in params - use 'arg' as the single param name
-        has-destructure? (destructure-pattern? params)
-        expanded-pairs (if has-destructure?
-                         (expand-destructuring params 'arg)
-                         nil)
+  (let [;; Check if any param element needs destructuring
+        ;; params is a vector like [shape] or [{:keys [w h]}]
+        has-destructure? (some destructure-pattern? params)
+        ;; For simple case, just use the params directly
+        ;; For destructuring, we need to expand each param
+        expanded-pairs (when has-destructure?
+                         ;; Create bindings for each param
+                         (loop [idx 0
+                                remaining params
+                                bindings []]
+                           (if (empty? remaining)
+                             bindings
+                             (let [param (first remaining)
+                                   arg-sym (symbol (str "arg" idx))]
+                               (if (destructure-pattern? param)
+                                 (recur (inc idx)
+                                        (rest remaining)
+                                        (into bindings (expand-destructuring param arg-sym)))
+                                 (recur (inc idx)
+                                        (rest remaining)
+                                        (conj bindings [param arg-sym])))))))
         ;; Analyze bindings sequentially like let does
         binding-nodes (when has-destructure?
                         (loop [remaining expanded-pairs
                                nodes []
-                               env (with-locals *env* #{'arg})]
+                               env (with-locals *env* (set (map #(symbol (str "arg" %)) (range (count params)))))]
                           (if (empty? remaining)
                             nodes
                             (let [[sym init] (first remaining)
@@ -626,14 +642,18 @@
                               (recur (rest remaining)
                                      (conj nodes {:name sym :init analyzed})
                                      new-env)))))
+        ;; Generate param names
+        processed-params (if has-destructure?
+                           (mapv #(symbol (str "arg" %)) (range (count params)))
+                           params)
         ;; All locals for body analysis
         all-locals (if has-destructure?
-                     (into #{'arg} (map first expanded-pairs))
-                     #{params})]
+                     (into (set processed-params) (map first expanded-pairs))
+                     (set params))]
     (ast-node :defmethod
               :name name
               :dispatch-val dispatch-val
-              :params (if has-destructure? '[arg] [params])
+              :params processed-params
               :destructure-bindings binding-nodes
               :body (binding [*env* (with-locals *env* all-locals)]
                       (mapv analyze body)))))

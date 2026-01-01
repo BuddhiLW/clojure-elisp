@@ -339,18 +339,16 @@
                     (format "(eql %s)" (emit {:op :const :val dispatch-val :type (type dispatch-val)})))
         ;; Emit body with potential destructuring
         body-str (if destructure-bindings
-                   ;; Wrap body in let* for destructuring
-                   (let [binding-strs (map (fn [[name init]]
-                                             (format "(%s %s)"
-                                                     (mangle-name name)
-                                                     (emit {:op :const :val init :type (type init)})))
+                   ;; Wrap body in let* for destructuring (bindings are already analyzed)
+                   (let [binding-strs (map (fn [{:keys [name init]}]
+                                             (format "(%s %s)" (mangle-name name) (emit init)))
                                            destructure-bindings)]
                      (format "(let* (%s)\n      %s)"
                              (str/join "\n             " binding-strs)
                              (str/join "\n      " (map emit body))))
                    (str/join "\n    " (map emit body)))]
-    (format "(cl-defmethod %s ((arg %s))\n  %s)"
-            elisp-name type-spec body-str)))
+    (format "(cl-defmethod %s ((%s %s))\n  %s)"
+            elisp-name (mangle-name (first params)) type-spec body-str)))
 
 (defmethod emit-node :if
   [{:keys [test then else]}]
