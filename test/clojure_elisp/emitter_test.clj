@@ -167,6 +167,34 @@
     (let [result (analyze-and-emit '(defn nil? [x] x))]
       (is (clojure.string/includes? result "nil-p")))))
 
+
+(deftest emit-defn-multi-arity-test
+  (testing "multi-arity defn emits cl-case dispatch"
+    (let [result (analyze-and-emit '(defn foo ([x] x) ([x y] (+ x y))))]
+      (is (clojure.string/includes? result "defun"))
+      (is (clojure.string/includes? result "foo"))
+      (is (clojure.string/includes? result "&rest args"))
+      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "(length args)"))
+      ;; Check for arity cases
+      (is (clojure.string/includes? result "(1 (let"))
+      (is (clojure.string/includes? result "(2 (let"))))
+  (testing "multi-arity with variadic uses t for catch-all"
+    (let [result (analyze-and-emit '(defn bar ([x] x) ([x & more] (cons x more))))]
+      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "(1 (let"))
+      (is (clojure.string/includes? result "(t (let"))
+      (is (clojure.string/includes? result "nthcdr")))))
+
+(deftest emit-defn-variadic-test
+  (testing "single-arity variadic uses &rest"
+    (let [result (analyze-and-emit '(defn varargs [x & rest] (cons x rest)))]
+      (is (clojure.string/includes? result "defun"))
+      (is (clojure.string/includes? result "&rest args"))
+      (is (clojure.string/includes? result "let"))
+      (is (clojure.string/includes? result "(nth 0 args)"))
+      (is (clojure.string/includes? result "nthcdr")))))
+
 ;; ============================================================================
 ;; fn (lambda)
 ;; ============================================================================

@@ -194,6 +194,57 @@
       (is (= :defn (:op result)))
       (is (= 2 (count (:body result)))))))
 
+
+(deftest analyze-defn-multi-arity-test
+  (testing "multi-arity defn"
+    (let [result (analyze '(defn foo ([x] x) ([x y] (+ x y))))]
+      (is (= :defn (:op result)))
+      (is (= 'foo (:name result)))
+      (is (true? (:multi-arity? result)))
+      (is (= 2 (count (:arities result))))
+      ;; First arity
+      (let [arity1 (first (:arities result))]
+        (is (= '[x] (:params arity1)))
+        (is (= 1 (:arity arity1)))
+        (is (false? (:variadic? arity1))))
+      ;; Second arity
+      (let [arity2 (second (:arities result))]
+        (is (= '[x y] (:params arity2)))
+        (is (= 2 (:arity arity2)))
+        (is (false? (:variadic? arity2))))))
+  (testing "multi-arity with docstring"
+    (let [result (analyze '(defn bar "A multi-arity fn" ([x] x) ([x y] (+ x y))))]
+      (is (= :defn (:op result)))
+      (is (= "A multi-arity fn" (:docstring result)))
+      (is (true? (:multi-arity? result)))
+      (is (= 2 (count (:arities result))))))
+  (testing "multi-arity with variadic"
+    (let [result (analyze '(defn baz ([x] x) ([x y] (+ x y)) ([x y & more] (apply + x y more))))]
+      (is (= :defn (:op result)))
+      (is (true? (:multi-arity? result)))
+      (is (= 3 (count (:arities result))))
+      ;; Variadic arity
+      (let [variadic-arity (last (:arities result))]
+        (is (= :variadic (:arity variadic-arity)))
+        (is (true? (:variadic? variadic-arity)))
+        (is (= '[x y] (:fixed-params variadic-arity)))
+        (is (= 'more (:rest-param variadic-arity)))))))
+
+(deftest analyze-defn-variadic-test
+  (testing "single-arity variadic"
+    (let [result (analyze '(defn varargs [x & rest] (cons x rest)))]
+      (is (= :defn (:op result)))
+      (is (true? (:variadic? result)))
+      (is (= '[x] (:fixed-params result)))
+      (is (= 'rest (:rest-param result)))
+      (is (= '[x & rest] (:params result)))))
+  (testing "variadic with no fixed params"
+    (let [result (analyze '(defn all-args [& args] args))]
+      (is (= :defn (:op result)))
+      (is (true? (:variadic? result)))
+      (is (= '[] (:fixed-params result)))
+      (is (= 'args (:rest-param result))))))
+
 ;; ============================================================================
 ;; Special Forms - fn
 ;; ============================================================================

@@ -202,15 +202,93 @@
       (emit-sexp "defvar" elisp-name "nil"))))
 
 (defmethod emit-node :defn
-  [{:keys [name docstring params body]}]
-  (let [elisp-name (mangle-name name)
-        elisp-params (str "(" (emit-list (map mangle-name params)) ")")
-        elisp-body (str/join "\n  " (map emit body))]
-    (if docstring
-      (format "(defun %s %s\n  %s\n  %s)"
-              elisp-name elisp-params (pr-str docstring) elisp-body)
-      (format "(defun %s %s\n  %s)"
-              elisp-name elisp-params elisp-body))))
+  [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param]}]
+  (let [elisp-name (mangle-name name)]
+    (cond
+      ;; Multi-arity: emit cl-case dispatch
+      multi-arity?
+      (let [;; Separate fixed and variadic arities
+            fixed-arities (filter #(not= :variadic (:arity %)) arities)
+            variadic-arity (first (filter #(= :variadic (:arity %)) arities))
+
+            ;; Helper to emit nth accessor for args list
+            nth-accessor (fn [n]
+                           (case n
+                             0 "(car args)"
+                             1 "(cadr args)"
+                             2 "(caddr args)"
+                             3 "(cadddr args)"
+                             (format "(nth %d args)" n)))
+
+            ;; Emit bindings for an arity's params
+            emit-param-bindings (fn [{:keys [params fixed-params rest-param variadic?] :as arity}]
+                                  (if variadic?
+                                    ;; Variadic: bind fixed params and rest
+                                    (let [fixed-bindings (map-indexed
+                                                          (fn [i p]
+                                                            (format "(%s %s)" (mangle-name p) (nth-accessor i)))
+                                                          fixed-params)
+                                          rest-binding (format "(%s (nthcdr %d args))"
+                                                               (mangle-name rest-param)
+                                                               (count fixed-params))]
+                                      (str/join " " (concat fixed-bindings [rest-binding])))
+                                    ;; Fixed arity: bind all params by position
+                                    (str/join " " (map-indexed
+                                                   (fn [i p]
+                                                     (format "(%s %s)" (mangle-name p) (nth-accessor i)))
+                                                   params))))
+
+            ;; Emit a single arity case clause
+            emit-arity-case (fn [{:keys [arity body] :as arity-node}]
+                              (let [bindings (emit-param-bindings arity-node)
+                                    body-str (str/join " " (map emit body))]
+                                (format "(%d (let (%s) %s))" arity bindings body-str)))
+
+            ;; Emit variadic clause (uses 't' as catch-all)
+            emit-variadic-case (fn [{:keys [fixed-params body] :as arity-node}]
+                                 (let [bindings (emit-param-bindings arity-node)
+                                       body-str (str/join " " (map emit body))]
+                                   (format "(t (let (%s) %s))" bindings body-str)))
+
+            ;; Build case clauses
+            case-clauses (concat
+                          (map emit-arity-case fixed-arities)
+                          (when variadic-arity
+                            [(emit-variadic-case variadic-arity)]))
+
+            case-body (str/join "\n    " case-clauses)]
+        (if docstring
+          (format "(defun %s (&rest args)\n  %s\n  (cl-case (length args)\n    %s))"
+                  elisp-name (pr-str docstring) case-body)
+          (format "(defun %s (&rest args)\n  (cl-case (length args)\n    %s))"
+                  elisp-name case-body)))
+
+      ;; Single-arity variadic: use &rest and let to destructure
+      variadic?
+      (let [elisp-body (str/join "\n  " (map emit body))
+            fixed-bindings (map-indexed
+                            (fn [i p]
+                              (format "(%s (nth %d args))" (mangle-name p) i))
+                            fixed-params)
+            rest-binding (format "(%s (nthcdr %d args))"
+                                 (mangle-name rest-param)
+                                 (count fixed-params))
+            all-bindings (str/join " " (concat fixed-bindings [rest-binding]))]
+        (if docstring
+          (format "(defun %s (&rest args)\n  %s\n  (let (%s)\n    %s))"
+                  elisp-name (pr-str docstring) all-bindings elisp-body)
+          (format "(defun %s (&rest args)\n  (let (%s)\n    %s))"
+                  elisp-name all-bindings elisp-body)))
+
+      ;; Single-arity non-variadic: simple defun
+      :else
+      (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
+            elisp-body (str/join "\n  " (map emit body))]
+        (if docstring
+          (format "(defun %s %s\n  %s\n  %s)"
+                  elisp-name elisp-params (pr-str docstring) elisp-body)
+          (format "(defun %s %s\n  %s)"
+                  elisp-name elisp-params elisp-body))))))
 
 (defmethod emit-node :fn
   [{:keys [params body]}]
@@ -336,6 +414,24 @@
       ;; Neither catch nor finally (just body)
       :else
       body-str)))
+
+(defmethod emit-node :throw
+  [{:keys [exception exception-type]}]
+  (case exception-type
+    :ex-info
+    (let [[msg-node data-node] (:args exception)]
+      (format "(signal 'error (list %s %s))"
+              (emit msg-node)
+              (emit data-node)))
+
+    :constructor
+    (let [[msg-node] (:args exception)]
+      (format "(signal 'error %s)" (emit msg-node)))
+
+    :rethrow
+    (format "(signal 'error %s)" (emit exception))
+
+    (format "(signal 'error %s)" (emit exception))))
 
 (defmethod emit-node :recur
   [{:keys [args]}]
