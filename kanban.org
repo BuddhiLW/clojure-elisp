@@ -3,35 +3,12 @@
 #+TODO: TODO IN-PROGRESS IN-REVIEW | DONE CANCELLED
 
 * Backlog
-** TODO Implement case special form
-:PROPERTIES:
-:ID: clel-007
-:PRIORITY: B
-:END:
-(case x :a 1 :b 2 :default) -> (cl-case x (:a 1) (:b 2) (t :default))
-
-** TODO Implement letfn for local functions
-:PROPERTIES:
-:ID: clel-008
-:PRIORITY: B
-:END:
-(letfn [(foo [x] ...) (bar [y] ...)] body)
-Emit as cl-labels
-
 ** TODO Implement defmulti/defmethod
 :PROPERTIES:
 :ID: clel-009
 :PRIORITY: B
 :END:
 Basic polymorphism support using Elisp cl-defgeneric/cl-defmethod or custom dispatch
-
-** TODO Handle and/or as special forms
-:PROPERTIES:
-:ID: clel-010
-:PRIORITY: B
-:END:
-Currently in core-fn-mapping but they need short-circuit evaluation.
-Treat as special forms that emit proper and/or Elisp forms.
 
 ** TODO Proper namespace :require handling
 :PROPERTIES:
@@ -185,5 +162,30 @@ Optionally emit comments with source locations
 - Detect: (defn foo ([x] x) ([x y] (+ x y)))
 - Emit cl-case dispatch on (length args)
 - 71 tests, 395 assertions
+
+** DONE Implement case special form
+:PROPERTIES:
+:ID: clel-007
+:END:
+- (case x :a 1 :b 2 :default) → (cl-case x (:a 1) (:b 2) (t :default))
+- Analyzer handles test-val/expr pairs with optional default
+- Emitter produces cl-case with proper clause formatting
+
+** DONE Implement letfn for local functions
+:PROPERTIES:
+:ID: clel-008
+:END:
+- (letfn [(foo [x] ...) (bar [y] ...)] body) → cl-labels
+- Supports mutual recursion between local functions
+- Function names added to env before analyzing bodies
+
+** DONE Handle and/or as special forms
+:PROPERTIES:
+:ID: clel-010
+:END:
+- Removed from core-fn-mapping, now proper special forms
+- Short-circuit evaluation using native Elisp and/or
+- Empty (and) → t, empty (or) → nil (Clojure semantics)
+- 79 tests, 449 assertions
 
 * Cancelled
