@@ -1,0 +1,20 @@
+# Clojure
+.cpcache/
+.nrepl-port
+target/
+*.jar
+
+# MCP
+.clojure-mcp/
+
+# Editor
+.idea/
+*.iml
+.vscode/
+.calva/
+.lsp/
+.clj-kondo/
+
+# OS
+.DS_Store
+Thumbs.db
