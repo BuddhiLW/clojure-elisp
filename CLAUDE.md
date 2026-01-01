@@ -65,6 +65,21 @@ Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen) → Elisp (.el
 
 ## Progress Log
 
+### 2026-01-01: Atom Watch Functions (clel-015)
+
+**Implemented add-watch/remove-watch for atoms via swarm (2 parallel slaves):**
+- Updated atom structure: `(list 'clel-atom val watchers-alist)`
+- Runtime functions: `clel-add-watch`, `clel-remove-watch`, `clel--notify-watchers`
+- Updated `clel-reset!`, `clel-swap!` to notify watchers on state change
+- Emitter mappings: `atom`, `deref`, `clojure.core/deref` (for `@`), `reset!`, `swap!`, `add-watch`, `remove-watch`
+
+**Test stats:** 94 tests, 595 assertions, 0 failures
+
+**Files modified:**
+- `resources/clojure-elisp/clojure-elisp-runtime.el` - Updated atom structure, added watch functions
+- `src/clojure_elisp/emitter.clj` - Added 7 atom-related core-fn-mapping entries
+- `test/clojure_elisp/runtime_test.clj` - Added 4 atom watch test functions (28 assertions)
+
 ### 2026-01-01: Predicate Functions (clel-014)
 
 **Implemented 11 predicate functions via swarm (3 parallel slaves):**
