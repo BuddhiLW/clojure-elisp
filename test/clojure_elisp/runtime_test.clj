@@ -150,3 +150,129 @@
     (let [code (clel/emit '(some? my-value))]
       (is (re-find #"clel-some-p\s+my-value" code)))))
 
+;;; Atom watch functions -> clel-add-watch / clel-remove-watch tests
+
+(deftest atom-add-watch-test
+  (testing "add-watch compiles to clel-add-watch"
+    (is (str/includes? (clel/emit '(add-watch a :key f)) "clel-add-watch"))
+    (is (str/includes? (clel/emit '(add-watch my-atom :watcher handler-fn)) "clel-add-watch")))
+
+  (testing "add-watch with inline fn"
+    (let [code (clel/emit '(add-watch a :key (fn [k r o n] (println o n))))]
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "add-watch with keyword key"
+    (let [code (clel/emit '(add-watch my-atom :my-watcher callback))]
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code ":my-watcher"))))
+
+  (testing "add-watch preserves argument order"
+    (let [code (clel/emit '(add-watch my-atom my-key my-fn))]
+      (is (re-find #"clel-add-watch\s+my-atom\s+my-key\s+my-fn" code))))
+
+  (testing "add-watch in let binding"
+    (let [code (clel/emit '(let [result (add-watch a :k f)]
+                             result))]
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code "let")))))
+
+(deftest atom-remove-watch-test
+  (testing "remove-watch compiles to clel-remove-watch"
+    (is (str/includes? (clel/emit '(remove-watch a :key)) "clel-remove-watch"))
+    (is (str/includes? (clel/emit '(remove-watch my-atom :watcher)) "clel-remove-watch")))
+
+  (testing "remove-watch with keyword key"
+    (let [code (clel/emit '(remove-watch my-atom :my-watcher))]
+      (is (str/includes? code "clel-remove-watch"))
+      (is (str/includes? code ":my-watcher"))))
+
+  (testing "remove-watch preserves argument order"
+    (let [code (clel/emit '(remove-watch my-atom my-key))]
+      (is (re-find #"clel-remove-watch\s+my-atom\s+my-key" code))))
+
+  (testing "remove-watch in expression context"
+    (let [code (clel/emit '(do
+                             (remove-watch a :k1)
+                             (remove-watch a :k2)))]
+      (is (str/includes? code "clel-remove-watch"))
+      (is (str/includes? code "progn")))))
+
+(deftest atom-watch-with-atom-operations-test
+  (testing "watch with atom creation"
+    (let [code (clel/emit '(let [a (atom 0)]
+                             (add-watch a :logger
+                                        (fn [k r o n]
+                                          (println "changed from" o "to" n)))
+                             a))]
+      (is (str/includes? code "clel-atom"))
+      (is (str/includes? code "clel-add-watch"))))
+
+  (testing "watch with reset!"
+    (let [code (clel/emit '(do
+                             (add-watch a :w (fn [k r o n] nil))
+                             (reset! a 42)))]
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code "clel-reset!"))))
+
+  (testing "watch with swap!"
+    (let [code (clel/emit '(do
+                             (add-watch a :w callback)
+                             (swap! a inc)))]
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code "clel-swap!"))))
+
+  (testing "multiple watchers on same atom"
+    (let [code (clel/emit '(do
+                             (add-watch a :w1 f1)
+                             (add-watch a :w2 f2)
+                             (add-watch a :w3 f3)))]
+      (is (= 3 (count (re-seq #"clel-add-watch" code))))))
+
+  (testing "add and remove watch sequence"
+    (let [code (clel/emit '(do
+                             (add-watch a :temp temp-fn)
+                             (reset! a 1)
+                             (remove-watch a :temp)))]
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code "clel-remove-watch"))
+      (is (str/includes? code "clel-reset!")))))
+
+(deftest atom-watch-edge-cases-test
+  (testing "add-watch returns the atom (for chaining)"
+    ;; Typical pattern: (-> a (add-watch :k f) (reset! 0))
+    (let [code (clel/emit '(reset! (add-watch a :k f) 0))]
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code "clel-reset!"))))
+
+  (testing "same key twice replaces watcher (valid code pattern)"
+    (let [code (clel/emit '(do
+                             (add-watch a :k old-fn)
+                             (add-watch a :k new-fn)))]
+      (is (= 2 (count (re-seq #"clel-add-watch" code))))))
+
+  (testing "remove non-existent key (should still emit valid code)"
+    (let [code (clel/emit '(remove-watch a :nonexistent))]
+      (is (str/includes? code "clel-remove-watch"))
+      (is (str/includes? code ":nonexistent"))))
+
+  (testing "watcher fn receives 4 args pattern"
+    ;; Verify lambda with 4 params is emitted correctly
+    (let [code (clel/emit '(add-watch a :k
+                                      (fn [key ref old-val new-val]
+                                        (when (not= old-val new-val)
+                                          (println "changed")))))]
+      (is (str/includes? code "lambda"))
+      (is (str/includes? code "key"))
+      (is (str/includes? code "ref"))
+      (is (str/includes? code "old-val"))
+      (is (str/includes? code "new-val"))))
+
+  (testing "empty atom with watchers"
+    (let [code (clel/emit '(let [a (atom nil)]
+                             (add-watch a :k f)
+                             @a))]
+      (is (str/includes? code "clel-atom"))
+      (is (str/includes? code "clel-add-watch"))
+      (is (str/includes? code "clel-deref")))))
+

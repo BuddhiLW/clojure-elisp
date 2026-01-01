@@ -130,6 +130,15 @@
    'partial "apply-partially"
    'comp "clel-comp"
 
+   ;; Atoms
+   'atom "clel-atom"
+   'deref "clel-deref"
+   'clojure.core/deref "clel-deref"  ; @a reader macro expands to clojure.core/deref
+   'reset! "clel-reset!"
+   'swap! "clel-swap!"
+   'add-watch "clel-add-watch"
+   'remove-watch "clel-remove-watch"
+
    ;; Emacs-specific
    'message "message"
    'buffer-string "buffer-string"
