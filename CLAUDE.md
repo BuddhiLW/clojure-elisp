@@ -65,6 +65,20 @@ Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen) → Elisp (.el
 
 ## Progress Log
 
+### 2026-01-01: Predicate Functions (clel-014)
+
+**Implemented 11 predicate functions via swarm (3 parallel slaves):**
+- Numeric: `zero?`, `pos?`, `neg?`, `even?`, `odd?` → direct Elisp cl-lib mapping
+- Boolean: `some?`, `true?`, `false?` → `clel-some-p`, `clel-true-p`, `clel-false-p`
+- Collection: `coll?`, `sequential?`, `associative?` → `clel-coll-p`, `clel-sequential-p`, `clel-associative-p`
+
+**Test stats:** 90 tests, 556 assertions, 0 failures
+
+**Files modified:**
+- `resources/clojure-elisp/clojure-elisp-runtime.el` - Added 6 runtime functions
+- `src/clojure_elisp/emitter.clj` - Added 11 core-fn-mapping entries
+- `test/clojure_elisp/runtime_test.clj` - Added numeric, boolean, collection predicate tests
+
 ### 2026-01-01: Swarm Batch Implementation
 
 **Implemented via emacs-mcp swarm (3 parallel slaves):**
