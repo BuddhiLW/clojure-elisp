@@ -37,86 +37,86 @@
 (def core-fn-mapping
   "Map Clojure core functions to Elisp equivalents."
   {;; Arithmetic
-   '+      "+"
-   '-      "-"
-   '*      "*"
-   '/      "/"
-   'mod    "mod"
-   'rem    "%"
-   'inc    "1+"
-   'dec    "1-"
+   '+ "+"
+   '- "-"
+   '* "*"
+   '/ "/"
+   'mod "mod"
+   'rem "%"
+   'inc "1+"
+   'dec "1-"
 
    ;; Comparison
-   '=      "equal"
-   '==     "="
-   'not=   "/="
-   '<      "<"
-   '>      ">"
-   '<=     "<="
-   '>=     ">="
+   '= "equal"
+   '== "="
+   'not= "/="
+   '< "<"
+   '> ">"
+   '<= "<="
+   '>= ">="
 
    ;; Logic
-   'not    "not"
-   'and    "and"
-   'or     "or"
+   'not "not"
+   'and "and"
+   'or "or"
 
    ;; Type predicates
-   'nil?   "null"
+   'nil? "null"
    'string? "stringp"
    'number? "numberp"
    'symbol? "symbolp"
-   'list?  "listp"
+   'list? "listp"
    'vector? "vectorp"
-   'map?   "hash-table-p"
-   'fn?    "functionp"
+   'map? "hash-table-p"
+   'fn? "functionp"
    'keyword? "keywordp"
 
    ;; Collections
-   'first  "car"
-   'rest   "cdr"
-   'next   "cdr"
-   'cons   "cons"
-   'conj   "clel-conj"
-   'count  "length"
-   'nth    "nth"
-   'get    "clel-get"
-   'assoc  "clel-assoc"
+   'first "car"
+   'rest "cdr"
+   'next "cdr"
+   'cons "cons"
+   'conj "clel-conj"
+   'count "length"
+   'nth "nth"
+   'get "clel-get"
+   'assoc "clel-assoc"
    'dissoc "clel-dissoc"
-   'keys   "clel-keys"
-   'vals   "clel-vals"
-   'seq    "clel-seq"
+   'keys "clel-keys"
+   'vals "clel-vals"
+   'seq "clel-seq"
    'empty? "null"
-   'into   "clel-into"
+   'into "clel-into"
    'reduce "cl-reduce"
-   'map    "mapcar"
+   'map "mapcar"
    'filter "cl-remove-if-not"
    'remove "cl-remove-if"
-   'take   "cl-subseq"
-   'drop   "nthcdr"
+   'take "cl-subseq"
+   'drop "nthcdr"
    'reverse "reverse"
-   'sort   "sort"
+   'sort "sort"
    'concat "append"
    'flatten "flatten-tree"
 
    ;; Strings
-   'str    "clel-str"
-   'subs   "substring"
+   'str "clel-str"
+   'subs "substring"
    'format "format"
    'pr-str "prin1-to-string"
    'println "message"
-   'print  "princ"
+   'print "princ"
 
    ;; Functions
-   'apply  "apply"
+   'apply "apply"
    'identity "identity"
    'constantly "clel-constantly"
    'partial "apply-partially"
-   'comp   "clel-comp"
+   'comp "clel-comp"
 
    ;; Emacs-specific
    'message "message"
    'buffer-string "buffer-string"
-   'point  "point"
+   'point "point"
    'goto-char "goto-char"
    'insert "insert"
    'delete-char "delete-char"
@@ -281,6 +281,61 @@
             (emit-list (map mangle-name names))
             body-str
             (emit-list inits))))
+
+;; Emit try/catch/finally to Elisp condition-case and unwind-protect.
+;; - try with catch: (condition-case err body (error handler))
+;; - try with finally: (unwind-protect body cleanup)
+;; - try with both: (condition-case err (unwind-protect body cleanup) (error handler))
+(defmethod emit-node :try
+  [{:keys [body catches finally]}]
+  (let [;; Emit body expressions wrapped in progn if multiple
+        body-str (if (= 1 (count body))
+                   (emit (first body))
+                   (format "(progn\n    %s)" (str/join "\n    " (map emit body))))
+
+        ;; Emit finally as unwind-protect cleanup if present
+        with-finally (if finally
+                       (format "(unwind-protect\n    %s\n  %s)"
+                               body-str
+                               (str/join "\n  " (map emit finally)))
+                       body-str)
+
+        ;; Emit catch clauses - map all exception types to Elisp 'error'
+        ;; Use first catch's binding name for the error variable
+        catch-binding (when (seq catches)
+                        (mangle-name (:name (first catches))))
+        catch-handlers (when (seq catches)
+                         ;; Combine all catch handlers into one error handler
+                         ;; In Elisp, we use a single 'error' condition type
+                         (let [handler-bodies (mapcat :body catches)
+                               handler-str (if (= 1 (count handler-bodies))
+                                             (emit (first handler-bodies))
+                                             (format "(progn\n      %s)"
+                                                     (str/join "\n      " (map emit handler-bodies))))]
+                           (format "(error %s)" handler-str)))]
+
+    (cond
+      ;; Both catch and finally
+      (and (seq catches) finally)
+      (format "(condition-case %s\n    %s\n  %s)"
+              catch-binding
+              with-finally
+              catch-handlers)
+
+      ;; Only catch, no finally
+      (seq catches)
+      (format "(condition-case %s\n    %s\n  %s)"
+              catch-binding
+              body-str
+              catch-handlers)
+
+      ;; Only finally, no catch
+      finally
+      with-finally
+
+      ;; Neither catch nor finally (just body)
+      :else
+      body-str)))
 
 (defmethod emit-node :recur
   [{:keys [args]}]

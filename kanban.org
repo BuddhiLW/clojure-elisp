@@ -1,0 +1,191 @@
+#+TITLE: ClojureElisp Development Kanban
+#+STARTUP: overview
+#+TODO: TODO IN-PROGRESS IN-REVIEW | DONE CANCELLED
+
+* Backlog
+** TODO Implement destructuring in fn/defn parameters
+:PROPERTIES:
+:ID: clel-003
+:PRIORITY: A
+:END:
+Once let destructuring works, extend to function parameters.
+Support & rest args: (defn foo [a b & rest] ...)
+
+** TODO Add throw support
+:PROPERTIES:
+:ID: clel-005
+:PRIORITY: A
+:END:
+Implement (throw (ex-info "msg" {:data x}))
+Maps to Elisp (signal 'error ...)
+
+** TODO Support multi-arity functions
+:PROPERTIES:
+:ID: clel-006
+:PRIORITY: A
+:END:
+Handle (defn foo ([x] ...) ([x y] ...) ([x y z] ...))
+Emit as single defun with arity dispatch via cl-case on arg count
+
+** TODO Implement case special form
+:PROPERTIES:
+:ID: clel-007
+:PRIORITY: B
+:END:
+(case x :a 1 :b 2 :default) -> (cl-case x (:a 1) (:b 2) (t :default))
+
+** TODO Implement letfn for local functions
+:PROPERTIES:
+:ID: clel-008
+:PRIORITY: B
+:END:
+(letfn [(foo [x] ...) (bar [y] ...)] body)
+Emit as cl-labels
+
+** TODO Implement defmulti/defmethod
+:PROPERTIES:
+:ID: clel-009
+:PRIORITY: B
+:END:
+Basic polymorphism support using Elisp cl-defgeneric/cl-defmethod or custom dispatch
+
+** TODO Handle and/or as special forms
+:PROPERTIES:
+:ID: clel-010
+:PRIORITY: B
+:END:
+Currently in core-fn-mapping but they need short-circuit evaluation.
+Treat as special forms that emit proper and/or Elisp forms.
+
+** TODO Proper namespace :require handling
+:PROPERTIES:
+:ID: clel-011
+:PRIORITY: B
+:END:
+Parse (:require [foo.bar :as fb :refer [baz]])
+- Track aliases in *env*
+- Resolve qualified symbols fb/something
+- Emit proper (require 'foo-bar)
+
+** TODO Add clel-into to runtime
+:PROPERTIES:
+:ID: clel-012
+:PRIORITY: B
+:END:
+(into [] coll), (into {} pairs), (into #{} coll)
+
+** TODO Add clel-dissoc to runtime
+:PROPERTIES:
+:ID: clel-013
+:PRIORITY: C
+:END:
+Remove key from map/alist
+
+** TODO Add more predicate functions to runtime
+:PROPERTIES:
+:ID: clel-014
+:PRIORITY: C
+:END:
+- zero?, pos?, neg?, even?, odd?
+- some?, true?, false?
+- coll?, sequential?, associative?
+
+** TODO Implement atom watch functions
+:PROPERTIES:
+:ID: clel-015
+:PRIORITY: C
+:END:
+add-watch, remove-watch for atoms
+
+** TODO Add CLI compilation tool
+:PROPERTIES:
+:ID: clel-016
+:PRIORITY: C
+:END:
+clojure -M:compile src/foo.cljel -o out/foo.el
+- Parse command line args
+- Support directory compilation
+- Watch mode for development
+
+** TODO Create cljel-mode for Emacs
+:PROPERTIES:
+:ID: clel-017
+:PRIORITY: C
+:END:
+Major mode for editing .cljel files
+- Inherit from clojure-mode
+- Add compile command integration
+- REPL integration
+
+** TODO Implement lazy sequences
+:PROPERTIES:
+:ID: clel-018
+:PRIORITY: C
+:END:
+lazy-seq, realized?, doall, dorun
+May need thunk-based approach in Elisp
+
+** TODO Add metadata support
+:PROPERTIES:
+:ID: clel-019
+:PRIORITY: C
+:END:
+^:private, ^:dynamic, ^:const
+Store in symbol plist in Elisp
+
+** TODO Source location tracking
+:PROPERTIES:
+:ID: clel-020
+:PRIORITY: C
+:END:
+Track line/column in AST nodes for better error messages
+Optionally emit comments with source locations
+
+* In Progress
+
+* In Review
+
+* Done
+** DONE Initial compiler infrastructure
+:PROPERTIES:
+:ID: clel-100
+:END:
+- Analyzer with basic special forms
+- Emitter with AST->Elisp transformation
+- Core API (emit, compile-file, compile-ns)
+- Runtime library with collection ops
+
+** DONE Add macroexpansion for threading macros
+:PROPERTIES:
+:ID: clel-101
+:END:
+->, ->>, and other macros now expand before analysis
+
+** DONE Add test infrastructure with Kaocha
+:PROPERTIES:
+:ID: clel-001
+:END:
+- Created tests.edn with Kaocha configuration
+- test/clojure_elisp/analyzer_test.clj (25 tests)
+- test/clojure_elisp/emitter_test.clj (28 tests)
+- test/clojure_elisp/core_test.clj (14 tests)
+- Total: 67 tests, 349 assertions
+
+** DONE Implement destructuring in let bindings
+:PROPERTIES:
+:ID: clel-002
+:END:
+- Vector destructuring: [a b], [a & rest], [:as all]
+- Map destructuring: {:keys [x y]}, {:strs [a]}, {:or {x 0}}, {:as m}
+- Nested destructuring supported
+- Added expand-destructuring, expand-vector-destructuring, expand-map-destructuring
+
+** DONE Add try/catch/finally support
+:PROPERTIES:
+:ID: clel-004
+:END:
+- Analyzer: analyze-try handles try/catch/finally forms
+- Emitter: emits condition-case for catch, unwind-protect for finally
+- (try ... (catch E e ...) (finally ...)) works correctly
+
+* Cancelled
