@@ -3,13 +3,6 @@
 #+TODO: TODO IN-PROGRESS IN-REVIEW | DONE CANCELLED
 
 * Backlog
-** TODO Add clel-dissoc to runtime
-:PROPERTIES:
-:ID: clel-013
-:PRIORITY: C
-:END:
-Remove key from map/alist
-
 ** TODO Add more predicate functions to runtime
 :PROPERTIES:
 :ID: clel-014
@@ -189,5 +182,13 @@ Optionally emit comments with source locations
 - clel-into function in clojure-elisp-runtime.el
 - Supports vectors (into [] coll), lists (into '() coll), hash-tables
 - 86 tests, 509 assertions total
+
+** DONE Add clel-dissoc to runtime
+:PROPERTIES:
+:ID: clel-013
+:END:
+- clel-dissoc removes key from alist or hash-table
+- Uses cl-remove-if for alists, remhash for hash-tables
+- 87 tests, 520 assertions total
 
 * Cancelled
