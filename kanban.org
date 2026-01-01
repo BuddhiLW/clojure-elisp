@@ -3,30 +3,6 @@
 #+TODO: TODO IN-PROGRESS IN-REVIEW | DONE CANCELLED
 
 * Backlog
-** TODO Implement destructuring in fn/defn parameters
-:PROPERTIES:
-:ID: clel-003
-:PRIORITY: A
-:END:
-Once let destructuring works, extend to function parameters.
-Support & rest args: (defn foo [a b & rest] ...)
-
-** TODO Add throw support
-:PROPERTIES:
-:ID: clel-005
-:PRIORITY: A
-:END:
-Implement (throw (ex-info "msg" {:data x}))
-Maps to Elisp (signal 'error ...)
-
-** TODO Support multi-arity functions
-:PROPERTIES:
-:ID: clel-006
-:PRIORITY: A
-:END:
-Handle (defn foo ([x] ...) ([x y] ...) ([x y z] ...))
-Emit as single defun with arity dispatch via cl-case on arg count
-
 ** TODO Implement case special form
 :PROPERTIES:
 :ID: clel-007
@@ -187,5 +163,27 @@ Optionally emit comments with source locations
 - Analyzer: analyze-try handles try/catch/finally forms
 - Emitter: emits condition-case for catch, unwind-protect for finally
 - (try ... (catch E e ...) (finally ...)) works correctly
+
+** DONE Implement destructuring in fn/defn parameters
+:PROPERTIES:
+:ID: clel-003
+:END:
+- Support & rest args: (defn foo [a & rest] ...)
+- Emits (&rest args) with nthcdr for rest param
+
+** DONE Add throw support
+:PROPERTIES:
+:ID: clel-005
+:END:
+- analyze-throw detects ex-info, Exception., rethrow patterns
+- Emits (signal 'error ...) in Elisp
+
+** DONE Support multi-arity functions
+:PROPERTIES:
+:ID: clel-006
+:END:
+- Detect: (defn foo ([x] x) ([x y] (+ x y)))
+- Emit cl-case dispatch on (length args)
+- 71 tests, 395 assertions
 
 * Cancelled
