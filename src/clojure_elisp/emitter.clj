@@ -37,86 +37,86 @@
 (def core-fn-mapping
   "Map Clojure core functions to Elisp equivalents."
   {;; Arithmetic
-   '+      "+"
-   '-      "-"
-   '*      "*"
-   '/      "/"
-   'mod    "mod"
-   'rem    "%"
-   'inc    "1+"
-   'dec    "1-"
+   '+ "+"
+   '- "-"
+   '* "*"
+   '/ "/"
+   'mod "mod"
+   'rem "%"
+   'inc "1+"
+   'dec "1-"
 
    ;; Comparison
-   '=      "equal"
-   '==     "="
-   'not=   "/="
-   '<      "<"
-   '>      ">"
-   '<=     "<="
-   '>=     ">="
+   '= "equal"
+   '== "="
+   'not= "/="
+   '< "<"
+   '> ">"
+   '<= "<="
+   '>= ">="
 
    ;; Logic
-   'not    "not"
-   'and    "and"
-   'or     "or"
+   'not "not"
+   'and "and"
+   'or "or"
 
    ;; Type predicates
-   'nil?   "null"
+   'nil? "null"
    'string? "stringp"
    'number? "numberp"
    'symbol? "symbolp"
-   'list?  "listp"
+   'list? "listp"
    'vector? "vectorp"
-   'map?   "hash-table-p"
-   'fn?    "functionp"
+   'map? "hash-table-p"
+   'fn? "functionp"
    'keyword? "keywordp"
 
    ;; Collections
-   'first  "car"
-   'rest   "cdr"
-   'next   "cdr"
-   'cons   "cons"
-   'conj   "clel-conj"
-   'count  "length"
-   'nth    "nth"
-   'get    "clel-get"
-   'assoc  "clel-assoc"
+   'first "car"
+   'rest "cdr"
+   'next "cdr"
+   'cons "cons"
+   'conj "clel-conj"
+   'count "length"
+   'nth "nth"
+   'get "clel-get"
+   'assoc "clel-assoc"
    'dissoc "clel-dissoc"
-   'keys   "clel-keys"
-   'vals   "clel-vals"
-   'seq    "clel-seq"
+   'keys "clel-keys"
+   'vals "clel-vals"
+   'seq "clel-seq"
    'empty? "null"
-   'into   "clel-into"
+   'into "clel-into"
    'reduce "cl-reduce"
-   'map    "mapcar"
+   'map "mapcar"
    'filter "cl-remove-if-not"
    'remove "cl-remove-if"
-   'take   "cl-subseq"
-   'drop   "nthcdr"
+   'take "cl-subseq"
+   'drop "nthcdr"
    'reverse "reverse"
-   'sort   "sort"
+   'sort "sort"
    'concat "append"
    'flatten "flatten-tree"
 
    ;; Strings
-   'str    "clel-str"
-   'subs   "substring"
+   'str "clel-str"
+   'subs "substring"
    'format "format"
    'pr-str "prin1-to-string"
    'println "message"
-   'print  "princ"
+   'print "princ"
 
    ;; Functions
-   'apply  "apply"
+   'apply "apply"
    'identity "identity"
    'constantly "clel-constantly"
    'partial "apply-partially"
-   'comp   "clel-comp"
+   'comp "clel-comp"
 
    ;; Emacs-specific
    'message "message"
    'buffer-string "buffer-string"
-   'point  "point"
+   'point "point"
    'goto-char "goto-char"
    'insert "insert"
    'delete-char "delete-char"
@@ -202,15 +202,93 @@
       (emit-sexp "defvar" elisp-name "nil"))))
 
 (defmethod emit-node :defn
-  [{:keys [name docstring params body]}]
-  (let [elisp-name (mangle-name name)
-        elisp-params (str "(" (emit-list (map mangle-name params)) ")")
-        elisp-body (str/join "\n  " (map emit body))]
-    (if docstring
-      (format "(defun %s %s\n  %s\n  %s)"
-              elisp-name elisp-params (pr-str docstring) elisp-body)
-      (format "(defun %s %s\n  %s)"
-              elisp-name elisp-params elisp-body))))
+  [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param]}]
+  (let [elisp-name (mangle-name name)]
+    (cond
+      ;; Multi-arity: emit cl-case dispatch
+      multi-arity?
+      (let [;; Separate fixed and variadic arities
+            fixed-arities (filter #(not= :variadic (:arity %)) arities)
+            variadic-arity (first (filter #(= :variadic (:arity %)) arities))
+
+            ;; Helper to emit nth accessor for args list
+            nth-accessor (fn [n]
+                           (case n
+                             0 "(car args)"
+                             1 "(cadr args)"
+                             2 "(caddr args)"
+                             3 "(cadddr args)"
+                             (format "(nth %d args)" n)))
+
+            ;; Emit bindings for an arity's params
+            emit-param-bindings (fn [{:keys [params fixed-params rest-param variadic?] :as arity}]
+                                  (if variadic?
+                                    ;; Variadic: bind fixed params and rest
+                                    (let [fixed-bindings (map-indexed
+                                                          (fn [i p]
+                                                            (format "(%s %s)" (mangle-name p) (nth-accessor i)))
+                                                          fixed-params)
+                                          rest-binding (format "(%s (nthcdr %d args))"
+                                                               (mangle-name rest-param)
+                                                               (count fixed-params))]
+                                      (str/join " " (concat fixed-bindings [rest-binding])))
+                                    ;; Fixed arity: bind all params by position
+                                    (str/join " " (map-indexed
+                                                   (fn [i p]
+                                                     (format "(%s %s)" (mangle-name p) (nth-accessor i)))
+                                                   params))))
+
+            ;; Emit a single arity case clause
+            emit-arity-case (fn [{:keys [arity body] :as arity-node}]
+                              (let [bindings (emit-param-bindings arity-node)
+                                    body-str (str/join " " (map emit body))]
+                                (format "(%d (let (%s) %s))" arity bindings body-str)))
+
+            ;; Emit variadic clause (uses 't' as catch-all)
+            emit-variadic-case (fn [{:keys [fixed-params body] :as arity-node}]
+                                 (let [bindings (emit-param-bindings arity-node)
+                                       body-str (str/join " " (map emit body))]
+                                   (format "(t (let (%s) %s))" bindings body-str)))
+
+            ;; Build case clauses
+            case-clauses (concat
+                          (map emit-arity-case fixed-arities)
+                          (when variadic-arity
+                            [(emit-variadic-case variadic-arity)]))
+
+            case-body (str/join "\n    " case-clauses)]
+        (if docstring
+          (format "(defun %s (&rest args)\n  %s\n  (cl-case (length args)\n    %s))"
+                  elisp-name (pr-str docstring) case-body)
+          (format "(defun %s (&rest args)\n  (cl-case (length args)\n    %s))"
+                  elisp-name case-body)))
+
+      ;; Single-arity variadic: use &rest and let to destructure
+      variadic?
+      (let [elisp-body (str/join "\n  " (map emit body))
+            fixed-bindings (map-indexed
+                            (fn [i p]
+                              (format "(%s (nth %d args))" (mangle-name p) i))
+                            fixed-params)
+            rest-binding (format "(%s (nthcdr %d args))"
+                                 (mangle-name rest-param)
+                                 (count fixed-params))
+            all-bindings (str/join " " (concat fixed-bindings [rest-binding]))]
+        (if docstring
+          (format "(defun %s (&rest args)\n  %s\n  (let (%s)\n    %s))"
+                  elisp-name (pr-str docstring) all-bindings elisp-body)
+          (format "(defun %s (&rest args)\n  (let (%s)\n    %s))"
+                  elisp-name all-bindings elisp-body)))
+
+      ;; Single-arity non-variadic: simple defun
+      :else
+      (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
+            elisp-body (str/join "\n  " (map emit body))]
+        (if docstring
+          (format "(defun %s %s\n  %s\n  %s)"
+                  elisp-name elisp-params (pr-str docstring) elisp-body)
+          (format "(defun %s %s\n  %s)"
+                  elisp-name elisp-params elisp-body))))))
 
 (defmethod emit-node :fn
   [{:keys [params body]}]
@@ -281,6 +359,79 @@
             (emit-list (map mangle-name names))
             body-str
             (emit-list inits))))
+
+;; Emit try/catch/finally to Elisp condition-case and unwind-protect.
+;; - try with catch: (condition-case err body (error handler))
+;; - try with finally: (unwind-protect body cleanup)
+;; - try with both: (condition-case err (unwind-protect body cleanup) (error handler))
+(defmethod emit-node :try
+  [{:keys [body catches finally]}]
+  (let [;; Emit body expressions wrapped in progn if multiple
+        body-str (if (= 1 (count body))
+                   (emit (first body))
+                   (format "(progn\n    %s)" (str/join "\n    " (map emit body))))
+
+        ;; Emit finally as unwind-protect cleanup if present
+        with-finally (if finally
+                       (format "(unwind-protect\n    %s\n  %s)"
+                               body-str
+                               (str/join "\n  " (map emit finally)))
+                       body-str)
+
+        ;; Emit catch clauses - map all exception types to Elisp 'error'
+        ;; Use first catch's binding name for the error variable
+        catch-binding (when (seq catches)
+                        (mangle-name (:name (first catches))))
+        catch-handlers (when (seq catches)
+                         ;; Combine all catch handlers into one error handler
+                         ;; In Elisp, we use a single 'error' condition type
+                         (let [handler-bodies (mapcat :body catches)
+                               handler-str (if (= 1 (count handler-bodies))
+                                             (emit (first handler-bodies))
+                                             (format "(progn\n      %s)"
+                                                     (str/join "\n      " (map emit handler-bodies))))]
+                           (format "(error %s)" handler-str)))]
+
+    (cond
+      ;; Both catch and finally
+      (and (seq catches) finally)
+      (format "(condition-case %s\n    %s\n  %s)"
+              catch-binding
+              with-finally
+              catch-handlers)
+
+      ;; Only catch, no finally
+      (seq catches)
+      (format "(condition-case %s\n    %s\n  %s)"
+              catch-binding
+              body-str
+              catch-handlers)
+
+      ;; Only finally, no catch
+      finally
+      with-finally
+
+      ;; Neither catch nor finally (just body)
+      :else
+      body-str)))
+
+(defmethod emit-node :throw
+  [{:keys [exception exception-type]}]
+  (case exception-type
+    :ex-info
+    (let [[msg-node data-node] (:args exception)]
+      (format "(signal 'error (list %s %s))"
+              (emit msg-node)
+              (emit data-node)))
+
+    :constructor
+    (let [[msg-node] (:args exception)]
+      (format "(signal 'error %s)" (emit msg-node)))
+
+    :rethrow
+    (format "(signal 'error %s)" (emit exception))
+
+    (format "(signal 'error %s)" (emit exception))))
 
 (defmethod emit-node :recur
   [{:keys [args]}]

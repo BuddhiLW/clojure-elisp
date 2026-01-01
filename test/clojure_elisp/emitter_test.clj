@@ -1,0 +1,401 @@
+(ns clojure-elisp.emitter-test
+  "Tests for the ClojureElisp emitter."
+  (:require [clojure.test :refer [deftest is testing]]
+            [clojure-elisp.analyzer :as ana]
+            [clojure-elisp.emitter :as emit :refer [emit-node mangle-name]]))
+
+;; ============================================================================
+;; Helper Functions
+;; ============================================================================
+
+(defn analyze-and-emit
+  "Analyze a form and emit it to Elisp."
+  [form]
+  (-> form ana/analyze emit/emit))
+
+;; ============================================================================
+;; Name Mangling
+;; ============================================================================
+
+(deftest mangle-name-test
+  (testing "simple names"
+    (is (= "foo" (mangle-name 'foo)))
+    (is (= "bar" (mangle-name 'bar))))
+  (testing "names with dots"
+    (is (= "my-namespace" (mangle-name 'my.namespace))))
+  (testing "names with slashes"
+    (is (= "my-ns-foo" (mangle-name 'my.ns/foo))))
+  (testing "predicate names (ending in ?)"
+    (is (= "nil-p" (mangle-name 'nil?)))
+    (is (= "empty-p" (mangle-name 'empty?))))
+  (testing "bang names (ending in !)"
+    (is (= "reset-bang" (mangle-name 'reset!)))
+    (is (= "swap-bang" (mangle-name 'swap!))))
+  (testing "comparison operators"
+    (is (= "-gt" (mangle-name '>)))
+    (is (= "-lt" (mangle-name '<)))
+    (is (= "-gt-eq" (mangle-name '>=)))
+    (is (= "-lt-eq" (mangle-name '<=))))
+  (testing "arithmetic operators"
+    (is (= "-plus" (mangle-name '+)))
+    (is (= "-star" (mangle-name '*))))
+  (testing "complex names"
+    (is (= "my-package-do-something-bang" (mangle-name 'my.package/do-something!)))))
+
+;; ============================================================================
+;; Constants
+;; ============================================================================
+
+(deftest emit-nil-test
+  (testing "nil constant"
+    (is (= "nil" (analyze-and-emit nil)))))
+
+(deftest emit-boolean-test
+  (testing "true"
+    (is (= "t" (analyze-and-emit true))))
+  (testing "false"
+    (is (= "nil" (analyze-and-emit false)))))
+
+(deftest emit-number-test
+  (testing "integer"
+    (is (= "42" (analyze-and-emit 42))))
+  (testing "negative integer"
+    (is (= "-17" (analyze-and-emit -17))))
+  (testing "float"
+    (is (= "3.14" (analyze-and-emit 3.14)))))
+
+(deftest emit-string-test
+  (testing "simple string"
+    (is (= "\"hello\"" (analyze-and-emit "hello"))))
+  (testing "string with quotes"
+    (is (= "\"hello \\\"world\\\"\"" (analyze-and-emit "hello \"world\""))))
+  (testing "empty string"
+    (is (= "\"\"" (analyze-and-emit "")))))
+
+(deftest emit-keyword-test
+  (testing "simple keyword"
+    (is (= ":foo" (analyze-and-emit :foo))))
+  (testing "namespaced keyword"
+    (is (= ":bar" (analyze-and-emit :my.ns/bar)))))
+
+;; ============================================================================
+;; Symbols
+;; ============================================================================
+
+(deftest emit-var-test
+  (testing "simple var"
+    (is (= "foo" (analyze-and-emit 'foo))))
+  (testing "core function maps to elisp"
+    (is (= "car" (analyze-and-emit 'first)))
+    (is (= "cdr" (analyze-and-emit 'rest)))
+    (is (= "1+" (analyze-and-emit 'inc)))
+    (is (= "1-" (analyze-and-emit 'dec)))
+    (is (= "length" (analyze-and-emit 'count)))))
+
+(deftest emit-local-test
+  (testing "local in let"
+    (let [result (analyze-and-emit '(let [x 1] x))]
+      (is (clojure.string/includes? result "x")))))
+
+;; ============================================================================
+;; Collections
+;; ============================================================================
+
+(deftest emit-vector-test
+  (testing "empty vector"
+    (is (= "(list )" (analyze-and-emit []))))
+  (testing "vector with elements"
+    (is (= "(list 1 2 3)" (analyze-and-emit [1 2 3])))))
+
+(deftest emit-map-test
+  (testing "empty map"
+    (is (= "'()" (analyze-and-emit {}))))
+  (testing "map with entries"
+    (let [result (analyze-and-emit {:a 1})]
+      (is (clojure.string/includes? result ":a"))
+      (is (clojure.string/includes? result "1")))))
+
+(deftest emit-set-test
+  (testing "set emits as list"
+    (let [result (analyze-and-emit #{1 2 3})]
+      (is (clojure.string/starts-with? result "(list")))))
+
+;; ============================================================================
+;; Quote
+;; ============================================================================
+
+(deftest emit-quote-test
+  (testing "quoted symbol"
+    (is (= "'foo" (analyze-and-emit '(quote foo)))))
+  (testing "quoted list"
+    (is (= "'(1 2 3)" (analyze-and-emit '(quote (1 2 3)))))))
+
+;; ============================================================================
+;; def
+;; ============================================================================
+
+(deftest emit-def-test
+  (testing "simple def"
+    (let [result (analyze-and-emit '(def foo 42))]
+      (is (clojure.string/includes? result "defvar"))
+      (is (clojure.string/includes? result "foo"))
+      (is (clojure.string/includes? result "42"))))
+  (testing "def without init"
+    (let [result (analyze-and-emit '(def bar))]
+      (is (clojure.string/includes? result "defvar"))
+      (is (clojure.string/includes? result "bar"))
+      (is (clojure.string/includes? result "nil")))))
+
+;; ============================================================================
+;; defn
+;; ============================================================================
+
+(deftest emit-defn-test
+  (testing "simple defn"
+    (let [result (analyze-and-emit '(defn foo [x] x))]
+      (is (clojure.string/includes? result "defun"))
+      (is (clojure.string/includes? result "foo"))
+      (is (clojure.string/includes? result "(x)"))))
+  (testing "defn with docstring"
+    (let [result (analyze-and-emit '(defn greet "Says hello" [name] name))]
+      (is (clojure.string/includes? result "defun"))
+      (is (clojure.string/includes? result "Says hello"))))
+  (testing "defn with multiple params"
+    (let [result (analyze-and-emit '(defn add [a b] (+ a b)))]
+      (is (clojure.string/includes? result "(a b)"))))
+  (testing "defn name mangling"
+    (let [result (analyze-and-emit '(defn nil? [x] x))]
+      (is (clojure.string/includes? result "nil-p")))))
+
+
+(deftest emit-defn-multi-arity-test
+  (testing "multi-arity defn emits cl-case dispatch"
+    (let [result (analyze-and-emit '(defn foo ([x] x) ([x y] (+ x y))))]
+      (is (clojure.string/includes? result "defun"))
+      (is (clojure.string/includes? result "foo"))
+      (is (clojure.string/includes? result "&rest args"))
+      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "(length args)"))
+      ;; Check for arity cases
+      (is (clojure.string/includes? result "(1 (let"))
+      (is (clojure.string/includes? result "(2 (let"))))
+  (testing "multi-arity with variadic uses t for catch-all"
+    (let [result (analyze-and-emit '(defn bar ([x] x) ([x & more] (cons x more))))]
+      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "(1 (let"))
+      (is (clojure.string/includes? result "(t (let"))
+      (is (clojure.string/includes? result "nthcdr")))))
+
+(deftest emit-defn-variadic-test
+  (testing "single-arity variadic uses &rest"
+    (let [result (analyze-and-emit '(defn varargs [x & rest] (cons x rest)))]
+      (is (clojure.string/includes? result "defun"))
+      (is (clojure.string/includes? result "&rest args"))
+      (is (clojure.string/includes? result "let"))
+      (is (clojure.string/includes? result "(nth 0 args)"))
+      (is (clojure.string/includes? result "nthcdr")))))
+
+;; ============================================================================
+;; fn (lambda)
+;; ============================================================================
+
+(deftest emit-fn-test
+  (testing "simple fn"
+    (let [result (analyze-and-emit '(fn [x] x))]
+      (is (clojure.string/includes? result "lambda"))
+      (is (clojure.string/includes? result "(x)"))))
+  (testing "fn with multiple params"
+    (let [result (analyze-and-emit '(fn [a b] (+ a b)))]
+      (is (clojure.string/includes? result "lambda"))
+      (is (clojure.string/includes? result "(a b)")))))
+
+;; ============================================================================
+;; let
+;; ============================================================================
+
+(deftest emit-let-test
+  (testing "simple let"
+    (let [result (analyze-and-emit '(let [x 1] x))]
+      (is (clojure.string/includes? result "let*"))
+      (is (clojure.string/includes? result "(x 1)"))))
+  (testing "let with multiple bindings"
+    (let [result (analyze-and-emit '(let [a 1 b 2] (+ a b)))]
+      (is (clojure.string/includes? result "let*"))
+      (is (clojure.string/includes? result "(a 1)"))
+      (is (clojure.string/includes? result "(b 2)")))))
+
+;; ============================================================================
+;; if
+;; ============================================================================
+
+(deftest emit-if-test
+  (testing "if with then and else"
+    (let [result (analyze-and-emit '(if true 1 2))]
+      (is (clojure.string/includes? result "if"))
+      (is (clojure.string/includes? result "t"))
+      (is (clojure.string/includes? result "1"))
+      (is (clojure.string/includes? result "2"))))
+  (testing "if without else emits as when"
+    (let [result (analyze-and-emit '(if true 1))]
+      (is (clojure.string/includes? result "when")))))
+
+;; ============================================================================
+;; when
+;; ============================================================================
+
+(deftest emit-when-test
+  (testing "simple when"
+    (let [result (analyze-and-emit '(when true 42))]
+      (is (clojure.string/includes? result "when"))
+      (is (clojure.string/includes? result "t"))
+      (is (clojure.string/includes? result "42")))))
+
+;; ============================================================================
+;; cond
+;; ============================================================================
+
+(deftest emit-cond-test
+  (testing "simple cond"
+    (let [result (analyze-and-emit '(cond true 1 false 2))]
+      (is (clojure.string/includes? result "cond"))
+      (is (clojure.string/includes? result "(t 1)"))
+      (is (clojure.string/includes? result "(nil 2)")))))
+
+;; ============================================================================
+;; do
+;; ============================================================================
+
+(deftest emit-do-test
+  (testing "simple do"
+    (let [result (analyze-and-emit '(do 1 2 3))]
+      (is (clojure.string/includes? result "progn"))
+      (is (clojure.string/includes? result "1"))
+      (is (clojure.string/includes? result "2"))
+      (is (clojure.string/includes? result "3")))))
+
+;; ============================================================================
+;; ns
+;; ============================================================================
+
+(deftest emit-ns-test
+  (testing "simple ns"
+    (let [result (analyze-and-emit '(ns my.package))]
+      (is (clojure.string/includes? result "my-package"))
+      (is (clojure.string/includes? result "lexical-binding: t"))
+      (is (clojure.string/includes? result "clojure-elisp-runtime")))))
+
+;; ============================================================================
+;; loop/recur
+;; ============================================================================
+
+(deftest emit-loop-test
+  (testing "simple loop"
+    (let [result (analyze-and-emit '(loop [x 0] x))]
+      (is (clojure.string/includes? result "cl-labels"))
+      (is (clojure.string/includes? result "recur")))))
+
+(deftest emit-recur-test
+  (testing "recur call"
+    (let [result (analyze-and-emit '(recur 1 2))]
+      (is (clojure.string/includes? result "recur"))
+      (is (clojure.string/includes? result "1"))
+      (is (clojure.string/includes? result "2")))))
+
+;; ============================================================================
+;; Function Invocation
+;; ============================================================================
+
+(deftest emit-invoke-test
+  (testing "simple function call"
+    (let [result (analyze-and-emit '(+ 1 2))]
+      (is (= "(+ 1 2)" result))))
+  (testing "core function mapping"
+    (let [result (analyze-and-emit '(first xs))]
+      (is (= "(car xs)" result))))
+  (testing "nested function calls"
+    (let [result (analyze-and-emit '(+ (* 2 3) 4))]
+      (is (clojure.string/includes? result "(* 2 3)"))
+      (is (clojure.string/includes? result "+"))))
+  (testing "no-arg function call"
+    (let [result (analyze-and-emit '(foo))]
+      (is (= "(foo)" result)))))
+
+;; ============================================================================
+;; Core Function Mappings
+;; ============================================================================
+
+(deftest core-fn-mapping-test
+  (testing "list operations"
+    (is (= "(car xs)" (analyze-and-emit '(first xs))))
+    (is (= "(cdr xs)" (analyze-and-emit '(rest xs))))
+    (is (= "(length xs)" (analyze-and-emit '(count xs)))))
+  (testing "arithmetic"
+    (is (= "(1+ x)" (analyze-and-emit '(inc x))))
+    (is (= "(1- x)" (analyze-and-emit '(dec x)))))
+  (testing "predicates"
+    (is (= "(null x)" (analyze-and-emit '(nil? x))))
+    (is (= "(stringp x)" (analyze-and-emit '(string? x))))
+    (is (= "(numberp x)" (analyze-and-emit '(number? x)))))
+  (testing "string functions"
+    (is (= "(clel-str a b)" (analyze-and-emit '(str a b)))))
+  (testing "higher-order functions"
+    (is (= "(mapcar f xs)" (analyze-and-emit '(map f xs))))))
+
+;; ============================================================================
+;; Full Pipeline Tests
+;; ============================================================================
+
+(deftest full-pipeline-test
+  (testing "defn with arithmetic"
+    (let [result (analyze-and-emit '(defn double [x] (* x 2)))]
+      (is (clojure.string/includes? result "defun"))
+      (is (clojure.string/includes? result "double"))
+      (is (clojure.string/includes? result "(* x 2)"))))
+  (testing "let with nested expressions"
+    (let [result (analyze-and-emit '(let [a 1 b 2] (+ a b)))]
+      (is (clojure.string/includes? result "let*"))
+      (is (clojure.string/includes? result "(+ a b)"))))
+  (testing "cond with comparisons"
+    (let [result (analyze-and-emit '(cond (> x 0) "positive"
+                                          (< x 0) "negative"
+                                          :else "zero"))]
+      (is (clojure.string/includes? result "cond"))
+      (is (clojure.string/includes? result "(> x 0)")))))
+
+;; ============================================================================
+;; Edge Cases
+;; ============================================================================
+
+(deftest edge-cases-test
+  (testing "deeply nested expressions"
+    (let [result (analyze-and-emit '(if (and (> x 0) (< x 10))
+                                      (+ x 1)
+                                      (- x 1)))]
+      (is (clojure.string/includes? result "if"))
+      (is (clojure.string/includes? result "and"))))
+  (testing "function as argument"
+    (let [result (analyze-and-emit '(map inc [1 2 3]))]
+      (is (clojure.string/includes? result "mapcar"))
+      (is (clojure.string/includes? result "1+")))))
+
+;; ============================================================================
+;; Elisp Validity Tests (Basic Structure)
+;; ============================================================================
+
+(deftest elisp-syntax-validity-test
+  (testing "parentheses are balanced"
+    (let [forms ['(defn foo [x] x)
+                 '(let [a 1] a)
+                 '(if true 1 2)
+                 '(cond true 1 false 2)
+                 '(fn [x] (+ x 1))]]
+      (doseq [form forms]
+        (let [result (analyze-and-emit form)
+              opens (count (filter #(= % \() result))
+              closes (count (filter #(= % \)) result))]
+          (is (= opens closes)
+              (str "Unbalanced parens in: " result))))))
+  (testing "strings are properly quoted"
+    (let [result (analyze-and-emit "hello world")]
+      (is (clojure.string/starts-with? result "\""))
+      (is (clojure.string/ends-with? result "\"")))))

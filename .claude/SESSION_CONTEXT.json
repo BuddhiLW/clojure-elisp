@@ -1,0 +1,41 @@
+{
+  "date": "2026-01-01",
+  "focus_area": "ClojureElisp compiler - swarm parallel implementation",
+  "branches_created": ["feat/swarm-batch-1"],
+  "key_files": [
+    "src/clojure_elisp/analyzer.clj",
+    "src/clojure_elisp/emitter.clj",
+    "test/clojure_elisp/analyzer_test.clj",
+    "test/clojure_elisp/emitter_test.clj",
+    "test/clojure_elisp/core_test.clj",
+    "kanban.org"
+  ],
+  "adrs_created": [],
+  "completed_tasks": [
+    "clel-001: Test infrastructure with Kaocha (71 tests, 395 assertions)",
+    "clel-002: Destructuring in let bindings (vector, map, :keys, :or, :as)",
+    "clel-003: Destructuring in fn/defn parameters (& rest args)",
+    "clel-004: try/catch/finally support (condition-case, unwind-protect)",
+    "clel-005: throw support (signal 'error for ex-info, Exception., rethrow)",
+    "clel-006: Multi-arity functions (cl-case dispatch on length)"
+  ],
+  "in_progress_tasks": [],
+  "blocking_issues": [],
+  "next_actions": [
+    "Merge feat/swarm-batch-1 to main or create PR",
+    "clel-007: Implement case special form",
+    "clel-008: Implement letfn for local functions",
+    "clel-010: Handle and/or as special forms (short-circuit)"
+  ],
+  "decisions_made": [
+    "Multi-arity emits cl-case on (length args) with car/cadr/nth bindings",
+    "throw maps to (signal 'error ...) with ex-info/constructor/rethrow detection",
+    "Swarm workflow: broadcast guidance, monitor with mcp_watch_buffer, send '2' for auto-approve"
+  ],
+  "swarm_conventions": {
+    "spawning": "swarm_spawn with presets like ['tdd', 'clarity']",
+    "monitoring": "swarm_status + mcp_watch_buffer for progress",
+    "unsticking": "(with-current-buffer \"*swarm-name*\" (vterm-send-string \"2\") (vterm-send-return))",
+    "file_conflicts": "Multiple slaves editing same file get 'modified since last read' - they re-read and retry"
+  }
+}
