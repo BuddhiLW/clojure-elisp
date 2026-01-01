@@ -13,12 +13,16 @@
 - coll?, sequential?, associative? → clel-coll-p, clel-sequential-p, clel-associative-p
 - 90 tests, 556 assertions total
 
-** TODO Implement atom watch functions
+** DONE Implement atom watch functions
 :PROPERTIES:
 :ID: clel-015
 :PRIORITY: C
 :END:
-add-watch, remove-watch for atoms
+- add-watch, remove-watch for atoms
+- Updated atom structure to store watchers alist
+- clel-add-watch, clel-remove-watch, clel--notify-watchers
+- Updated clel-reset!, clel-swap! to notify watchers
+- 94 tests, 595 assertions total
 
 ** TODO Add CLI compilation tool
 :PROPERTIES:

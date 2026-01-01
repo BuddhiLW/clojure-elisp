@@ -1,60 +1,39 @@
 {
   "date": "2026-01-01",
-  "focus_area": "ClojureElisp compiler - predicate functions",
-  "branches_created": ["feat/swarm-batch-1"],
+  "focus_area": "ClojureElisp compiler - atom watch functions",
+  "branches_created": ["feat/clel-015-atom-watch"],
   "key_files": [
     "src/clojure_elisp/analyzer.clj",
     "src/clojure_elisp/emitter.clj",
-    "test/clojure_elisp/analyzer_test.clj",
-    "test/clojure_elisp/emitter_test.clj",
-    "test/clojure_elisp/core_test.clj",
     "test/clojure_elisp/runtime_test.clj",
     "resources/clojure-elisp/clojure-elisp-runtime.el",
     "kanban.org"
   ],
   "adrs_created": [],
   "completed_tasks": [
-    "clel-001: Test infrastructure with Kaocha (71 tests, 395 assertions)",
-    "clel-002: Destructuring in let bindings (vector, map, :keys, :or, :as)",
-    "clel-003: Destructuring in fn/defn parameters (& rest args)",
-    "clel-004: try/catch/finally support (condition-case, unwind-protect)",
-    "clel-005: throw support (signal 'error for ex-info, Exception., rethrow)",
-    "clel-006: Multi-arity functions (cl-case dispatch on length)",
-    "clel-007: case special form (cl-case with default)",
-    "clel-008: letfn for local functions (cl-labels)",
-    "clel-010: and/or as special forms (short-circuit)",
-    "clel-009: defmulti/defmethod (cl-defgeneric/cl-defmethod)",
-    "clel-011: Proper namespace :require handling (:as, :refer)",
-    "clel-012: clel-into runtime function (vectors, lists, hash-tables)",
-    "clel-013: clel-dissoc runtime function (alists, hash-tables)",
-    "clel-014: Predicate functions - numeric (zero?, pos?, neg?, even?, odd?), boolean (some?, true?, false?), collection (coll?, sequential?, associative?)"
+    "clel-015: Atom watch functions - add-watch, remove-watch, notify watchers on reset!/swap!"
   ],
   "in_progress_tasks": [],
   "blocking_issues": [],
   "next_actions": [
-    "clel-015: Implement atom watch functions (add-watch, remove-watch)",
     "clel-016: Add CLI compilation tool",
-    "clel-017: Create cljel-mode for Emacs"
+    "clel-017: Create cljel-mode for Emacs",
+    "clel-018: Implement lazy sequences"
   ],
   "decisions_made": [
-    "Multi-arity emits cl-case on (length args) with car/cadr/nth bindings",
-    "throw maps to (signal 'error ...) with ex-info/constructor/rethrow detection",
-    "Swarm workflow: broadcast guidance, monitor with mcp_watch_buffer, send '2' for auto-approve",
-    "defmulti emits cl-defgeneric, defmethod emits cl-defmethod with eql type dispatch",
-    ":default dispatch value maps to t (catch-all) in Elisp",
-    "Numeric predicates map directly to Elisp cl-lib: zerop, cl-plusp, cl-minusp, cl-evenp, cl-oddp",
-    "Boolean/collection predicates use clel-* runtime functions"
+    "Atom structure: (list 'clel-atom val watchers-alist) - allows nth access for value and watchers",
+    "clojure.core/deref mapping needed for @ reader macro (expands to qualified symbol)",
+    "Watchers called with (key atom old-val new-val) matching Clojure semantics"
   ],
   "swarm_conventions": {
     "spawning": "swarm_spawn with presets like ['tdd', 'clarity']",
     "monitoring": "swarm_status + mcp_watch_buffer for progress",
     "unsticking": "(with-current-buffer \"*swarm-name*\" (vterm-send-string \"2\") (vterm-send-return))",
-    "file_conflicts": "Multiple slaves editing same file get 'modified since last read' - they re-read and retry",
-    "non_interference": "Never kill other Claude instances' swarmlings - use prefixes (clel-*, mem-*, doc-*)"
+    "file_conflicts": "Multiple slaves editing same file get 'modified since last read' - they re-read and retry"
   },
   "test_stats": {
-    "tests": 90,
-    "assertions": 556,
+    "tests": 94,
+    "assertions": 595,
     "failures": 0
   }
 }

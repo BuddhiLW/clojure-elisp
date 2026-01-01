@@ -191,22 +191,59 @@ Examples:
                 x)))
 
 ;;; Atoms
+;; Structure: (list 'clel-atom value watchers-alist)
+;; - (nth 1 atom) = value
+;; - (nth 2 atom) = watchers alist ((key1 . fn1) (key2 . fn2) ...)
 
 (defun clel-atom (val)
   "Create an atom with initial value VAL."
-  (cons 'clel-atom val))
+  (list 'clel-atom val nil))
 
 (defun clel-deref (atom)
   "Get the value of ATOM."
-  (cdr atom))
+  (nth 1 atom))
+
+(defun clel--notify-watchers (atom old-val new-val)
+  "Call all watchers on ATOM with OLD-VAL and NEW-VAL."
+  (let ((watchers (nth 2 atom)))
+    (dolist (watcher watchers)
+      (let ((key (car watcher))
+            (fn (cdr watcher)))
+        (funcall fn key atom old-val new-val)))))
 
 (defun clel-reset! (atom val)
-  "Reset ATOM to VAL."
-  (setcdr atom val) val)
+  "Reset ATOM to VAL, calling watchers."
+  (let ((old-val (nth 1 atom)))
+    (setcar (nthcdr 1 atom) val)
+    (clel--notify-watchers atom old-val val)
+    val))
 
 (defun clel-swap! (atom fn &rest args)
-  "Swap ATOM by applying FN to current value and ARGS."
-  (clel-reset! atom (apply fn (clel-deref atom) args)))
+  "Swap ATOM by applying FN to current value and ARGS, calling watchers."
+  (let* ((old-val (clel-deref atom))
+         (new-val (apply fn old-val args)))
+    (setcar (nthcdr 1 atom) new-val)
+    (clel--notify-watchers atom old-val new-val)
+    new-val))
+
+(defun clel-add-watch (atom key fn)
+  "Add watcher FN to ATOM under KEY.
+FN will be called with (key atom old-val new-val) when atom changes.
+Returns ATOM."
+  (let ((watchers (nth 2 atom)))
+    ;; Remove existing watcher with same key if present
+    (setq watchers (cl-remove-if (lambda (w) (equal (car w) key)) watchers))
+    ;; Add new watcher
+    (setcar (nthcdr 2 atom) (cons (cons key fn) watchers)))
+  atom)
+
+(defun clel-remove-watch (atom key)
+  "Remove watcher with KEY from ATOM.
+Returns ATOM."
+  (let ((watchers (nth 2 atom)))
+    (setcar (nthcdr 2 atom)
+            (cl-remove-if (lambda (w) (equal (car w) key)) watchers)))
+  atom)
 
 (provide 'clojure-elisp-runtime)
 ;;; clojure-elisp-runtime.el ends here
