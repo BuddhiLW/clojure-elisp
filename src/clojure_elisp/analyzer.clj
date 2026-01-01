@@ -214,54 +214,60 @@
 (defn analyze
   "Analyze a Clojure form into an AST node."
   [form]
-  (cond
-    ;; Nil
-    (nil? form)
-    (ast-node :const :val nil :type :nil)
+  ;; Macroexpand first to handle ->, ->>, doto, cond->, etc.
+  (let [form (if (and (seq? form)
+                      (symbol? (first form))
+                      (not (contains? special-forms (first form))))
+               (macroexpand form)
+               form)]
+    (cond
+      ;; Nil
+      (nil? form)
+      (ast-node :const :val nil :type :nil)
 
-    ;; Boolean
-    (boolean? form)
-    (ast-node :const :val form :type :bool)
+      ;; Boolean
+      (boolean? form)
+      (ast-node :const :val form :type :bool)
 
-    ;; Number
-    (number? form)
-    (ast-node :const :val form :type :number)
+      ;; Number
+      (number? form)
+      (ast-node :const :val form :type :number)
 
-    ;; String
-    (string? form)
-    (ast-node :const :val form :type :string)
+      ;; String
+      (string? form)
+      (ast-node :const :val form :type :string)
 
-    ;; Keyword
-    (keyword? form)
-    (ast-node :const :val form :type :keyword)
+      ;; Keyword
+      (keyword? form)
+      (ast-node :const :val form :type :keyword)
 
-    ;; Symbol
-    (symbol? form)
-    (if (contains? (:locals *env*) form)
-      (ast-node :local :name form)
-      (ast-node :var :name form))
+      ;; Symbol
+      (symbol? form)
+      (if (contains? (:locals *env*) form)
+        (ast-node :local :name form)
+        (ast-node :var :name form))
 
-    ;; Vector
-    (vector? form)
-    (analyze-vector form)
+      ;; Vector
+      (vector? form)
+      (analyze-vector form)
 
-    ;; Map
-    (map? form)
-    (analyze-map form)
+      ;; Map
+      (map? form)
+      (analyze-map form)
 
-    ;; Set
-    (set? form)
-    (analyze-set form)
+      ;; Set
+      (set? form)
+      (analyze-set form)
 
-    ;; List (special form or invocation)
-    (seq? form)
-    (let [op (first form)]
-      (if-let [analyzer (get special-forms op)]
-        (analyzer form)
-        (analyze-invoke form)))
+      ;; List (special form or invocation)
+      (seq? form)
+      (let [op (first form)]
+        (if-let [analyzer (get special-forms op)]
+          (analyzer form)
+          (analyze-invoke form)))
 
-    :else
-    (ast-node :unknown :form form)))
+      :else
+      (ast-node :unknown :form form))))
 
 (comment
   (analyze '(defn foo [x] (+ x 1)))
