@@ -337,6 +337,13 @@
         type-spec (if (= :default dispatch-val)
                     "t"
                     (format "(eql %s)" (emit {:op :const :val dispatch-val :type (type dispatch-val)})))
+        ;; Emit params - first param gets the type specializer
+        params-str (if (= 1 (count params))
+                     (format "((%s %s))" (mangle-name (first params)) type-spec)
+                     (format "((%s %s) %s)"
+                             (mangle-name (first params))
+                             type-spec
+                             (str/join " " (map mangle-name (rest params)))))
         ;; Emit body with potential destructuring
         body-str (if destructure-bindings
                    ;; Wrap body in let* for destructuring (bindings are already analyzed)
@@ -347,8 +354,8 @@
                              (str/join "\n             " binding-strs)
                              (str/join "\n      " (map emit body))))
                    (str/join "\n    " (map emit body)))]
-    (format "(cl-defmethod %s ((%s %s))\n  %s)"
-            elisp-name (mangle-name (first params)) type-spec body-str)))
+    (format "(cl-defmethod %s %s\n  %s)"
+            elisp-name params-str body-str)))
 
 (defmethod emit-node :if
   [{:keys [test then else]}]

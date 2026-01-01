@@ -503,9 +503,14 @@
   (testing "defmethod with :default dispatch"
     (let [code (analyze-and-emit '(defmethod area :default [shape] 0))]
       (is (clojure.string/includes? code "cl-defmethod"))
-      (is (clojure.string/includes? code "(arg t)")))) ;; :default maps to t in elisp
+      (is (clojure.string/includes? code "(shape t)")))) ;; :default maps to t in elisp
 
   (testing "defmethod body is emitted"
     (let [code (analyze-and-emit '(defmethod area :rectangle [{:keys [w h]}] (* w h)))]
-      (is (clojure.string/includes? code "*")))))
+      (is (clojure.string/includes? code "*"))))
+
+  (testing "defmethod without destructuring"
+    (let [code (analyze-and-emit '(defmethod greet :english [person] (str "Hello")))]
+      (is (clojure.string/includes? code "(person (eql :english))"))
+      (is (not (clojure.string/includes? code "let*"))))))
 

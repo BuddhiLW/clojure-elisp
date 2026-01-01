@@ -37,3 +37,31 @@
     ;; First arg is target, second is source
     (let [code (clel/emit '(into target source))]
       (is (re-find #"clel-into\s+target\s+source" code)))))
+
+;;; dissoc -> clel-dissoc tests
+
+(deftest emit-dissoc-test
+  (testing "dissoc compiles to clel-dissoc"
+    (is (str/includes? (clel/emit '(dissoc {:a 1 :b 2} :a)) "clel-dissoc"))
+    (is (str/includes? (clel/emit '(dissoc m :key)) "clel-dissoc")))
+
+  (testing "dissoc with single key"
+    (let [code (clel/emit '(dissoc {:a 1 :b 2} :a))]
+      (is (str/includes? code "clel-dissoc"))
+      (is (str/includes? code ":a"))))
+
+  (testing "dissoc with nonexistent key (should still compile)"
+    (let [code (clel/emit '(dissoc {:a 1} :nonexistent))]
+      (is (str/includes? code "clel-dissoc"))
+      (is (str/includes? code ":nonexistent"))))
+
+  (testing "dissoc nested in expression"
+    (let [code (clel/emit '(let [result (dissoc m :key)]
+                             (get result :other)))]
+      (is (str/includes? code "clel-dissoc"))
+      (is (str/includes? code "let"))))
+
+  (testing "dissoc preserves argument order"
+    (let [code (clel/emit '(dissoc my-map my-key))]
+      (is (re-find #"clel-dissoc\s+my-map\s+my-key" code)))))
+
