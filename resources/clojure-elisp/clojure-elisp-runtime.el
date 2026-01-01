@@ -74,6 +74,19 @@
       new))
    (t (error "clel-assoc: unsupported collection type"))))
 
+(defun clel-dissoc (coll key)
+  "Remove KEY from COLL, returning new collection.
+Works with alists and hash-tables."
+  (cond
+   ((null coll) nil)
+   ((listp coll)
+    (cl-remove-if (lambda (pair) (equal (car pair) key)) coll))
+   ((hash-table-p coll)
+    (let ((new (copy-hash-table coll)))
+      (remhash key new)
+      new))
+   (t (error "clel-dissoc: unsupported collection type"))))
+
 (defun clel-keys (coll)
   "Return keys of COLL as a list."
   (cond
