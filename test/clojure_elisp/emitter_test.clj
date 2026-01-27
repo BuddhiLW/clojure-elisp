@@ -514,3 +514,33 @@
       (is (clojure.string/includes? code "(person (eql :english))"))
       (is (not (clojure.string/includes? code "let*"))))))
 
+;; ============================================================================
+;; Elisp Interop (clel-021)
+;; ============================================================================
+
+(deftest emit-interop-dot-call-test
+  (testing "dot-call with no args"
+    (is (= "(buffer-name)" (analyze-and-emit '(.buffer-name)))))
+  (testing "dot-call with args"
+    (is (= "(substring \"hello\" 0 3)" (analyze-and-emit '(.substring "hello" 0 3)))))
+  (testing "dot-call with operator-like name"
+    (is (= "(+ 1 2)" (analyze-and-emit '(.+ 1 2)))))
+  (testing "dot-call with single arg"
+    (is (= "(message \"hi\")" (analyze-and-emit '(.message "hi"))))))
+
+(deftest emit-interop-elisp-ns-test
+  (testing "elisp/ namespace call with one arg"
+    (is (= "(message \"hi\")" (analyze-and-emit '(elisp/message "hi")))))
+  (testing "elisp/ namespace call with multiple args"
+    (is (= "(message \"hello %s\" name)" (analyze-and-emit '(elisp/message "hello %s" name)))))
+  (testing "elisp/ namespace call no args"
+    (is (= "(point)" (analyze-and-emit '(elisp/point)))))
+  (testing "elisp/ namespace call with quoted arg"
+    (is (= "(car '(1 2 3))" (analyze-and-emit '(elisp/car '(1 2 3)))))))
+
+(deftest emit-interop-property-access-test
+  (testing "property access zero-arg function"
+    (is (= "(point)" (analyze-and-emit '(.-point)))))
+  (testing "property access buffer-name"
+    (is (= "(buffer-name)" (analyze-and-emit '(.-buffer-name))))))
+

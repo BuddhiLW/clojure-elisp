@@ -682,15 +682,56 @@
             :items (mapv analyze s)))
 
 ;; ============================================================================
+;; Interop Detection
+;; ============================================================================
+
+(defn- interop-symbol?
+  "Returns true if symbol represents an Elisp interop call.
+   Matches: .method, .-field, and elisp/fn patterns."
+  [sym]
+  (when (symbol? sym)
+    (let [sym-name (name sym)
+          sym-ns (namespace sym)]
+      (or (.startsWith sym-name ".")
+          (= sym-ns "elisp")))))
+
+;; ============================================================================
 ;; Invocation Analyzer
 ;; ============================================================================
 
 (defn analyze-invoke
-  "Analyze function invocation (f args...)."
+  "Analyze function invocation (f args...).
+   Detects Elisp interop patterns:
+   - (.method args...) → :interop-call with :method stripped of leading dot
+   - (.-field)         → :interop-call with :method stripped of leading .-
+   - (elisp/fn args..) → :elisp-call with :fn as raw Elisp name"
   [[f & args]]
-  (ast-node :invoke
-            :fn (analyze f)
-            :args (mapv analyze args)))
+  (let [f-name (when (symbol? f) (name f))
+        f-ns (when (symbol? f) (namespace f))]
+    (cond
+      ;; Property access: (.-point) → zero-arg Elisp function call
+      (and f-name (.startsWith f-name ".-"))
+      (ast-node :interop-call
+                :method (subs f-name 2)
+                :args (mapv analyze args))
+
+      ;; Dot-call: (.buffer-name args...) → Elisp function call
+      (and f-name (.startsWith f-name "."))
+      (ast-node :interop-call
+                :method (subs f-name 1)
+                :args (mapv analyze args))
+
+      ;; Elisp namespace: (elisp/message "hi") → raw Elisp call
+      (= f-ns "elisp")
+      (ast-node :elisp-call
+                :fn f-name
+                :args (mapv analyze args))
+
+      ;; Default invocation
+      :else
+      (ast-node :invoke
+                :fn (analyze f)
+                :args (mapv analyze args)))))
 
 ;; ============================================================================
 ;; Main Analyzer
@@ -725,9 +766,12 @@
   "Analyze a Clojure form into an AST node."
   [form]
   ;; Macroexpand first to handle ->, ->>, doto, cond->, etc.
+  ;; Skip macroexpand for interop forms (.method, .-field, elisp/fn)
+  ;; since Clojure would try to handle them as Java interop.
   (let [form (if (and (seq? form)
                       (symbol? (first form))
-                      (not (contains? special-forms (first form))))
+                      (not (contains? special-forms (first form)))
+                      (not (interop-symbol? (first form))))
                (macroexpand form)
                form)]
     (cond

@@ -537,6 +537,16 @@
   [{:keys [args]}]
   (emit-sexp "recur" (emit-list (map emit args))))
 
+(defmethod emit-node :interop-call
+  [{:keys [method args]}]
+  (let [args-str (map emit args)]
+    (apply emit-sexp method args-str)))
+
+(defmethod emit-node :elisp-call
+  [{:keys [fn args]}]
+  (let [args-str (map emit args)]
+    (apply emit-sexp fn args-str)))
+
 (defmethod emit-node :invoke
   [{:keys [fn args]}]
   (let [fn-str (emit fn)
