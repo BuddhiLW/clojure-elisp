@@ -68,6 +68,52 @@ Store in symbol plist in Elisp
 Track line/column in AST nodes for better error messages
 Optionally emit comments with source locations
 
+** TODO Elisp interop — dot-notation and native Emacs API calls
+:PROPERTIES:
+:ID: clel-021
+:PRIORITY: B
+:END:
+Add Elisp interop so ClojureElisp can call Emacs APIs directly.
+- (. obj method args), (.method obj args) sugar
+- (elisp/function args) namespace-qualified calls emitting raw Elisp
+- Analyzer: recognize interop forms
+- Emitter: emit direct Elisp function calls
+- Tests: buffer-name, message, car/cdr, interactive APIs
+Depends on: nothing (foundational)
+
+** TODO Basic REPL — comint-based compile-and-eval loop
+:PROPERTIES:
+:ID: clel-022
+:PRIORITY: B
+:END:
+Basic REPL: read forms, compile to Elisp via JVM, eval in Emacs.
+- comint-mode buffer
+- Send form to running clojure process via stdin
+- Receive compiled Elisp, eval locally, display result
+Depends on: clel-017 (mode)
+
+** TODO nREPL middleware + CIDER integration
+:PROPERTIES:
+:ID: clel-023
+:PRIORITY: B
+:END:
+nREPL middleware intercepts eval ops for :cljel session type.
+- Compiles via clojure-elisp.core, returns Elisp string
+- CIDER side: register :cljel REPL type
+- Local eval of compiled Elisp in Emacs, result display
+Depends on: clel-022 (basic REPL)
+
+** TODO Port hive-mcp modules to ClojureElisp (incremental)
+:PROPERTIES:
+:ID: clel-024
+:PRIORITY: C
+:END:
+Incrementally port hive-mcp Elisp modules to ClojureElisp.
+- Start with self-contained utility module
+- Compile to .el, require alongside existing Elisp
+- Validate interop and runtime work end-to-end
+Depends on: clel-021 (interop), clel-017 (mode)
+
 * In Progress
 
 * In Review
