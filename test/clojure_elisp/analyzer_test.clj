@@ -705,3 +705,122 @@
       (is (= 1 (:line ast1)))
       (is (= 2 (:line ast2))))))
 
+;; ============================================================================
+;; Protocols - defprotocol (clel-025)
+;; ============================================================================
+
+(deftest analyze-defprotocol-test
+  (testing "basic protocol with single method"
+    (let [ast (analyze '(defprotocol IGreeter
+                          (greet [this name])))]
+      (is (= :defprotocol (:op ast)))
+      (is (= 'IGreeter (:name ast)))
+      (is (= 1 (count (:methods ast))))
+      (is (= 'greet (get-in ast [:methods 0 :name])))
+      (is (= '[this name] (get-in ast [:methods 0 :params])))))
+
+  (testing "protocol with multiple methods"
+    (let [ast (analyze '(defprotocol IShape
+                          (area [this])
+                          (perimeter [this])))]
+      (is (= :defprotocol (:op ast)))
+      (is (= 'IShape (:name ast)))
+      (is (= 2 (count (:methods ast))))
+      (is (= 'area (get-in ast [:methods 0 :name])))
+      (is (= 'perimeter (get-in ast [:methods 1 :name])))))
+
+  (testing "protocol method with multiple args"
+    (let [ast (analyze '(defprotocol IWriter
+                          (write [this data options])))]
+      (is (= '[this data options] (get-in ast [:methods 0 :params]))))))
+
+;; ============================================================================
+;; Records - defrecord (clel-025)
+;; ============================================================================
+
+(deftest analyze-defrecord-test
+  (testing "basic record without protocols"
+    (let [ast (analyze '(defrecord Point [x y]))]
+      (is (= :defrecord (:op ast)))
+      (is (= 'Point (:name ast)))
+      (is (= '[x y] (:fields ast)))
+      (is (empty? (:protocols ast)))))
+
+  (testing "record with protocol implementation"
+    (let [ast (analyze '(defrecord Person [first-name last-name]
+                          IGreeter
+                          (greet [this name] (str "Hello " name))))]
+      (is (= :defrecord (:op ast)))
+      (is (= 'Person (:name ast)))
+      (is (= '[first-name last-name] (:fields ast)))
+      (is (= 1 (count (:protocols ast))))
+      (is (= 'IGreeter (get-in ast [:protocols 0 :protocol])))
+      (is (= 1 (count (get-in ast [:protocols 0 :methods]))))
+      (is (= 'greet (get-in ast [:protocols 0 :methods 0 :name])))))
+
+  (testing "record fields are locals in method body"
+    (let [ast (analyze '(defrecord Person [name]
+                          IGreeter
+                          (greet [this] name)))]
+      (let [body-node (get-in ast [:protocols 0 :methods 0 :body 0])]
+        (is (= :local (:op body-node)))
+        (is (= 'name (:name body-node))))))
+
+  (testing "record with multiple protocols"
+    (let [ast (analyze '(defrecord Square [side]
+                          IShape
+                          (area [this] (* side side))
+                          IDrawable
+                          (draw [this ctx] nil)))]
+      (is (= 2 (count (:protocols ast))))
+      (is (= 'IShape (get-in ast [:protocols 0 :protocol])))
+      (is (= 'IDrawable (get-in ast [:protocols 1 :protocol]))))))
+
+;; ============================================================================
+;; Types - deftype (clel-025)
+;; ============================================================================
+
+(deftest analyze-deftype-test
+  (testing "basic deftype with mutable field"
+    (let [ast (analyze '(deftype Counter [^:mutable count]))]
+      (is (= :deftype (:op ast)))
+      (is (= 'Counter (:name ast)))
+      (is (= 1 (count (:fields ast))))
+      (is (contains? (:mutable-fields ast) 'count))))
+
+  (testing "deftype with protocol implementation"
+    (let [ast (analyze '(deftype Counter [^:mutable count]
+                          ICounter
+                          (increment [this] (set! count (inc count)))))]
+      (is (= :deftype (:op ast)))
+      (is (= 1 (count (:protocols ast))))
+      (is (= 'increment (get-in ast [:protocols 0 :methods 0 :name])))))
+
+  (testing "deftype with mixed mutable/immutable fields"
+    (let [ast (analyze '(deftype Accum [name ^:mutable total]))]
+      (is (= 2 (count (:fields ast))))
+      (is (contains? (:mutable-fields ast) 'total))
+      (is (not (contains? (:mutable-fields ast) 'name)))))
+
+  (testing "deftype without mutable fields"
+    (let [ast (analyze '(deftype Wrapper [value]))]
+      (is (= :deftype (:op ast)))
+      (is (empty? (:mutable-fields ast))))))
+
+;; ============================================================================
+;; set! (clel-025)
+;; ============================================================================
+
+(deftest analyze-set!-test
+  (testing "basic set!"
+    (let [ast (analyze '(set! x 42))]
+      (is (= :set! (:op ast)))
+      (is (= 'x (:target ast)))
+      (is (= :const (get-in ast [:value :op])))))
+
+  (testing "set! with expression value"
+    (let [ast (analyze '(set! count (inc count)))]
+      (is (= :set! (:op ast)))
+      (is (= 'count (:target ast)))
+      (is (= :invoke (get-in ast [:value :op]))))))
+

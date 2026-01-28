@@ -697,6 +697,88 @@
                       (mapv analyze body)))))
 
 ;; ============================================================================
+;; Protocol / Record / Type Support (clel-025)
+;; ============================================================================
+
+(defn- parse-protocol-impls
+  "Parse protocol implementations from defrecord/deftype body.
+   Body alternates between protocol name symbols and method implementations.
+   Returns a vector of {:protocol name :methods [{:name :params :body}]}."
+  [body fields]
+  (loop [remaining (seq body)
+         current-protocol nil
+         protocols []
+         current-methods []]
+    (if (nil? remaining)
+      (if current-protocol
+        (conj protocols {:protocol current-protocol :methods current-methods})
+        protocols)
+      (let [item (first remaining)]
+        (if (symbol? item)
+          ;; New protocol name — flush previous
+          (let [protocols (if current-protocol
+                            (conj protocols {:protocol current-protocol :methods current-methods})
+                            protocols)]
+            (recur (next remaining) item protocols []))
+          ;; Method implementation: (method-name [this args...] body...)
+          (let [[method-name params & method-body] item
+                all-locals (into (set fields) (set params))]
+            (recur (next remaining)
+                   current-protocol
+                   protocols
+                   (conj current-methods
+                         {:name method-name
+                          :params (vec params)
+                          :body (binding [*env* (with-locals *env* all-locals)]
+                                  (mapv analyze method-body))}))))))))
+
+(defn analyze-defprotocol
+  "Analyze (defprotocol Name (method [this args...]) ...) forms.
+   Each method signature is (name [params...])."
+  [[_ proto-name & method-sigs]]
+  (let [methods (mapv (fn [sig]
+                        (let [[method-name params] sig]
+                          {:name method-name
+                           :params (vec params)}))
+                      (remove string? method-sigs))]
+    (ast-node :defprotocol
+              :name proto-name
+              :methods methods)))
+
+(defn analyze-defrecord
+  "Analyze (defrecord Name [fields...] Protocol (method [this] body) ...) forms."
+  [[_ record-name fields & body]]
+  (let [field-syms (vec fields)
+        protocols (parse-protocol-impls body field-syms)]
+    (ast-node :defrecord
+              :name record-name
+              :fields field-syms
+              :protocols protocols)))
+
+(defn analyze-deftype
+  "Analyze (deftype Name [fields...] Protocol (method [this] body) ...) forms.
+   Fields may have ^:mutable metadata."
+  [[_ type-name fields & body]]
+  (let [field-syms (vec fields)
+        mutable-fields (set (filter #(:mutable (meta %)) field-syms))
+        ;; Strip metadata for clean field names
+        clean-fields (mapv #(with-meta % nil) field-syms)
+        protocols (parse-protocol-impls body clean-fields)]
+    (ast-node :deftype
+              :name type-name
+              :fields clean-fields
+              :mutable-fields mutable-fields
+              :protocols protocols)))
+
+(defn analyze-set!
+  "Analyze (set! target value) forms.
+   Used within deftype methods to mutate mutable fields."
+  [[_ target value]]
+  (ast-node :set!
+            :target target
+            :value (analyze value)))
+
+;; ============================================================================
 ;; Collection Analyzers
 ;; ============================================================================
 
@@ -781,6 +863,10 @@
    'defn analyze-defn
    'defmulti analyze-defmulti
    'defmethod analyze-defmethod
+   'defprotocol analyze-defprotocol
+   'defrecord analyze-defrecord
+   'deftype analyze-deftype
+   'set! analyze-set!
    'fn analyze-fn
    'fn* analyze-fn
    'let analyze-let

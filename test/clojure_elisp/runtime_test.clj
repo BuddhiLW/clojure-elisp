@@ -537,3 +537,59 @@
       (is (str/includes? code "clel-dorun"))
       (is (str/includes? code "clel-lazy-seq-create")))))
 
+;;; Protocol + Record end-to-end compilation tests (clel-025)
+
+(deftest protocol-record-compilation-test
+  (testing "defprotocol + defrecord end-to-end"
+    (let [code (clel/emit-forms
+                '[(defprotocol IGreeter
+                    (greet [this name]))
+                  (defrecord Person [first-name last-name]
+                    IGreeter
+                    (greet [this name] (str "Hello " name)))])]
+      (is (str/includes? code "cl-defgeneric"))
+      (is (str/includes? code "cl-defstruct"))
+      (is (str/includes? code "cl-defmethod"))
+      (is (str/includes? code "->Person"))
+      (is (str/includes? code "map->Person"))))
+
+  (testing "defprotocol with multiple methods end-to-end"
+    (let [code (clel/emit-forms
+                '[(defprotocol IShape
+                    (area [this])
+                    (perimeter [this]))
+                  (defrecord Circle [radius]
+                    IShape
+                    (area [this] (* 3.14 radius radius))
+                    (perimeter [this] (* 2 3.14 radius)))])]
+      (is (= 2 (count (re-seq #"cl-defgeneric" code))))
+      (is (= 2 (count (re-seq #"cl-defmethod" code))))))
+
+  (testing "defrecord without protocol"
+    (let [code (clel/emit '(defrecord Point [x y]))]
+      (is (str/includes? code "cl-defstruct"))
+      (is (str/includes? code "->Point"))
+      (is (str/includes? code "map->Point"))
+      (is (not (str/includes? code "cl-defmethod"))))))
+
+(deftest deftype-compilation-test
+  (testing "deftype end-to-end"
+    (let [code (clel/emit '(deftype Counter [^:mutable count]))]
+      (is (str/includes? code "cl-defstruct"))
+      (is (str/includes? code "->Counter"))
+      (is (not (str/includes? code "map->Counter")))))
+
+  (testing "deftype with set! in method"
+    (let [code (clel/emit-forms
+                '[(defprotocol ICounter
+                    (increment [this])
+                    (get-count [this]))
+                  (deftype Counter [^:mutable count]
+                    ICounter
+                    (increment [this] (set! count (inc count)))
+                    (get-count [this] count))])]
+      (is (str/includes? code "cl-defgeneric"))
+      (is (str/includes? code "cl-defstruct"))
+      (is (str/includes? code "cl-defmethod"))
+      (is (str/includes? code "setf")))))
+

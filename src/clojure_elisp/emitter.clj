@@ -411,6 +411,129 @@
     (format "(cl-defmethod %s %s\n  %s)"
             elisp-name params-str body-str)))
 
+(defmethod emit-node :defprotocol
+  [{:keys [name methods]}]
+  (let [generics (map (fn [{:keys [name params]}]
+                        (let [method-name (mangle-name name)
+                              params-str (str/join " " (map mangle-name params))]
+                          (format "(cl-defgeneric %s (%s))" method-name params-str)))
+                      methods)]
+    (str/join "\n\n" generics)))
+
+(defn- emit-struct-def
+  "Emit cl-defstruct form for a record or type."
+  [elisp-name fields]
+  (let [field-strs (map mangle-name fields)]
+    (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil))\n  %s)"
+            elisp-name elisp-name
+            (str/join "\n  " field-strs))))
+
+(defn- emit-positional-ctor
+  "Emit positional constructor ->Name."
+  [elisp-name fields]
+  (let [field-strs (map mangle-name fields)
+        ctor-params (str/join " " field-strs)
+        ctor-args (str/join " " (map (fn [f]
+                                       (format ":%s %s" (mangle-name f) (mangle-name f)))
+                                     fields))]
+    (format "(defun ->%s (%s)\n  (%s--create %s))"
+            elisp-name ctor-params elisp-name ctor-args)))
+
+(defn- emit-map-ctor
+  "Emit map constructor map->Name."
+  [elisp-name fields]
+  (let [map-args (str/join " " (map (fn [f]
+                                      (format ":%s (clel-get m :%s)"
+                                              (mangle-name f) (mangle-name f)))
+                                    fields))]
+    (format "(defun map->%s (m)\n  (%s--create %s))"
+            elisp-name elisp-name map-args)))
+
+(defn- emit-record-method
+  "Emit cl-defmethod for a defrecord protocol method.
+   Wraps body in let* for field access, excluding fields shadowed by params."
+  [elisp-name fields {:keys [name params body]}]
+  (let [method-name (mangle-name name)
+        this-param (first params)
+        other-params (rest params)
+        params-str (if (seq other-params)
+                     (format "((%s %s) %s)"
+                             (mangle-name this-param) elisp-name
+                             (str/join " " (map mangle-name other-params)))
+                     (format "((%s %s))"
+                             (mangle-name this-param) elisp-name))
+        ;; Only bind fields not shadowed by method params
+        param-set (set params)
+        accessible-fields (remove param-set fields)
+        field-bindings (map (fn [f]
+                              (format "(%s (%s-%s %s))"
+                                      (mangle-name f) elisp-name
+                                      (mangle-name f) (mangle-name this-param)))
+                            accessible-fields)
+        body-str (str/join "\n    " (map emit body))]
+    (if (seq accessible-fields)
+      (format "(cl-defmethod %s %s\n  (let* (%s)\n    %s))"
+              method-name params-str
+              (str/join "\n         " field-bindings)
+              body-str)
+      (format "(cl-defmethod %s %s\n  %s)"
+              method-name params-str body-str))))
+
+(defmethod emit-node :defrecord
+  [{:keys [name fields protocols]}]
+  (let [elisp-name (mangle-name name)
+        struct-def (emit-struct-def elisp-name fields)
+        ctor-def (emit-positional-ctor elisp-name fields)
+        map-ctor-def (emit-map-ctor elisp-name fields)
+        method-defs (for [{:keys [methods]} protocols
+                          method methods]
+                      (emit-record-method elisp-name fields method))]
+    (str/join "\n\n" (concat [struct-def ctor-def map-ctor-def] method-defs))))
+
+(defn- emit-type-method
+  "Emit cl-defmethod for a deftype protocol method.
+   Wraps body in cl-symbol-macrolet for field access (supports setf on mutable fields).
+   Excludes fields shadowed by method params."
+  [elisp-name fields {:keys [name params body]}]
+  (let [method-name (mangle-name name)
+        this-param (first params)
+        other-params (rest params)
+        params-str (if (seq other-params)
+                     (format "((%s %s) %s)"
+                             (mangle-name this-param) elisp-name
+                             (str/join " " (map mangle-name other-params)))
+                     (format "((%s %s))"
+                             (mangle-name this-param) elisp-name))
+        param-set (set params)
+        accessible-fields (remove param-set fields)
+        field-macrolets (map (fn [f]
+                               (format "(%s (%s-%s %s))"
+                                       (mangle-name f) elisp-name
+                                       (mangle-name f) (mangle-name this-param)))
+                             accessible-fields)
+        body-str (str/join "\n    " (map emit body))]
+    (if (seq accessible-fields)
+      (format "(cl-defmethod %s %s\n  (cl-symbol-macrolet (%s)\n    %s))"
+              method-name params-str
+              (str/join "\n                       " field-macrolets)
+              body-str)
+      (format "(cl-defmethod %s %s\n  %s)"
+              method-name params-str body-str))))
+
+(defmethod emit-node :deftype
+  [{:keys [name fields protocols]}]
+  (let [elisp-name (mangle-name name)
+        struct-def (emit-struct-def elisp-name fields)
+        ctor-def (emit-positional-ctor elisp-name fields)
+        method-defs (for [{:keys [methods]} protocols
+                          method methods]
+                      (emit-type-method elisp-name fields method))]
+    (str/join "\n\n" (concat [struct-def ctor-def] method-defs))))
+
+(defmethod emit-node :set!
+  [{:keys [target value]}]
+  (format "(setf %s %s)" (mangle-name target) (emit value)))
+
 (defmethod emit-node :if
   [{:keys [test then else]}]
   (if else

@@ -602,3 +602,102 @@
                    (-> form ana/analyze emit/emit))]
       (is (clojure.string/includes? result ";;; L20:C3")))))
 
+;; ============================================================================
+;; Protocols - defprotocol (clel-025)
+;; ============================================================================
+
+(deftest emit-defprotocol-test
+  (testing "protocol emits cl-defgeneric for each method"
+    (let [code (analyze-and-emit '(defprotocol IGreeter
+                                    (greet [this name])))]
+      (is (clojure.string/includes? code "cl-defgeneric"))
+      (is (clojure.string/includes? code "greet"))))
+
+  (testing "protocol with multiple methods emits multiple cl-defgeneric"
+    (let [code (analyze-and-emit '(defprotocol IShape
+                                    (area [this])
+                                    (perimeter [this])))]
+      (is (= 2 (count (re-seq #"cl-defgeneric" code))))))
+
+  (testing "protocol method params are emitted"
+    (let [code (analyze-and-emit '(defprotocol IWriter
+                                    (write [this data])))]
+      (is (clojure.string/includes? code "write (this data)")))))
+
+;; ============================================================================
+;; Records - defrecord (clel-025)
+;; ============================================================================
+
+(deftest emit-defrecord-test
+  (testing "record emits cl-defstruct"
+    (let [code (analyze-and-emit '(defrecord Point [x y]))]
+      (is (clojure.string/includes? code "cl-defstruct"))
+      (is (clojure.string/includes? code "Point"))))
+
+  (testing "record emits positional constructor"
+    (let [code (analyze-and-emit '(defrecord Point [x y]))]
+      (is (clojure.string/includes? code "->Point"))
+      (is (clojure.string/includes? code "Point--create"))))
+
+  (testing "record emits map constructor"
+    (let [code (analyze-and-emit '(defrecord Point [x y]))]
+      (is (clojure.string/includes? code "map->Point"))))
+
+  (testing "record with protocol emits cl-defmethod"
+    (let [code (analyze-and-emit '(defrecord Person [first-name last-name]
+                                    IGreeter
+                                    (greet [this name] (str "Hello"))))]
+      (is (clojure.string/includes? code "cl-defmethod"))
+      (is (clojure.string/includes? code "greet"))
+      (is (clojure.string/includes? code "(this Person)"))))
+
+  (testing "record method body wraps fields in let*"
+    (let [code (analyze-and-emit '(defrecord Person [name]
+                                    IGreeter
+                                    (greet [this] name)))]
+      (is (clojure.string/includes? code "let*"))
+      (is (clojure.string/includes? code "Person-name"))))
+
+  (testing "record method does not bind fields shadowed by params"
+    (let [code (analyze-and-emit '(defrecord Person [name]
+                                    IGreeter
+                                    (greet [this name] name)))]
+      ;; name param shadows name field, so let* should not bind 'name'
+      (is (not (clojure.string/includes? code "Person-name"))))))
+
+;; ============================================================================
+;; Types - deftype (clel-025)
+;; ============================================================================
+
+(deftest emit-deftype-test
+  (testing "deftype emits cl-defstruct"
+    (let [code (analyze-and-emit '(deftype Counter [^:mutable count]))]
+      (is (clojure.string/includes? code "cl-defstruct"))
+      (is (clojure.string/includes? code "Counter"))))
+
+  (testing "deftype emits positional constructor"
+    (let [code (analyze-and-emit '(deftype Counter [^:mutable count]))]
+      (is (clojure.string/includes? code "->Counter"))))
+
+  (testing "deftype does NOT emit map constructor"
+    (let [code (analyze-and-emit '(deftype Counter [^:mutable count]))]
+      (is (not (clojure.string/includes? code "map->Counter")))))
+
+  (testing "deftype method uses cl-symbol-macrolet for fields"
+    (let [code (analyze-and-emit '(deftype Counter [^:mutable count]
+                                    ICounter
+                                    (get-count [this] count)))]
+      (is (clojure.string/includes? code "cl-symbol-macrolet"))
+      (is (clojure.string/includes? code "Counter-count")))))
+
+;; ============================================================================
+;; set! (clel-025)
+;; ============================================================================
+
+(deftest emit-set!-test
+  (testing "set! emits setf"
+    (let [code (analyze-and-emit '(set! x 42))]
+      (is (clojure.string/includes? code "setf"))
+      (is (clojure.string/includes? code "x"))
+      (is (clojure.string/includes? code "42")))))
+
