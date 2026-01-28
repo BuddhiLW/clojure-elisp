@@ -65,6 +65,49 @@ Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen) → Elisp (.el
 
 ## Progress Log
 
+### 2026-01-28: Protocol Extensions (clel-025)
+
+**Added extend-type, extend-protocol, satisfies?, and reify:**
+- `extend-type` — Extend multiple protocols to an existing type, emits `cl-defmethod` with type specializer
+- `extend-protocol` — Extend a single protocol to multiple types
+- `satisfies?` — Runtime check if value satisfies a protocol (`clel-satisfies-p`)
+- `reify` — Anonymous protocol implementations with closure capture
+
+**Type mapping:** Clojure types map to Elisp type specializers:
+- `String` → `string`, `Number` → `number`, `Boolean` → `boolean`, etc.
+- Custom record types use mangled names directly
+
+**Test stats:** 201 tests, 1222 assertions, 2 pre-existing failures
+
+**Files modified:**
+- `src/clojure_elisp/analyzer.clj` — Added analyzers for extend-type, extend-protocol, satisfies?, reify
+- `src/clojure_elisp/emitter.clj` — Added emitters with type mapping and reify counter
+- `resources/clojure-elisp/clojure-elisp-runtime.el` — Added protocol registry and `clel-satisfies-p`
+- `test/clojure_elisp/analyzer_test.clj` — Added 4 test functions for new forms
+- `test/clojure_elisp/emitter_test.clj` — Added 4 test functions for emission
+- `test/clojure_elisp/runtime_test.clj` — Added 4 test functions for end-to-end compilation
+
+### 2026-01-28: Source Location Tracking (clel-020)
+
+**Implemented source location tracking through the compiler pipeline:**
+- Fixed `read-all-forms` to use `LineNumberingPushbackReader` (captures line/column from reader)
+- Forms read from files now carry `:line` and `:column` metadata
+- AST nodes propagate source locations via `*source-context*` dynamic var
+- `analysis-error` includes file:line:col in error messages
+- `*emit-source-comments*` emits `;;; L<line>:C<col>` comments for debugging
+
+**Existing infrastructure leveraged:**
+- `extract-source-location` function in analyzer
+- `ast-node` constructor merges source context
+- `source-comment` function in emitter
+
+**Test stats:** 200 tests, 1211 assertions, 0 failures
+
+**Files modified:**
+- `src/clojure_elisp/core.clj` - Use `LineNumberingPushbackReader` in `read-all-forms`
+- `test/clojure_elisp/core_test.clj` - Added 4 source location test functions
+- `test/clojure_elisp/nrepl_test.clj` - Fixed to avoid loading nrepl deps when not available
+
 ### 2026-01-01: Atom Watch Functions (clel-015)
 
 **Implemented add-watch/remove-watch for atoms via swarm (2 parallel slaves):**
