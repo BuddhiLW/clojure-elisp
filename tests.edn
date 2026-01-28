@@ -1,7 +1,9 @@
 #kaocha/v1
  {:tests [{:id :unit
            :test-paths ["test"]
-           :source-paths ["src"]}]
+           :source-paths ["src"]
+           :kaocha/ns-patterns ["-test$"]
+           :kaocha.filter/skip-meta [:nrepl-required]}]
   :plugins [:kaocha.plugin/profiling
             :kaocha.plugin/filter]
   :reporter [kaocha.report/dots]

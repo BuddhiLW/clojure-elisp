@@ -195,6 +195,19 @@
          (str/join "\n"))))
 
 ;; ============================================================================
+;; Namespace-Qualified Names
+;; ============================================================================
+
+(defn ns-qualify-name
+  "Produce the Elisp name for a definition, prefixed by namespace if applicable.
+   Definitions in 'user namespace (the default) get no prefix."
+  [name env]
+  (let [current-ns (:ns env)]
+    (if (and current-ns (not= current-ns 'user))
+      (str (mangle-name current-ns) "-" (mangle-name name))
+      (mangle-name name))))
+
+;; ============================================================================
 ;; AST Emitters
 ;; ============================================================================
 
@@ -219,10 +232,22 @@
   (mangle-name name))
 
 (defmethod emit-node :var
-  [{:keys [name]}]
-  (if-let [elisp-name (get core-fn-mapping name)]
-    elisp-name
-    (mangle-name name)))
+  [{:keys [name ns]}]
+  (cond
+    ;; No namespace - check core mapping, then bare name
+    (nil? ns)
+    (if-let [elisp-name (get core-fn-mapping name)]
+      elisp-name
+      (mangle-name name))
+
+    ;; clojure.core namespace - use core mapping if available
+    (= ns 'clojure.core)
+    (or (get core-fn-mapping name)
+        (str "clojure-core-" (mangle-name name)))
+
+    ;; Other namespace - fully qualified mangled name
+    :else
+    (str (mangle-name ns) "-" (mangle-name name))))
 
 (defmethod emit-node :vector
   [{:keys [items]}]
@@ -248,16 +273,16 @@
   "")
 
 (defmethod emit-node :def
-  [{:keys [name docstring init]}]
-  (let [elisp-name (mangle-name name)]
+  [{:keys [name docstring init env]}]
+  (let [elisp-name (ns-qualify-name name env)]
     (if init
       (emit-sexp "defvar" elisp-name (emit init)
                  (when docstring (pr-str docstring)))
       (emit-sexp "defvar" elisp-name "nil"))))
 
 (defmethod emit-node :defn
-  [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param]}]
-  (let [elisp-name (mangle-name name)]
+  [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param env]}]
+  (let [elisp-name (ns-qualify-name name env)]
     (cond
       ;; Multi-arity: emit cl-case dispatch
       multi-arity?
@@ -739,6 +764,22 @@
         comment (source-comment node)]
     (if comment
       (str comment "\n" code)
+      code)))
+
+;; ============================================================================
+;; File Emission
+;; ============================================================================
+
+(defn emit-file
+  "Emit a sequence of AST nodes as a complete Elisp file.
+   If the first node is :ns, appends (provide 'ns-name) at the end."
+  [ast-nodes]
+  (let [ns-node (when (= :ns (:op (first ast-nodes))) (first ast-nodes))
+        code (str/join "\n\n" (map emit ast-nodes))
+        elisp-ns (when ns-node (mangle-name (:name ns-node)))]
+    (if elisp-ns
+      (str code "\n\n(provide '" elisp-ns ")\n"
+           ";;; " elisp-ns ".el ends here\n")
       code)))
 
 (comment

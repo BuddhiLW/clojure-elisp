@@ -17,7 +17,12 @@
      (clel/compile-ns 'my.package)"
   (:require [clojure-elisp.analyzer :as ana]
             [clojure-elisp.emitter :as emit]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.string :as str]))
+
+;; ============================================================================
+;; Single-Form Compilation
+;; ============================================================================
 
 (defn emit
   "Compile a Clojure form to an Elisp string."
@@ -31,19 +36,48 @@
   [forms]
   (->> forms
        (map emit)
-       (clojure.string/join "\n\n")))
+       (str/join "\n\n")))
+
+;; ============================================================================
+;; File-Aware Compilation (with namespace context)
+;; ============================================================================
+
+(defn- read-all-forms
+  "Read all forms from a string."
+  [s]
+  (let [rdr (java.io.PushbackReader. (java.io.StringReader. s))]
+    (loop [forms []]
+      (let [form (try (read rdr) (catch Exception _ ::eof))]
+        (if (= ::eof form)
+          forms
+          (recur (conj forms form)))))))
+
+(defn compile-file-string
+  "Compile a string of Clojure code as a file (with namespace context).
+   Uses analyze-file-forms so (ns ...) establishes aliases/refers
+   for subsequent forms. Appends (provide ...) when ns is present."
+  [s]
+  (let [forms (read-all-forms s)
+        ast-nodes (ana/analyze-file-forms forms)]
+    (emit/emit-file ast-nodes)))
 
 (defn compile-string
-  "Compile a string of Clojure code to Elisp."
+  "Compile a string of Clojure code to Elisp.
+   For namespace-aware compilation, use compile-file-string instead."
   [s]
   (let [forms (read-string (str "[" s "]"))]
     (emit-forms forms)))
 
+;; ============================================================================
+;; File Compilation
+;; ============================================================================
+
 (defn compile-file
-  "Compile a .cljel file to a .el file."
+  "Compile a .cljel file to a .el file.
+   Uses file-level analysis for namespace context."
   [input-path output-path]
   (let [source (slurp input-path)
-        elisp (compile-string source)]
+        elisp (compile-file-string source)]
     (spit output-path elisp)
     {:input input-path
      :output output-path
@@ -54,12 +88,119 @@
    Looks for the source file in the classpath."
   [ns-sym]
   (let [path (-> (str ns-sym)
-                 (clojure.string/replace "." "/")
-                 (clojure.string/replace "-" "_")
+                 (str/replace "." "/")
+                 (str/replace "-" "_")
                  (str ".cljel"))
         resource (io/resource path)]
     (when resource
-      (compile-string (slurp resource)))))
+      (compile-file-string (slurp resource)))))
+
+;; ============================================================================
+;; Dependency Graph & Topological Sort
+;; ============================================================================
+
+(defn- extract-ns-name
+  "Extract the namespace name from a source string by reading its ns form."
+  [source]
+  (let [forms (read-all-forms source)]
+    (when (and (seq forms)
+               (seq? (first forms))
+               (= 'ns (first (first forms))))
+      (second (first forms)))))
+
+(defn- extract-ns-deps
+  "Extract dependency namespace names from a source string."
+  [source]
+  (let [forms (read-all-forms source)]
+    (when (and (seq forms)
+               (seq? (first forms))
+               (= 'ns (first (first forms))))
+      (let [ns-ast (ana/analyze (first forms))]
+        (mapv :ns (:requires ns-ast))))))
+
+(defn topological-sort
+  "Topologically sort a dependency graph using Kahn's algorithm.
+   graph is a map of {node -> #{dependency-nodes}}.
+   Returns a vector of nodes in dependency order (dependencies first).
+   Throws on circular dependency."
+  [graph]
+  (let [all-nodes (set (keys graph))
+        ;; Build reverse adjacency: who depends on whom
+        ;; in-degree = number of deps each node has
+        in-degree (reduce-kv (fn [m node deps]
+                               (assoc m node (count deps)))
+                             {}
+                             graph)]
+    (loop [queue (into clojure.lang.PersistentQueue/EMPTY
+                       (filter #(zero? (get in-degree %)) all-nodes))
+           result []
+           remaining-degree in-degree]
+      (if (empty? queue)
+        ;; Check if all nodes are processed
+        (if (= (count result) (count all-nodes))
+          result
+          (throw (ex-info "Circular dependency detected"
+                          {:unresolved (remove (set result) all-nodes)})))
+        (let [node (peek queue)
+              queue (pop queue)
+              ;; Find nodes that depend on this one and decrement their in-degree
+              dependents (for [[n deps] graph
+                               :when (contains? deps node)]
+                           n)
+              new-degree (reduce (fn [d dep]
+                                   (update d dep dec))
+                                 remaining-degree
+                                 dependents)
+              newly-ready (filter #(zero? (get new-degree %)) dependents)]
+          (recur (into queue newly-ready)
+                 (conj result node)
+                 new-degree))))))
+
+(defn- discover-cljel-files
+  "Discover all .cljel files under source paths."
+  [source-paths]
+  (->> source-paths
+       (mapcat #(file-seq (io/file %)))
+       (filter #(.endsWith (.getName %) ".cljel"))
+       (map #(.getAbsolutePath %))))
+
+(defn- build-dependency-graph
+  "Build a dependency graph from a collection of source files.
+   Returns {ns-sym -> #{dep-ns-syms}}."
+  [file-paths]
+  (into {}
+        (for [path file-paths
+              :let [source (slurp path)
+                    ns-name (extract-ns-name source)
+                    deps (extract-ns-deps source)]
+              :when ns-name]
+          [ns-name (set (or deps []))])))
+
+(defn compile-project
+  "Compile all .cljel files under source-paths in dependency order.
+   source-paths: vector of directories containing .cljel files.
+   output-dir: directory for .el output files.
+   Returns a vector of compilation results."
+  [source-paths output-dir]
+  (let [files (discover-cljel-files source-paths)
+        ;; Map ns-name -> file-path
+        ns->file (into {}
+                       (for [path files
+                             :let [source (slurp path)
+                                   ns-name (extract-ns-name source)]
+                             :when ns-name]
+                         [ns-name path]))
+        graph (build-dependency-graph files)
+        order (topological-sort graph)]
+    ;; Ensure output directory exists
+    (.mkdirs (io/file output-dir))
+    ;; Compile in dependency order
+    (mapv (fn [ns-sym]
+            (when-let [input-path (get ns->file ns-sym)]
+              (let [output-name (str (emit/mangle-name ns-sym) ".el")
+                    output-path (str output-dir "/" output-name)]
+                (compile-file input-path output-path))))
+          order)))
 
 (comment
   ;; Quick test

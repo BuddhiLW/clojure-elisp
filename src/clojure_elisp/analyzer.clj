@@ -14,6 +14,8 @@
   "Current compilation environment."
   {:ns 'user
    :locals #{}
+   :aliases {}
+   :refers {}
    :in-tail-position? false})
 
 (def ^:dynamic *source-context*
@@ -555,6 +557,20 @@
        :refer (:refer opts-map)})
     {:ns spec}))
 
+(defn build-ns-env
+  "Build environment entries from parsed require specs.
+   Returns a map with :aliases and :refers suitable for merging into *env*."
+  [requires]
+  (let [aliases (into {} (for [{:keys [ns as]} requires
+                               :when as]
+                           [as ns]))
+        refers (into {} (for [{:keys [ns refer]} requires
+                              :when refer
+                              sym refer]
+                          [sym ns]))]
+    {:aliases aliases
+     :refers refers}))
+
 (defn analyze-ns
   "Analyze (ns name ...) forms.
    Parses :require clauses into structured data with :as and :refer options."
@@ -999,9 +1015,31 @@
 
           ;; Symbol
           (symbol? form)
-          (if (contains? (:locals *env*) form)
-            (ast-node :local :name form)
-            (ast-node :var :name form))
+          (let [sym-ns-str (namespace form)
+                sym-name (symbol (name form))]
+            (cond
+              ;; Local takes priority
+              (contains? (:locals *env*) form)
+              (ast-node :local :name form)
+
+              ;; Aliased qualified symbol: str/join -> clojure.string/join
+              (and sym-ns-str
+                   (get (:aliases *env*) (symbol sym-ns-str)))
+              (let [resolved-ns (get (:aliases *env*) (symbol sym-ns-str))]
+                (ast-node :var :name sym-name :ns resolved-ns))
+
+              ;; Already qualified symbol: clojure.string/join
+              sym-ns-str
+              (ast-node :var :name sym-name :ns (symbol sym-ns-str))
+
+              ;; Referred symbol: join -> clojure.string/join
+              (get (:refers *env*) form)
+              (let [resolved-ns (get (:refers *env*) form)]
+                (ast-node :var :name form :ns resolved-ns))
+
+              ;; Unqualified, unresolved
+              :else
+              (ast-node :var :name form)))
 
           ;; Vector
           (vector? form)
@@ -1028,6 +1066,24 @@
 
           :else
           (ast-node :unknown :form form))))))
+
+;; ============================================================================
+;; File-Level Analysis
+;; ============================================================================
+
+(defn analyze-file-forms
+  "Analyze a sequence of forms as they appear in a file.
+   If the first form is (ns ...), it establishes the namespace context
+   (current ns, aliases, refers) for all subsequent forms."
+  [forms]
+  (if (and (seq forms)
+           (seq? (first forms))
+           (= 'ns (first (first forms))))
+    (let [ns-ast (analyze (first forms))
+          ns-env (build-ns-env (:requires ns-ast))]
+      (binding [*env* (merge *env* {:ns (:name ns-ast)} ns-env)]
+        (into [ns-ast] (mapv analyze (rest forms)))))
+    (mapv analyze forms)))
 
 (comment
   (analyze '(defn foo [x] (+ x 1)))

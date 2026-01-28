@@ -2,6 +2,7 @@
   "Integration tests for ClojureElisp core API."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure-elisp.core :as clel]
+            [clojure-elisp.analyzer :as ana]
             [clojure.java.io :as io]
             [clojure.string :as str]))
 
@@ -280,3 +281,135 @@
     (let [result (clel/compile-string "(map (fn [x] (* x 2)) items)")]
       (is (str/includes? result "clel-map"))
       (is (str/includes? result "lambda")))))
+
+;; ============================================================================
+;; Macro System - End-to-End (clel-027)
+;; ============================================================================
+
+(deftest macro-compile-string-test
+  (testing "defmacro + usage compiles to expanded Elisp"
+    (ana/clear-macros!)
+    (let [result (clel/compile-string
+                  "(defmacro unless [pred body]
+                      (list 'if (list 'not pred) body nil))
+                    (unless false 42)")]
+      ;; defmacro itself should not emit Elisp code
+      ;; The usage expands to (if (not false) 42 nil)
+      ;; Emitter optimizes (if test then nil) -> (when test then)
+      (is (str/includes? result "when"))
+      (is (str/includes? result "not"))
+      (is (not (str/includes? result "defmacro")))
+      (is (not (str/includes? result "unless")))))
+
+  (testing "variadic macro with & body"
+    (ana/clear-macros!)
+    (let [result (clel/compile-string
+                  "(defmacro my-when [test & body]
+                      (list 'if test (cons 'do body) nil))
+                    (my-when true 1 2 3)")]
+      ;; Emitter optimizes (if test then nil) -> (when test then)
+      (is (str/includes? result "when"))
+      (is (str/includes? result "progn"))
+      (is (not (str/includes? result "my-when")))))
+
+  (testing "macro with syntax-quote produces valid Elisp"
+    (ana/clear-macros!)
+    (let [result (clel/compile-string
+                  "(defmacro with-logging [expr]
+                      `(do (println \"executing\") ~expr))
+                    (with-logging (+ 1 2))")]
+      (is (str/includes? result "progn"))
+      (is (str/includes? result "message"))
+      (is (not (str/includes? result "with-logging")))))
+
+  (testing "multiple macros defined and used"
+    (ana/clear-macros!)
+    (let [result (clel/compile-string
+                  "(defmacro double-it [x] (list '* 2 x))
+                    (defmacro triple-it [x] (list '* 3 x))
+                    (+ (double-it 5) (triple-it 10))")]
+      (is (str/includes? result "(* 2 5)"))
+      (is (str/includes? result "(* 3 10)"))
+      (is (not (str/includes? result "double-it")))
+      (is (not (str/includes? result "triple-it")))))
+
+  (testing "macro alongside regular defn"
+    (ana/clear-macros!)
+    (let [result (clel/compile-string
+                  "(defmacro unless [pred body]
+                      (list 'if (list 'not pred) body nil))
+                    (defn safe-div [a b]
+                      (unless (zero? b) (/ a b)))")]
+      ;; defn should emit normally
+      (is (str/includes? result "defun"))
+      (is (str/includes? result "safe-div"))
+      ;; macro body should be expanded in defn
+      (is (not (str/includes? result "unless"))))))
+
+;; ============================================================================
+;; Namespace System - Topological Sort (clel-028)
+;; ============================================================================
+
+(deftest topological-sort-test
+  (testing "linear dependency chain"
+    (let [graph {'a #{'b} 'b #{'c} 'c #{}}
+          order (clel/topological-sort graph)]
+      (is (= ['c 'b 'a] order))))
+
+  (testing "diamond dependency"
+    (let [graph {'a #{'b 'c} 'b #{'d} 'c #{'d} 'd #{}}
+          order (clel/topological-sort graph)]
+      ;; d must come before b and c, both before a
+      (is (< (.indexOf order 'd) (.indexOf order 'b)))
+      (is (< (.indexOf order 'd) (.indexOf order 'c)))
+      (is (< (.indexOf order 'b) (.indexOf order 'a)))
+      (is (< (.indexOf order 'c) (.indexOf order 'a)))))
+
+  (testing "no dependencies"
+    (let [graph {'a #{} 'b #{} 'c #{}}
+          order (clel/topological-sort graph)]
+      (is (= 3 (count order)))
+      (is (= #{'a 'b 'c} (set order)))))
+
+  (testing "single node"
+    (let [graph {'a #{}}
+          order (clel/topological-sort graph)]
+      (is (= ['a] order)))))
+
+(deftest circular-dependency-detection-test
+  (testing "direct circular dependency throws"
+    (is (thrown-with-msg? Exception #"[Cc]ircular"
+                          (clel/topological-sort {'a #{'b} 'b #{'a}}))))
+
+  (testing "indirect circular dependency throws"
+    (is (thrown-with-msg? Exception #"[Cc]ircular"
+                          (clel/topological-sort {'a #{'b} 'b #{'c} 'c #{'a}})))))
+
+;; ============================================================================
+;; Namespace System - compile-file-string (clel-028)
+;; ============================================================================
+
+(deftest compile-file-string-ns-test
+  (testing "compile-file-string with ns resolves aliases"
+    (let [result (clel/compile-file-string
+                  "(ns my.app (:require [clojure.string :as str]))
+                    (defn greet [name] (str/join \", \" name))")]
+      ;; Should have ns header
+      (is (str/includes? result "my-app"))
+      ;; defn should be prefixed
+      (is (str/includes? result "my-app-greet"))
+      ;; str/join should resolve
+      (is (str/includes? result "clojure-string-join"))
+      ;; provide at end
+      (is (str/includes? result "(provide 'my-app)"))))
+
+  (testing "compile-file-string with refers"
+    (let [result (clel/compile-file-string
+                  "(ns my.app (:require [my.utils :refer [helper]]))
+                    (helper 42)")]
+      (is (str/includes? result "my-utils-helper"))))
+
+  (testing "compile-file-string without ns works normally"
+    (let [result (clel/compile-file-string "(defn foo [x] x)")]
+      (is (str/includes? result "defun"))
+      (is (str/includes? result "foo")))))

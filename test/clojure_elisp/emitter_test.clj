@@ -1,7 +1,7 @@
 (ns clojure-elisp.emitter-test
   "Tests for the ClojureElisp emitter."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure-elisp.analyzer :as ana]
+            [clojure-elisp.analyzer :as ana :refer [analyze]]
             [clojure-elisp.emitter :as emit :refer [emit-node mangle-name]]))
 
 ;; ============================================================================
@@ -700,4 +700,101 @@
       (is (clojure.string/includes? code "setf"))
       (is (clojure.string/includes? code "x"))
       (is (clojure.string/includes? code "42")))))
+
+;; ============================================================================
+;; Macro System (clel-027)
+;; ============================================================================
+
+(deftest emit-defmacro-test
+  (testing "defmacro emits empty string (compile-time only)"
+    (let [code (analyze-and-emit '(defmacro unless [pred body]
+                                    (list 'if (list 'not pred) body nil)))]
+      (is (= "" code))))
+
+  (testing "defmacro with docstring emits empty string"
+    (let [code (analyze-and-emit '(defmacro unless "Opposite of when" [pred body]
+                                    (list 'if (list 'not pred) body nil)))]
+      (is (= "" code))))
+
+  (testing "macro usage emits expanded form, not macro call"
+    (ana/clear-macros!)
+    (analyze-and-emit '(defmacro double-it [x]
+                         (list '* 2 x)))
+    (let [code (analyze-and-emit '(double-it 5))]
+      ;; Should emit (* 2 5), not (double-it 5)
+      (is (clojure.string/includes? code "*"))
+      (is (clojure.string/includes? code "2"))
+      (is (clojure.string/includes? code "5"))
+      (is (not (clojure.string/includes? code "double-it"))))))
+
+;; ============================================================================
+;; Namespace System - Qualified Var Emission (clel-028)
+;; ============================================================================
+
+(deftest emit-qualified-var-test
+  (testing "var with :ns emits namespace-qualified mangled name"
+    (let [node {:op :var :name 'join :ns 'clojure.string}
+          code (emit/emit node)]
+      (is (= "clojure-string-join" code))))
+
+  (testing "var without :ns uses core mapping or plain name"
+    (let [node {:op :var :name 'first}
+          code (emit/emit node)]
+      (is (= "clel-first" code))))
+
+  (testing "var with :ns for non-core namespace"
+    (let [node {:op :var :name 'helper :ns 'my.utils}
+          code (emit/emit node)]
+      (is (= "my-utils-helper" code))))
+
+  (testing "var with :ns clojure.core uses core mapping"
+    (let [node {:op :var :name 'first :ns 'clojure.core}
+          code (emit/emit node)]
+      (is (= "clel-first" code)))))
+
+(deftest emit-ns-definition-prefixing-test
+  (testing "defn in namespace emits prefixed name"
+    (let [forms '[(ns my.app) (defn greet [name] name)]
+          asts (ana/analyze-file-forms forms)
+          defn-code (emit/emit (second asts))]
+      (is (clojure.string/includes? defn-code "defun"))
+      (is (clojure.string/includes? defn-code "my-app-greet"))))
+
+  (testing "def in namespace emits prefixed name"
+    (let [forms '[(ns my.app) (def pi 3.14)]
+          asts (ana/analyze-file-forms forms)
+          def-code (emit/emit (second asts))]
+      (is (clojure.string/includes? def-code "defvar"))
+      (is (clojure.string/includes? def-code "my-app-pi"))))
+
+  (testing "defn in user namespace has no prefix"
+    (let [result (analyze-and-emit '(defn foo [x] x))]
+      (is (clojure.string/includes? result "defun foo")))))
+
+(deftest emit-ns-provide-test
+  (testing "ns emission includes provide at end"
+    (let [forms '[(ns my.app)]
+          asts (ana/analyze-file-forms forms)
+          code (emit/emit-file asts)]
+      (is (clojure.string/includes? code "(provide 'my-app)"))
+      ;; provide should be after the header
+      (is (> (.indexOf code "(provide 'my-app)")
+             (.indexOf code "lexical-binding"))))))
+
+(deftest emit-alias-resolution-full-pipeline-test
+  (testing "aliased call emits fully qualified name"
+    (let [forms '[(ns my.app
+                    (:require [clojure.string :as str]))
+                  (str/join ", " items)]
+          asts (ana/analyze-file-forms forms)
+          call-code (emit/emit (second asts))]
+      (is (clojure.string/includes? call-code "clojure-string-join"))))
+
+  (testing "referred symbol emits fully qualified name"
+    (let [forms '[(ns my.app
+                    (:require [my.utils :refer [helper]]))
+                  (helper 42)]
+          asts (ana/analyze-file-forms forms)
+          call-code (emit/emit (second asts))]
+      (is (clojure.string/includes? call-code "my-utils-helper")))))
 
