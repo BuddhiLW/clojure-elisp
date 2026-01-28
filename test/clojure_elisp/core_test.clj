@@ -140,10 +140,10 @@
 ;; ============================================================================
 
 (deftest core-function-integration-test
-  (testing "first -> car"
-    (is (= "(car xs)" (clel/compile-string "(first xs)"))))
-  (testing "rest -> cdr"
-    (is (= "(cdr xs)" (clel/compile-string "(rest xs)"))))
+  (testing "first -> clel-first"
+    (is (= "(clel-first xs)" (clel/compile-string "(first xs)"))))
+  (testing "rest -> clel-rest"
+    (is (= "(clel-rest xs)" (clel/compile-string "(rest xs)"))))
   (testing "inc -> 1+"
     (is (= "(1+ x)" (clel/compile-string "(inc x)"))))
   (testing "nil? -> null"
@@ -171,7 +171,7 @@
                   "(defn process [items]
                       (map inc (filter even? items)))")]
       (is (str/includes? result "defun"))
-      (is (str/includes? result "mapcar")))))
+      (is (str/includes? result "clel-map")))))
 
 ;; ============================================================================
 ;; loop/recur Integration
@@ -278,5 +278,5 @@
       (is (str/includes? result "lambda"))))
   (testing "fn passed to higher-order function"
     (let [result (clel/compile-string "(map (fn [x] (* x 2)) items)")]
-      (is (str/includes? result "mapcar"))
+      (is (str/includes? result "clel-map"))
       (is (str/includes? result "lambda")))))

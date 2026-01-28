@@ -86,8 +86,8 @@
   (testing "simple var"
     (is (= "foo" (analyze-and-emit 'foo))))
   (testing "core function maps to elisp"
-    (is (= "car" (analyze-and-emit 'first)))
-    (is (= "cdr" (analyze-and-emit 'rest)))
+    (is (= "clel-first" (analyze-and-emit 'first)))
+    (is (= "clel-rest" (analyze-and-emit 'rest)))
     (is (= "1+" (analyze-and-emit 'inc)))
     (is (= "1-" (analyze-and-emit 'dec)))
     (is (= "length" (analyze-and-emit 'count)))))
@@ -389,7 +389,7 @@
       (is (= "(+ 1 2)" result))))
   (testing "core function mapping"
     (let [result (analyze-and-emit '(first xs))]
-      (is (= "(car xs)" result))))
+      (is (= "(clel-first xs)" result))))
   (testing "nested function calls"
     (let [result (analyze-and-emit '(+ (* 2 3) 4))]
       (is (clojure.string/includes? result "(* 2 3)"))
@@ -404,8 +404,8 @@
 
 (deftest core-fn-mapping-test
   (testing "list operations"
-    (is (= "(car xs)" (analyze-and-emit '(first xs))))
-    (is (= "(cdr xs)" (analyze-and-emit '(rest xs))))
+    (is (= "(clel-first xs)" (analyze-and-emit '(first xs))))
+    (is (= "(clel-rest xs)" (analyze-and-emit '(rest xs))))
     (is (= "(length xs)" (analyze-and-emit '(count xs)))))
   (testing "arithmetic"
     (is (= "(1+ x)" (analyze-and-emit '(inc x))))
@@ -417,7 +417,7 @@
   (testing "string functions"
     (is (= "(clel-str a b)" (analyze-and-emit '(str a b)))))
   (testing "higher-order functions"
-    (is (= "(mapcar f xs)" (analyze-and-emit '(map f xs))))))
+    (is (= "(clel-map f xs)" (analyze-and-emit '(map f xs))))))
 
 ;; ============================================================================
 ;; Full Pipeline Tests
@@ -453,7 +453,7 @@
       (is (clojure.string/includes? result "and"))))
   (testing "function as argument"
     (let [result (analyze-and-emit '(map inc [1 2 3]))]
-      (is (clojure.string/includes? result "mapcar"))
+      (is (clojure.string/includes? result "clel-map"))
       (is (clojure.string/includes? result "1+")))))
 
 ;; ============================================================================
@@ -543,4 +543,29 @@
     (is (= "(point)" (analyze-and-emit '(.-point)))))
   (testing "property access buffer-name"
     (is (= "(buffer-name)" (analyze-and-emit '(.-buffer-name))))))
+
+;; ============================================================================
+;; Lazy Sequences (clel-018)
+;; ============================================================================
+
+(deftest emit-lazy-seq-test
+  (testing "lazy-seq wraps body in lambda"
+    (is (= "(clel-lazy-seq-create (lambda () (cons 1 nil)))"
+           (analyze-and-emit '(lazy-seq (cons 1 nil))))))
+  (testing "lazy-seq with multiple body forms"
+    (let [result (analyze-and-emit '(lazy-seq (+ 1 2)))]
+      (is (clojure.string/includes? result "clel-lazy-seq-create"))
+      (is (clojure.string/includes? result "lambda")))))
+
+(deftest emit-realized-p-test
+  (testing "realized? maps to clel-realized-p"
+    (is (= "(clel-realized-p x)" (analyze-and-emit '(realized? x))))))
+
+(deftest emit-doall-test
+  (testing "doall maps to clel-doall"
+    (is (= "(clel-doall xs)" (analyze-and-emit '(doall xs))))))
+
+(deftest emit-dorun-test
+  (testing "dorun maps to clel-dorun"
+    (is (= "(clel-dorun xs)" (analyze-and-emit '(dorun xs))))))
 

@@ -276,3 +276,264 @@
       (is (str/includes? code "clel-add-watch"))
       (is (str/includes? code "clel-deref")))))
 
+;;; Sequence abstraction tests (clel-029)
+
+;; --- Lazy-seq-aware first/rest/next ---
+
+(deftest seq-first-compilation-test
+  (testing "first compiles to clel-first"
+    (is (str/includes? (clel/emit '(first xs)) "clel-first"))
+    (is (str/includes? (clel/emit '(first [1 2 3])) "clel-first")))
+
+  (testing "first in let binding"
+    (let [code (clel/emit '(let [x (first coll)] x))]
+      (is (str/includes? code "clel-first"))))
+
+  (testing "first preserves argument"
+    (is (re-find #"clel-first\s+my-seq" (clel/emit '(first my-seq))))))
+
+(deftest seq-rest-compilation-test
+  (testing "rest compiles to clel-rest"
+    (is (str/includes? (clel/emit '(rest xs)) "clel-rest"))
+    (is (str/includes? (clel/emit '(rest [1 2 3])) "clel-rest")))
+
+  (testing "rest preserves argument"
+    (is (re-find #"clel-rest\s+my-seq" (clel/emit '(rest my-seq))))))
+
+(deftest seq-next-compilation-test
+  (testing "next compiles to clel-next"
+    (is (str/includes? (clel/emit '(next xs)) "clel-next")))
+
+  (testing "next preserves argument"
+    (is (re-find #"clel-next\s+items" (clel/emit '(next items))))))
+
+;; --- Lazy sequence functions ---
+
+(deftest seq-map-compilation-test
+  (testing "map compiles to clel-map"
+    (is (str/includes? (clel/emit '(map inc xs)) "clel-map"))
+    (is (str/includes? (clel/emit '(map f coll)) "clel-map")))
+
+  (testing "map with inline fn"
+    (let [code (clel/emit '(map (fn [x] (+ x 1)) xs))]
+      (is (str/includes? code "clel-map"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "map preserves argument order"
+    (is (re-find #"clel-map\s+f\s+coll" (clel/emit '(map f coll))))))
+
+(deftest seq-filter-compilation-test
+  (testing "filter compiles to clel-filter"
+    (is (str/includes? (clel/emit '(filter even? xs)) "clel-filter"))
+    (is (str/includes? (clel/emit '(filter pred coll)) "clel-filter")))
+
+  (testing "filter preserves argument order"
+    (is (re-find #"clel-filter\s+pred\s+items" (clel/emit '(filter pred items))))))
+
+(deftest seq-take-compilation-test
+  (testing "take compiles to clel-take"
+    (is (str/includes? (clel/emit '(take 5 xs)) "clel-take")))
+
+  (testing "take preserves argument order"
+    (is (re-find #"clel-take\s+n\s+coll" (clel/emit '(take n coll))))))
+
+(deftest seq-drop-compilation-test
+  (testing "drop compiles to clel-drop"
+    (is (str/includes? (clel/emit '(drop 3 xs)) "clel-drop")))
+
+  (testing "drop preserves argument order"
+    (is (re-find #"clel-drop\s+n\s+coll" (clel/emit '(drop n coll))))))
+
+(deftest seq-take-while-compilation-test
+  (testing "take-while compiles to clel-take-while"
+    (is (str/includes? (clel/emit '(take-while pos? xs)) "clel-take-while")))
+
+  (testing "take-while preserves argument order"
+    (is (re-find #"clel-take-while\s+pred\s+coll" (clel/emit '(take-while pred coll))))))
+
+(deftest seq-drop-while-compilation-test
+  (testing "drop-while compiles to clel-drop-while"
+    (is (str/includes? (clel/emit '(drop-while neg? xs)) "clel-drop-while")))
+
+  (testing "drop-while preserves argument order"
+    (is (re-find #"clel-drop-while\s+pred\s+items" (clel/emit '(drop-while pred items))))))
+
+(deftest seq-concat-compilation-test
+  (testing "concat compiles to clel-concat"
+    (is (str/includes? (clel/emit '(concat xs ys)) "clel-concat")))
+
+  (testing "concat with multiple colls"
+    (is (str/includes? (clel/emit '(concat a b c)) "clel-concat"))))
+
+(deftest seq-mapcat-compilation-test
+  (testing "mapcat compiles to clel-mapcat"
+    (is (str/includes? (clel/emit '(mapcat f xs)) "clel-mapcat")))
+
+  (testing "mapcat preserves argument order"
+    (is (re-find #"clel-mapcat\s+f\s+coll" (clel/emit '(mapcat f coll))))))
+
+(deftest seq-interleave-compilation-test
+  (testing "interleave compiles to clel-interleave"
+    (is (str/includes? (clel/emit '(interleave xs ys)) "clel-interleave")))
+
+  (testing "interleave preserves args"
+    (is (re-find #"clel-interleave\s+a\s+b" (clel/emit '(interleave a b))))))
+
+(deftest seq-partition-compilation-test
+  (testing "partition compiles to clel-partition"
+    (is (str/includes? (clel/emit '(partition 3 xs)) "clel-partition")))
+
+  (testing "partition preserves argument order"
+    (is (re-find #"clel-partition\s+n\s+coll" (clel/emit '(partition n coll))))))
+
+;; --- Eager sequence functions ---
+
+(deftest seq-reduce-compilation-test
+  (testing "reduce compiles to clel-reduce"
+    (is (str/includes? (clel/emit '(reduce + xs)) "clel-reduce"))
+    (is (str/includes? (clel/emit '(reduce + 0 xs)) "clel-reduce")))
+
+  (testing "reduce preserves argument order (no init)"
+    (is (re-find #"clel-reduce\s+\+\s+coll" (clel/emit '(reduce + coll)))))
+
+  (testing "reduce preserves argument order (with init)"
+    (is (re-find #"clel-reduce\s+\+\s+0\s+coll" (clel/emit '(reduce + 0 coll))))))
+
+(deftest seq-sort-compilation-test
+  (testing "sort compiles to clel-sort"
+    (is (str/includes? (clel/emit '(sort < xs)) "clel-sort")))
+
+  (testing "sort preserves argument order"
+    (is (re-find #"clel-sort\s+cmp\s+coll" (clel/emit '(sort cmp coll))))))
+
+(deftest seq-sort-by-compilation-test
+  (testing "sort-by compiles to clel-sort-by"
+    (is (str/includes? (clel/emit '(sort-by :name users)) "clel-sort-by")))
+
+  (testing "sort-by preserves argument order"
+    (is (re-find #"clel-sort-by\s+keyfn\s+coll" (clel/emit '(sort-by keyfn coll))))))
+
+(deftest seq-group-by-compilation-test
+  (testing "group-by compiles to clel-group-by"
+    (is (str/includes? (clel/emit '(group-by :type items)) "clel-group-by")))
+
+  (testing "group-by preserves argument order"
+    (is (re-find #"clel-group-by\s+f\s+coll" (clel/emit '(group-by f coll))))))
+
+(deftest seq-frequencies-compilation-test
+  (testing "frequencies compiles to clel-frequencies"
+    (is (str/includes? (clel/emit '(frequencies xs)) "clel-frequencies")))
+
+  (testing "frequencies preserves argument"
+    (is (re-find #"clel-frequencies\s+items" (clel/emit '(frequencies items))))))
+
+;; --- Sequence predicates ---
+
+(deftest seq-every-p-compilation-test
+  (testing "every? compiles to clel-every-p"
+    (is (str/includes? (clel/emit '(every? pos? xs)) "clel-every-p")))
+
+  (testing "every? preserves argument order"
+    (is (re-find #"clel-every-p\s+pred\s+coll" (clel/emit '(every? pred coll))))))
+
+(deftest seq-some-compilation-test
+  (testing "some compiles to clel-some"
+    (is (str/includes? (clel/emit '(some pos? xs)) "clel-some")))
+
+  (testing "some preserves argument order"
+    (is (re-find #"clel-some\s+pred\s+coll" (clel/emit '(some pred coll))))))
+
+(deftest seq-not-every-p-compilation-test
+  (testing "not-every? compiles to clel-not-every-p"
+    (is (str/includes? (clel/emit '(not-every? even? xs)) "clel-not-every-p")))
+
+  (testing "not-every? preserves argument order"
+    (is (re-find #"clel-not-every-p\s+pred\s+coll" (clel/emit '(not-every? pred coll))))))
+
+(deftest seq-not-any-p-compilation-test
+  (testing "not-any? compiles to clel-not-any-p"
+    (is (str/includes? (clel/emit '(not-any? neg? xs)) "clel-not-any-p")))
+
+  (testing "not-any? preserves argument order"
+    (is (re-find #"clel-not-any-p\s+pred\s+coll" (clel/emit '(not-any? pred coll))))))
+
+(deftest seq-empty-p-compilation-test
+  (testing "empty? compiles to clel-empty-p"
+    (is (str/includes? (clel/emit '(empty? xs)) "clel-empty-p")))
+
+  (testing "empty? in conditional"
+    (let [code (clel/emit '(if (empty? coll) :none (first coll)))]
+      (is (str/includes? code "clel-empty-p"))
+      (is (str/includes? code "if")))))
+
+;; --- Integration: composing seq functions ---
+
+(deftest seq-composition-compilation-test
+  (testing "map + filter composition"
+    (let [code (clel/emit '(filter even? (map inc xs)))]
+      (is (str/includes? code "clel-filter"))
+      (is (str/includes? code "clel-map"))))
+
+  (testing "reduce over map"
+    (let [code (clel/emit '(reduce + 0 (map inc xs)))]
+      (is (str/includes? code "clel-reduce"))
+      (is (str/includes? code "clel-map"))))
+
+  (testing "take from filtered"
+    (let [code (clel/emit '(take 5 (filter pos? xs)))]
+      (is (str/includes? code "clel-take"))
+      (is (str/includes? code "clel-filter"))))
+
+  (testing "into with map"
+    (let [code (clel/emit '(into [] (map inc xs)))]
+      (is (str/includes? code "clel-into"))
+      (is (str/includes? code "clel-map")))))
+
+;;; Lazy sequence runtime function tests (clel-018)
+
+(deftest lazy-seq-compilation-test
+  (testing "lazy-seq compiles to clel-lazy-seq-create with lambda"
+    (let [code (clel/emit '(lazy-seq (cons 1 nil)))]
+      (is (str/includes? code "clel-lazy-seq-create"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "lazy-seq with function call body"
+    (let [code (clel/emit '(lazy-seq (map inc xs)))]
+      (is (str/includes? code "clel-lazy-seq-create"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "lazy-seq in defn"
+    (let [code (clel/emit '(defn lazy-range [n]
+                             (lazy-seq (cons n (lazy-range (inc n))))))]
+      (is (str/includes? code "defun"))
+      (is (str/includes? code "clel-lazy-seq-create"))
+      (is (str/includes? code "lambda")))))
+
+(deftest realized-p-compilation-test
+  (testing "realized? compiles to clel-realized-p"
+    (is (str/includes? (clel/emit '(realized? x)) "clel-realized-p")))
+
+  (testing "realized? in conditional"
+    (let [code (clel/emit '(if (realized? lseq) (first lseq) :pending))]
+      (is (str/includes? code "clel-realized-p"))
+      (is (str/includes? code "if")))))
+
+(deftest doall-compilation-test
+  (testing "doall compiles to clel-doall"
+    (is (str/includes? (clel/emit '(doall xs)) "clel-doall")))
+
+  (testing "doall in let binding"
+    (let [code (clel/emit '(let [result (doall (lazy-seq (cons 1 nil)))]
+                             result))]
+      (is (str/includes? code "clel-doall"))
+      (is (str/includes? code "clel-lazy-seq-create")))))
+
+(deftest dorun-compilation-test
+  (testing "dorun compiles to clel-dorun"
+    (is (str/includes? (clel/emit '(dorun xs)) "clel-dorun")))
+
+  (testing "dorun returns nil semantically"
+    (let [code (clel/emit '(dorun (lazy-seq (cons 1 nil))))]
+      (is (str/includes? code "clel-dorun"))
+      (is (str/includes? code "clel-lazy-seq-create")))))
+

@@ -245,5 +245,301 @@ Returns ATOM."
             (cl-remove-if (lambda (w) (equal (car w) key)) watchers)))
   atom)
 
+;;; Lazy Sequences
+;; Structure: (list 'clel-lazy-seq thunk result realized-p)
+;; - (nth 1 lseq) = thunk (lambda producing the sequence)
+;; - (nth 2 lseq) = memoized result
+;; - (nth 3 lseq) = realized flag (t or nil)
+
+(defun clel-lazy-seq-create (thunk)
+  "Create a lazy sequence from THUNK."
+  (list 'clel-lazy-seq thunk nil nil))
+
+(defun clel-lazy-seq-p (x)
+  "Return t if X is a lazy sequence."
+  (and (consp x) (eq (car x) 'clel-lazy-seq)))
+
+(defun clel-lazy-seq-force (lseq)
+  "Force lazy sequence LSEQ, memoizing the result."
+  (if (nth 3 lseq)
+      (nth 2 lseq)
+    (let ((result (funcall (nth 1 lseq))))
+      (setcar (nthcdr 2 lseq) result)
+      (setcar (nthcdr 3 lseq) t)
+      result)))
+
+(defun clel-realized-p (x)
+  "Return t if X is realized (not a pending lazy seq)."
+  (if (clel-lazy-seq-p x) (nth 3 x) t))
+
+(defun clel-doall (seq)
+  "Force entire lazy SEQ, returning it."
+  (let ((s seq))
+    (while (clel-lazy-seq-p s)
+      (setq s (clel-lazy-seq-force s)))
+    ;; Walk the realized list to force any nested lazy seqs
+    (when (listp s)
+      (let ((current s))
+        (while current
+          (when (clel-lazy-seq-p (car current))
+            (setcar current (clel-doall (car current))))
+          (setq current (cdr current)))))
+    s))
+
+(defun clel-dorun (seq)
+  "Force entire lazy SEQ for side effects, returning nil."
+  (clel-doall seq)
+  nil)
+
+;;; Sequence Abstraction (clel-029)
+;; Lazy-seq aware first/rest/next — foundation for all seq functions.
+
+(defun clel-first (s)
+  "Return the first element of S, forcing lazy seqs."
+  (cond
+   ((null s) nil)
+   ((clel-lazy-seq-p s) (clel-first (clel-lazy-seq-force s)))
+   ((listp s) (car s))
+   ((vectorp s) (if (> (length s) 0) (aref s 0) nil))
+   (t nil)))
+
+(defun clel-rest (s)
+  "Return the rest of S (possibly empty list), forcing lazy seqs."
+  (cond
+   ((null s) nil)
+   ((clel-lazy-seq-p s) (clel-rest (clel-lazy-seq-force s)))
+   ((listp s) (cdr s))
+   ((vectorp s) (if (> (length s) 1)
+                    (cdr (append s nil))
+                  nil))
+   (t nil)))
+
+(defun clel-next (s)
+  "Return the next of S, or nil if empty. Forces lazy seqs."
+  (let ((r (clel-rest s)))
+    (if (and r (not (equal r nil)))
+        r
+      nil)))
+
+(defun clel-seq-force (s)
+  "Ensure S is a realized sequence (list). Forces lazy seqs."
+  (cond
+   ((null s) nil)
+   ((clel-lazy-seq-p s) (clel-seq-force (clel-lazy-seq-force s)))
+   ((listp s) s)
+   ((vectorp s) (append s nil))
+   (t (list s))))
+
+;;; Lazy Sequence Functions
+
+(defun clel-map (f &rest colls)
+  "Lazily map F over COLLS. With one coll, returns lazy seq."
+  (if (= 1 (length colls))
+      (let ((s (clel-seq-force (car colls))))
+        (clel-lazy-seq-create
+         (lambda ()
+           (when s
+             (cons (funcall f (clel-first s))
+                   (clel-map f (clel-rest s)))))))
+    ;; Multi-coll: zip-map
+    (let ((seqs (mapcar #'clel-seq-force colls)))
+      (clel-lazy-seq-create
+       (lambda ()
+         (when (cl-every #'identity seqs)
+           (cons (apply f (mapcar #'clel-first seqs))
+                 (apply #'clel-map f (mapcar #'clel-rest seqs)))))))))
+
+(defun clel-filter (pred s)
+  "Lazily filter S by PRED."
+  (let ((s (clel-seq-force s)))
+    (clel-lazy-seq-create
+     (lambda ()
+       (let ((cur s))
+         (while (and cur (not (funcall pred (clel-first cur))))
+           (setq cur (clel-rest cur)))
+         (when cur
+           (cons (clel-first cur)
+                 (clel-filter pred (clel-rest cur)))))))))
+
+(defun clel-take (n s)
+  "Lazily take N elements from S."
+  (clel-lazy-seq-create
+   (lambda ()
+     (when (and (> n 0) s)
+       (let ((forced (clel-seq-force s)))
+         (when forced
+           (cons (clel-first forced)
+                 (clel-take (1- n) (clel-rest forced)))))))))
+
+(defun clel-drop (n s)
+  "Drop N elements from S, return rest lazily."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((cur (clel-seq-force s))
+           (remaining n))
+       (while (and (> remaining 0) cur)
+         (setq cur (clel-rest cur))
+         (setq remaining (1- remaining)))
+       cur))))
+
+(defun clel-take-while (pred s)
+  "Lazily take elements from S while PRED is true."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((forced (clel-seq-force s)))
+       (when (and forced (funcall pred (clel-first forced)))
+         (cons (clel-first forced)
+               (clel-take-while pred (clel-rest forced))))))))
+
+(defun clel-drop-while (pred s)
+  "Drop elements from S while PRED is true, return rest lazily."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((cur (clel-seq-force s)))
+       (while (and cur (funcall pred (clel-first cur)))
+         (setq cur (clel-rest cur)))
+       cur))))
+
+(defun clel-concat (&rest colls)
+  "Lazily concatenate COLLS."
+  (if (null colls)
+      nil
+    (let ((first-coll (clel-seq-force (car colls)))
+          (rest-colls (cdr colls)))
+      (clel-lazy-seq-create
+       (lambda ()
+         (if first-coll
+             (cons (clel-first first-coll)
+                   (apply #'clel-concat (cons (clel-rest first-coll) rest-colls)))
+           (when rest-colls
+             (clel-seq-force (apply #'clel-concat rest-colls)))))))))
+
+(defun clel-mapcat (f &rest colls)
+  "Map F over COLLS and concatenate results lazily."
+  (apply #'clel-concat (clel-doall (apply #'clel-map f colls))))
+
+(defun clel-interleave (&rest colls)
+  "Lazily interleave COLLS."
+  (let ((seqs (mapcar #'clel-seq-force colls)))
+    (clel-lazy-seq-create
+     (lambda ()
+       (when (cl-every #'identity seqs)
+         (let ((firsts (mapcar #'clel-first seqs))
+               (rests (mapcar #'clel-rest seqs)))
+           (append firsts (clel-seq-force (apply #'clel-interleave rests)))))))))
+
+(defun clel-partition (n s)
+  "Partition S into groups of N elements. Returns lazy seq of lists."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((forced (clel-seq-force s)))
+       (when forced
+         (let ((group nil)
+               (cur forced)
+               (count 0))
+           (while (and cur (< count n))
+             (push (clel-first cur) group)
+             (setq cur (clel-rest cur))
+             (setq count (1+ count)))
+           (when (= count n)
+             (cons (nreverse group)
+                   (clel-partition n cur)))))))))
+
+;;; Eager Sequence Functions
+
+(defun clel-reduce (f &rest args)
+  "Reduce S with F. (clel-reduce f coll) or (clel-reduce f init coll)."
+  (let (init s)
+    (if (= 1 (length args))
+        ;; (reduce f coll) — no init value
+        (let ((coll (clel-seq-force (car args))))
+          (setq init (clel-first coll))
+          (setq s (clel-rest coll)))
+      ;; (reduce f init coll)
+      (setq init (car args))
+      (setq s (clel-seq-force (cadr args))))
+    (let ((acc init)
+          (cur s))
+      (while cur
+        (setq acc (funcall f acc (clel-first cur)))
+        (setq cur (clel-rest cur)))
+      acc)))
+
+(defun clel-sort (cmp coll)
+  "Sort COLL using comparator CMP. Returns a new list."
+  (let ((lst (copy-sequence (clel-seq-force coll))))
+    (sort lst cmp)))
+
+(defun clel-sort-by (keyfn coll)
+  "Sort COLL by KEYFN. Uses < for comparison on key values."
+  (let ((lst (copy-sequence (clel-seq-force coll))))
+    (sort lst (lambda (a b)
+                (let ((ka (funcall keyfn a))
+                      (kb (funcall keyfn b)))
+                  (cond
+                   ((and (numberp ka) (numberp kb)) (< ka kb))
+                   ((and (stringp ka) (stringp kb)) (string< ka kb))
+                   (t (string< (format "%s" ka) (format "%s" kb)))))))))
+
+(defun clel-group-by (f coll)
+  "Group elements of COLL by the result of F. Returns alist."
+  (let ((result nil)
+        (cur (clel-seq-force coll)))
+    (while cur
+      (let* ((item (clel-first cur))
+             (key (funcall f item))
+             (existing (assoc key result)))
+        (if existing
+            (setcdr existing (append (cdr existing) (list item)))
+          (push (cons key (list item)) result)))
+      (setq cur (clel-rest cur)))
+    (nreverse result)))
+
+(defun clel-frequencies (coll)
+  "Return alist of (element . count) for elements in COLL."
+  (let ((result nil)
+        (cur (clel-seq-force coll)))
+    (while cur
+      (let* ((item (clel-first cur))
+             (existing (assoc item result)))
+        (if existing
+            (setcdr existing (1+ (cdr existing)))
+          (push (cons item 1) result)))
+      (setq cur (clel-rest cur)))
+    (nreverse result)))
+
+;;; Sequence Predicates
+
+(defun clel-every-p (pred coll)
+  "Return t if PRED is true for every element in COLL."
+  (let ((cur (clel-seq-force coll))
+        (result t))
+    (while (and cur result)
+      (unless (funcall pred (clel-first cur))
+        (setq result nil))
+      (setq cur (clel-rest cur)))
+    result))
+
+(defun clel-some (pred coll)
+  "Return the first truthy value of (PRED item) for items in COLL, or nil."
+  (let ((cur (clel-seq-force coll))
+        (result nil))
+    (while (and cur (not result))
+      (setq result (funcall pred (clel-first cur)))
+      (setq cur (clel-rest cur)))
+    result))
+
+(defun clel-not-every-p (pred coll)
+  "Return t if PRED is not true for every element in COLL."
+  (not (clel-every-p pred coll)))
+
+(defun clel-not-any-p (pred coll)
+  "Return t if PRED is not true for any element in COLL."
+  (not (clel-some pred coll)))
+
+(defun clel-empty-p (coll)
+  "Return t if COLL is empty or nil. Lazy-seq aware."
+  (null (clel-seq-force coll)))
+
 (provide 'clojure-elisp-runtime)
 ;;; clojure-elisp-runtime.el ends here

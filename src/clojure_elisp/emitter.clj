@@ -89,9 +89,9 @@
    'false? "clel-false-p"
 
    ;; Collections
-   'first "car"
-   'rest "cdr"
-   'next "cdr"
+   'first "clel-first"
+   'rest "clel-rest"
+   'next "clel-next"
    'cons "cons"
    'conj "clel-conj"
    'count "length"
@@ -102,18 +102,36 @@
    'keys "clel-keys"
    'vals "clel-vals"
    'seq "clel-seq"
-   'empty? "null"
+   'empty? "clel-empty-p"
    'into "clel-into"
-   'reduce "cl-reduce"
-   'map "mapcar"
-   'filter "cl-remove-if-not"
-   'remove "cl-remove-if"
-   'take "cl-subseq"
-   'drop "nthcdr"
    'reverse "reverse"
-   'sort "sort"
-   'concat "append"
    'flatten "flatten-tree"
+
+   ;; Sequence functions (lazy)
+   'map "clel-map"
+   'filter "clel-filter"
+   'remove "cl-remove-if"
+   'take "clel-take"
+   'drop "clel-drop"
+   'take-while "clel-take-while"
+   'drop-while "clel-drop-while"
+   'concat "clel-concat"
+   'mapcat "clel-mapcat"
+   'interleave "clel-interleave"
+   'partition "clel-partition"
+
+   ;; Sequence functions (eager)
+   'reduce "clel-reduce"
+   'sort "clel-sort"
+   'sort-by "clel-sort-by"
+   'group-by "clel-group-by"
+   'frequencies "clel-frequencies"
+
+   ;; Sequence predicates
+   'every? "clel-every-p"
+   'some "clel-some"
+   'not-every? "clel-not-every-p"
+   'not-any? "clel-not-any-p"
 
    ;; Strings
    'str "clel-str"
@@ -129,6 +147,11 @@
    'constantly "clel-constantly"
    'partial "apply-partially"
    'comp "clel-comp"
+
+   ;; Lazy sequences
+   'realized? "clel-realized-p"
+   'doall "clel-doall"
+   'dorun "clel-dorun"
 
    ;; Atoms
    'atom "clel-atom"
@@ -321,6 +344,11 @@
   (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
         elisp-body (str/join "\n    " (map emit body))]
     (format "(lambda %s\n    %s)" elisp-params elisp-body)))
+
+(defmethod emit-node :lazy-seq
+  [{:keys [body]}]
+  (let [body-str (str/join " " (map emit body))]
+    (format "(clel-lazy-seq-create (lambda () %s))" body-str)))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]

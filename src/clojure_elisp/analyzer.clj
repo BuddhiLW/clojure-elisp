@@ -547,6 +547,12 @@
               :catches catches
               :finally finally-body)))
 
+(defn analyze-lazy-seq
+  "Analyze (lazy-seq body) forms."
+  [[_ & body]]
+  (ast-node :lazy-seq
+            :body (mapv analyze body)))
+
 (defn analyze-throw
   "Analyze (throw exception) forms.
    Supports:
@@ -760,7 +766,8 @@
    'loop analyze-loop
    'recur analyze-recur
    'try analyze-try
-   'throw analyze-throw})
+   'throw analyze-throw
+   'lazy-seq analyze-lazy-seq})
 
 (defn analyze
   "Analyze a Clojure form into an AST node."
