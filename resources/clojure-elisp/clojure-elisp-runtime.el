@@ -541,5 +541,53 @@ Returns ATOM."
   "Return t if COLL is empty or nil. Lazy-seq aware."
   (null (clel-seq-force coll)))
 
+;;; Protocol Support
+
+(defvar clel--protocol-registry (make-hash-table :test 'equal)
+  "Registry mapping protocol names to their method lists.")
+
+(defvar clel--protocol-impl-registry (make-hash-table :test 'equal)
+  "Registry mapping (protocol . type) pairs to t if implemented.")
+
+(defun clel--register-protocol (protocol-name methods)
+  "Register PROTOCOL-NAME with its METHOD names."
+  (puthash protocol-name methods clel--protocol-registry))
+
+(defun clel--register-impl (protocol-name type-name)
+  "Register that TYPE-NAME implements PROTOCOL-NAME."
+  (puthash (cons protocol-name type-name) t clel--protocol-impl-registry))
+
+(defun clel--type-of (value)
+  "Get the type of VALUE for protocol dispatch."
+  (cond
+   ((null value) 'null)
+   ((stringp value) 'string)
+   ((integerp value) 'integer)
+   ((floatp value) 'float)
+   ((symbolp value) 'symbol)
+   ((vectorp value) 'vector)
+   ((hash-table-p value) 'hash-table)
+   ((listp value)
+    ;; Check for struct types (cl-defstruct creates lists starting with type name)
+    (if (and (symbolp (car value))
+             (get (car value) 'cl-struct-type))
+        (car value)
+      'cons))
+   ;; For cl-defstruct types, check type-of
+   (t (type-of value))))
+
+(defun clel-satisfies-p (protocol-name value)
+  "Return t if VALUE satisfies PROTOCOL-NAME."
+  (let* ((value-type (clel--type-of value))
+         (key (cons protocol-name value-type)))
+    (or (gethash key clel--protocol-impl-registry)
+        ;; Also check if any cl-defmethod exists for the protocol's methods
+        (let ((methods (gethash protocol-name clel--protocol-registry)))
+          (and methods
+               (cl-some (lambda (method)
+                          (and (fboundp method)
+                               (cl-generic-p method)))
+                        methods))))))
+
 (provide 'clojure-elisp-runtime)
 ;;; clojure-elisp-runtime.el ends here

@@ -570,6 +570,121 @@
   [{:keys [target value]}]
   (format "(setf %s %s)" (mangle-name target) (emit value)))
 
+;; Clojure type → Elisp type specializer mapping
+(def ^:private clojure-to-elisp-type
+  {"String" "string"
+   "Number" "number"
+   "Integer" "integer"
+   "Long" "integer"
+   "Float" "float"
+   "Double" "float"
+   "Boolean" "boolean"
+   "nil" "null"
+   "Object" "t"
+   ;; Collection types
+   "clojure.lang.PersistentVector" "vector"
+   "clojure.lang.PersistentList" "cons"
+   "clojure.lang.PersistentHashMap" "hash-table"
+   "clojure.lang.Symbol" "symbol"
+   "clojure.lang.Keyword" "symbol"})
+
+(defn- elisp-type-specializer
+  "Convert a Clojure type symbol to an Elisp type specializer."
+  [type-sym]
+  (let [type-str (str type-sym)]
+    (or (get clojure-to-elisp-type type-str)
+        ;; If not a built-in, assume it's a user-defined struct type
+        (mangle-name type-sym))))
+
+(defn- emit-extend-method
+  "Emit cl-defmethod for extend-type/extend-protocol method."
+  [type-sym {:keys [name params body]}]
+  (let [method-name (mangle-name name)
+        elisp-type (elisp-type-specializer type-sym)
+        this-param (first params)
+        other-params (rest params)
+        params-str (if (seq other-params)
+                     (format "((%s %s) %s)"
+                             (mangle-name this-param) elisp-type
+                             (str/join " " (map mangle-name other-params)))
+                     (format "((%s %s))"
+                             (mangle-name this-param) elisp-type))
+        body-str (str/join "\n  " (map emit body))]
+    (format "(cl-defmethod %s %s\n  %s)"
+            method-name params-str body-str)))
+
+(defmethod emit-node :extend-type
+  [{:keys [type protocols]}]
+  (let [method-defs (for [{:keys [methods]} protocols
+                          method methods]
+                      (emit-extend-method type method))]
+    (str/join "\n\n" method-defs)))
+
+(defmethod emit-node :extend-protocol
+  [{:keys [name extensions]}]
+  (let [method-defs (for [{:keys [type methods]} extensions
+                          method methods]
+                      (emit-extend-method type method))]
+    (str/join "\n\n" method-defs)))
+
+(defmethod emit-node :satisfies?
+  [{:keys [protocol value]}]
+  (format "(clel-satisfies-p '%s %s)" (mangle-name protocol) (emit value)))
+
+;; Reify counter for generating unique type names
+(def ^:private reify-counter (atom 0))
+
+(defn- generate-reify-name []
+  (str "clel--reify-" (swap! reify-counter inc)))
+
+(defmethod emit-node :reify
+  [{:keys [protocols closed-over]}]
+  (let [reify-name (generate-reify-name)
+        ;; Emit struct definition with closed-over slots
+        struct-def (if (seq closed-over)
+                     (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil))\n  %s)"
+                             reify-name reify-name
+                             (str/join "\n  " (map mangle-name closed-over)))
+                     (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil)))"
+                             reify-name reify-name))
+        ;; Emit methods with closure access
+        method-defs (for [{:keys [methods]} protocols
+                          {:keys [name params body]} methods]
+                      (let [method-name (mangle-name name)
+                            this-param (first params)
+                            other-params (rest params)
+                            params-str (if (seq other-params)
+                                         (format "((%s %s) %s)"
+                                                 (mangle-name this-param) reify-name
+                                                 (str/join " " (map mangle-name other-params)))
+                                         (format "((%s %s))"
+                                                 (mangle-name this-param) reify-name))
+                            ;; Bind closed-over locals from struct fields
+                            field-bindings (map (fn [f]
+                                                  (format "(%s (%s-%s %s))"
+                                                          (mangle-name f) reify-name
+                                                          (mangle-name f) (mangle-name this-param)))
+                                                closed-over)
+                            body-str (str/join "\n    " (map emit body))]
+                        (if (seq closed-over)
+                          (format "(cl-defmethod %s %s\n  (let* (%s)\n    %s))"
+                                  method-name params-str
+                                  (str/join "\n         " field-bindings)
+                                  body-str)
+                          (format "(cl-defmethod %s %s\n  %s)"
+                                  method-name params-str body-str))))
+        ;; Constructor call with closed-over values
+        ctor-args (if (seq closed-over)
+                    (str/join " " (map (fn [f] (format ":%s %s" (mangle-name f) (mangle-name f)))
+                                       closed-over))
+                    "")
+        ctor-call (if (seq closed-over)
+                    (format "(%s--create %s)" reify-name ctor-args)
+                    (format "(%s--create)" reify-name))]
+    ;; Emit struct and methods, then return constructor call
+    ;; Note: In real use, struct/methods should be hoisted to top-level
+    (str struct-def "\n\n" (str/join "\n\n" method-defs) "\n\n" ctor-call)))
+
 (defmethod emit-node :if
   [{:keys [test then else]}]
   (if else

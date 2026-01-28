@@ -825,6 +825,102 @@
       (is (= :invoke (get-in ast [:value :op]))))))
 
 ;; ============================================================================
+;; extend-type (clel-025)
+;; ============================================================================
+
+(deftest analyze-extend-type-test
+  (testing "basic extend-type"
+    (let [ast (analyze '(extend-type String
+                          IGreeter
+                          (greet [this] "hello")))]
+      (is (= :extend-type (:op ast)))
+      (is (= 'String (:type ast)))
+      (is (= 1 (count (:protocols ast))))
+      (is (= 'IGreeter (get-in ast [:protocols 0 :protocol])))))
+
+  (testing "extend-type with multiple protocols"
+    (let [ast (analyze '(extend-type Number
+                          IShow
+                          (show [this] this)
+                          IMath
+                          (double-val [this] this)))]
+      (is (= :extend-type (:op ast)))
+      (is (= 'Number (:type ast)))
+      (is (= 2 (count (:protocols ast))))))
+
+  (testing "extend-type with multi-arity method"
+    (let [ast (analyze '(extend-type String
+                          IGreeter
+                          (greet [this prefix] (str prefix this))))]
+      (is (= :extend-type (:op ast)))
+      (is (= 2 (count (get-in ast [:protocols 0 :methods 0 :params])))))))
+
+;; ============================================================================
+;; extend-protocol (clel-025)
+;; ============================================================================
+
+(deftest analyze-extend-protocol-test
+  (testing "basic extend-protocol"
+    (let [ast (analyze '(extend-protocol IGreeter
+                          String
+                          (greet [this] "hello")))]
+      (is (= :extend-protocol (:op ast)))
+      (is (= 'IGreeter (:name ast)))
+      (is (= 1 (count (:extensions ast))))
+      (is (= 'String (get-in ast [:extensions 0 :type])))))
+
+  (testing "extend-protocol with multiple types"
+    (let [ast (analyze '(extend-protocol IShow
+                          String
+                          (show [this] this)
+                          Number
+                          (show [this] this)))]
+      (is (= :extend-protocol (:op ast)))
+      (is (= 2 (count (:extensions ast))))
+      (is (= 'String (get-in ast [:extensions 0 :type])))
+      (is (= 'Number (get-in ast [:extensions 1 :type]))))))
+
+;; ============================================================================
+;; satisfies? (clel-025)
+;; ============================================================================
+
+(deftest analyze-satisfies?-test
+  (testing "basic satisfies?"
+    (let [ast (analyze '(satisfies? IGreeter x))]
+      (is (= :satisfies? (:op ast)))
+      (is (= 'IGreeter (:protocol ast)))
+      (is (= :var (get-in ast [:value :op]))))))
+
+;; ============================================================================
+;; reify (clel-025)
+;; ============================================================================
+
+(deftest analyze-reify-test
+  (testing "basic reify"
+    (let [ast (analyze '(reify IGreeter
+                          (greet [this] "hello")))]
+      (is (= :reify (:op ast)))
+      (is (= 1 (count (:protocols ast))))
+      (is (= 'IGreeter (get-in ast [:protocols 0 :protocol])))))
+
+  (testing "reify with multiple protocols"
+    (let [ast (analyze '(reify
+                          IGreeter
+                          (greet [this] "hi")
+                          IShow
+                          (show [this] this)))]
+      (is (= :reify (:op ast)))
+      (is (= 2 (count (:protocols ast))))))
+
+  (testing "reify captures closed-over locals"
+    (let [ast (binding [ana/*env* (ana/with-locals ana/*env* #{'x 'y})]
+                (analyze '(reify IGreeter
+                            (greet [this] x))))]
+      (is (= :reify (:op ast)))
+      (is (contains? (set (:closed-over ast)) 'x))
+      (is (contains? (set (:closed-over ast)) 'y)))))
+
+;; ============================================================================
 ;; Macro System (clel-027)
 ;; ============================================================================
 

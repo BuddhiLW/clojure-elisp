@@ -702,6 +702,89 @@
       (is (clojure.string/includes? code "42")))))
 
 ;; ============================================================================
+;; extend-type (clel-025)
+;; ============================================================================
+
+(deftest emit-extend-type-test
+  (testing "extend-type emits cl-defmethod with type specializer"
+    (let [code (analyze-and-emit '(extend-type String
+                                    IGreeter
+                                    (greet [this] this)))]
+      (is (clojure.string/includes? code "cl-defmethod"))
+      (is (clojure.string/includes? code "greet"))
+      (is (clojure.string/includes? code "string"))))
+
+  (testing "extend-type with multiple protocols"
+    (let [code (analyze-and-emit '(extend-type Number
+                                    IShow
+                                    (show [this] this)
+                                    IMath
+                                    (double-val [this] this)))]
+      (is (clojure.string/includes? code "cl-defmethod show"))
+      (is (clojure.string/includes? code "cl-defmethod double-val"))
+      (is (clojure.string/includes? code "number"))))
+
+  (testing "extend-type with custom record type"
+    (let [code (analyze-and-emit '(extend-type MyRecord
+                                    IShow
+                                    (show [this] this)))]
+      (is (clojure.string/includes? code "cl-defmethod"))
+      (is (clojure.string/includes? code "MyRecord")))))
+
+;; ============================================================================
+;; extend-protocol (clel-025)
+;; ============================================================================
+
+(deftest emit-extend-protocol-test
+  (testing "extend-protocol emits cl-defmethod for each type"
+    (let [code (analyze-and-emit '(extend-protocol IGreeter
+                                    String
+                                    (greet [this] this)
+                                    Number
+                                    (greet [this] this)))]
+      (is (clojure.string/includes? code "cl-defmethod greet ((this string))"))
+      (is (clojure.string/includes? code "cl-defmethod greet ((this number))"))))
+
+  (testing "extend-protocol with multiple methods per type"
+    (let [code (analyze-and-emit '(extend-protocol IShape
+                                    String
+                                    (area [this] 0)
+                                    (perimeter [this] 0)))]
+      (is (clojure.string/includes? code "cl-defmethod area"))
+      (is (clojure.string/includes? code "cl-defmethod perimeter")))))
+
+;; ============================================================================
+;; satisfies? (clel-025)
+;; ============================================================================
+
+(deftest emit-satisfies?-test
+  (testing "satisfies? emits runtime check"
+    (let [code (analyze-and-emit '(satisfies? IGreeter x))]
+      (is (clojure.string/includes? code "clel-satisfies-p"))
+      (is (clojure.string/includes? code "'IGreeter"))
+      (is (clojure.string/includes? code "x")))))
+
+;; ============================================================================
+;; reify (clel-025)
+;; ============================================================================
+
+(deftest emit-reify-test
+  (testing "reify emits cl-defstruct and cl-defmethod"
+    (let [code (analyze-and-emit '(reify IGreeter
+                                    (greet [this] "hello")))]
+      (is (clojure.string/includes? code "cl-defstruct"))
+      (is (clojure.string/includes? code "clel--reify-"))
+      (is (clojure.string/includes? code "cl-defmethod greet"))
+      (is (clojure.string/includes? code "--create"))))
+
+  (testing "reify with multiple methods"
+    (let [code (analyze-and-emit '(reify IShape
+                                    (area [this] 10)
+                                    (perimeter [this] 20)))]
+      (is (clojure.string/includes? code "cl-defmethod area"))
+      (is (clojure.string/includes? code "cl-defmethod perimeter")))))
+
+;; ============================================================================
 ;; Macro System (clel-027)
 ;; ============================================================================
 

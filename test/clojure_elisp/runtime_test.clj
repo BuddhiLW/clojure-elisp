@@ -593,3 +593,65 @@
       (is (str/includes? code "cl-defmethod"))
       (is (str/includes? code "setf")))))
 
+;; ============================================================================
+;; extend-type and extend-protocol (clel-025)
+;; ============================================================================
+
+(deftest extend-type-compilation-test
+  (testing "extend-type compiles to cl-defmethod with type specializer"
+    (let [code (clel/emit-forms
+                '[(defprotocol IShow
+                    (show [this]))
+                  (extend-type String
+                    IShow
+                    (show [this] this))])]
+      (is (str/includes? code "cl-defgeneric show"))
+      (is (str/includes? code "cl-defmethod show ((this string))"))))
+
+  (testing "extend-type with custom record type"
+    (let [code (clel/emit-forms
+                '[(defprotocol IShow
+                    (show [this]))
+                  (defrecord Person [name])
+                  (extend-type Person
+                    IShow
+                    (show [this] name))])]
+      (is (str/includes? code "cl-defmethod show ((this Person))")))))
+
+(deftest extend-protocol-compilation-test
+  (testing "extend-protocol compiles to multiple cl-defmethods"
+    (let [code (clel/emit-forms
+                '[(defprotocol IGreeter
+                    (greet [this]))
+                  (extend-protocol IGreeter
+                    String
+                    (greet [this] this)
+                    Number
+                    (greet [this] this))])]
+      (is (str/includes? code "cl-defgeneric greet"))
+      (is (str/includes? code "cl-defmethod greet ((this string))"))
+      (is (str/includes? code "cl-defmethod greet ((this number))")))))
+
+;; ============================================================================
+;; satisfies? (clel-025)
+;; ============================================================================
+
+(deftest satisfies?-compilation-test
+  (testing "satisfies? compiles to runtime check"
+    (let [code (clel/emit '(satisfies? IGreeter x))]
+      (is (str/includes? code "clel-satisfies-p"))
+      (is (str/includes? code "'IGreeter")))))
+
+;; ============================================================================
+;; reify (clel-025)
+;; ============================================================================
+
+(deftest reify-compilation-test
+  (testing "reify compiles to struct and methods"
+    (let [code (clel/emit '(reify IGreeter
+                             (greet [this] "hello")))]
+      (is (str/includes? code "cl-defstruct"))
+      (is (str/includes? code "clel--reify-"))
+      (is (str/includes? code "cl-defmethod greet"))
+      (is (str/includes? code "--create")))))
+

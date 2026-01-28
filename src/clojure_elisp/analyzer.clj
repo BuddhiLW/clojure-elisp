@@ -839,6 +839,100 @@
             :target target
             :value (analyze value)))
 
+(defn analyze-extend-type
+  "Analyze (extend-type Type Protocol (method [this args] body) ...) forms.
+   Extends multiple protocols to an existing type."
+  [[_ type-sym & body]]
+  (let [protocols (parse-protocol-impls body [])]
+    (ast-node :extend-type
+              :type type-sym
+              :protocols protocols)))
+
+(defn analyze-extend-protocol
+  "Analyze (extend-protocol Protocol Type1 (method [this] body) Type2 ...) forms.
+   Extends a single protocol to multiple types."
+  [[_ protocol-name & body]]
+  (let [;; Parse body: alternating Type symbols and method implementations
+        parse-extensions
+        (fn [forms]
+          (loop [remaining (seq forms)
+                 current-type nil
+                 extensions []
+                 current-methods []]
+            (if (nil? remaining)
+              (if current-type
+                (conj extensions {:type current-type :methods current-methods})
+                extensions)
+              (let [item (first remaining)]
+                (if (symbol? item)
+                  ;; New type name - flush previous
+                  (let [extensions (if current-type
+                                     (conj extensions {:type current-type :methods current-methods})
+                                     extensions)]
+                    (recur (next remaining) item extensions []))
+                  ;; Method implementation: (method-name [this args...] body...)
+                  (let [[method-name params & method-body] item]
+                    (recur (next remaining)
+                           current-type
+                           extensions
+                           (conj current-methods
+                                 {:name method-name
+                                  :params (vec params)
+                                  :body (binding [*env* (with-locals *env* (set params))]
+                                          (mapv analyze method-body))}))))))))]
+    (ast-node :extend-protocol
+              :name protocol-name
+              :extensions (parse-extensions body))))
+
+(defn analyze-satisfies?
+  "Analyze (satisfies? Protocol value) forms.
+   Checks if a value satisfies a protocol at runtime."
+  [[_ protocol-name value]]
+  (ast-node :satisfies?
+            :protocol protocol-name
+            :value (analyze value)))
+
+(defn- analyze-reify-protocols
+  "Parse reify protocol implementations."
+  [body closed-locals]
+  (loop [remaining (seq body)
+         current-protocol nil
+         protocols []
+         current-methods []]
+    (if (nil? remaining)
+      (if current-protocol
+        (conj protocols {:protocol current-protocol :methods current-methods})
+        protocols)
+      (let [item (first remaining)]
+        (if (symbol? item)
+          ;; New protocol name - flush previous
+          (let [protocols (if current-protocol
+                            (conj protocols {:protocol current-protocol :methods current-methods})
+                            protocols)]
+            (recur (next remaining) item protocols []))
+          ;; Method implementation
+          (let [[method-name params & method-body] item
+                all-locals (into (set params) closed-locals)]
+            (recur (next remaining)
+                   current-protocol
+                   protocols
+                   (conj current-methods
+                         {:name method-name
+                          :params (vec params)
+                          :body (binding [*env* (with-locals *env* all-locals)]
+                                  (mapv analyze method-body))}))))))))
+
+(defn analyze-reify
+  "Analyze (reify Protocol (method [this] body) ...) forms.
+   Creates an anonymous type implementing protocols."
+  [[_ & body]]
+  (let [;; Capture closed-over locals from current environment
+        closed-locals (or (:locals *env*) #{})
+        protocols (analyze-reify-protocols body closed-locals)]
+    (ast-node :reify
+              :protocols protocols
+              :closed-over (vec closed-locals))))
+
 ;; ============================================================================
 ;; Macro System
 ;; ============================================================================
@@ -1032,6 +1126,10 @@
    'defrecord analyze-defrecord
    'deftype analyze-deftype
    'set! analyze-set!
+   'extend-type analyze-extend-type
+   'extend-protocol analyze-extend-protocol
+   'satisfies? analyze-satisfies?
+   'reify analyze-reify
    'fn analyze-fn
    'fn* analyze-fn
    'let analyze-let
