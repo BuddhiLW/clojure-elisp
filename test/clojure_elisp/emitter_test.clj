@@ -799,6 +799,112 @@
       (is (clojure.string/includes? call-code "my-utils-helper")))))
 
 ;; ============================================================================
+;; with-eval-after-load (clel-033)
+;; ============================================================================
+
+(deftest emit-with-eval-after-load-test
+  (testing "basic with-eval-after-load emits Elisp form"
+    (let [code (analyze-and-emit '(with-eval-after-load 'hive-mcp-addons
+                                    (register-addon 'eca)))]
+      (is (clojure.string/includes? code "with-eval-after-load"))
+      (is (clojure.string/includes? code "'hive-mcp-addons"))
+      (is (clojure.string/includes? code "register-addon"))))
+
+  (testing "with-eval-after-load with multiple body forms"
+    (let [code (analyze-and-emit '(with-eval-after-load 'my-feature
+                                    (setup)
+                                    (configure :opt 1)))]
+      (is (clojure.string/includes? code "with-eval-after-load"))
+      (is (clojure.string/includes? code "setup"))
+      (is (clojure.string/includes? code "configure"))))
+
+  (testing "with-eval-after-load with string feature"
+    (let [code (analyze-and-emit '(with-eval-after-load "my-package"
+                                    (init)))]
+      (is (clojure.string/includes? code "with-eval-after-load"))
+      (is (clojure.string/includes? code "\"my-package\""))))
+
+  (testing "with-eval-after-load preserves keyword args"
+    (let [code (analyze-and-emit '(with-eval-after-load 'hive-mcp-addons
+                                    (hive-mcp-addon-register
+                                     'eca
+                                     :version "0.1.0"
+                                     :description "ECA integration")))]
+      (is (clojure.string/includes? code "with-eval-after-load"))
+      (is (clojure.string/includes? code ":version"))
+      (is (clojure.string/includes? code "\"0.1.0\""))
+      (is (clojure.string/includes? code ":description")))))
+
+;; ============================================================================
+;; define-minor-mode (clel-032)
+;; ============================================================================
+
+(deftest emit-define-minor-mode-test
+  (testing "basic define-minor-mode emits Elisp form"
+    (let [code (analyze-and-emit '(define-minor-mode my-mode
+                                    "A test mode."
+                                    :init-value nil
+                                    :lighter " M"))]
+      (is (clojure.string/includes? code "define-minor-mode"))
+      (is (clojure.string/includes? code "my-mode"))
+      (is (clojure.string/includes? code "\"A test mode.\""))
+      (is (clojure.string/includes? code ":init-value nil"))
+      (is (clojure.string/includes? code ":lighter \" M\""))))
+
+  (testing "define-minor-mode with :global option"
+    (let [code (analyze-and-emit '(define-minor-mode global-mode
+                                    "Global mode."
+                                    :global t))]
+      (is (clojure.string/includes? code "define-minor-mode"))
+      (is (clojure.string/includes? code ":global t"))))
+
+  (testing "define-minor-mode with :group option"
+    (let [code (analyze-and-emit '(define-minor-mode hive-mcp-eca-mode
+                                    "ECA mode."
+                                    :group 'hive-mcp-eca))]
+      (is (clojure.string/includes? code "define-minor-mode"))
+      (is (clojure.string/includes? code ":group"))
+      (is (clojure.string/includes? code "'hive-mcp-eca"))))
+
+  (testing "define-minor-mode with body"
+    (let [code (analyze-and-emit '(define-minor-mode my-mode
+                                    "Toggle mode."
+                                    :lighter " M"
+                                    (if my-mode
+                                      (my-enable)
+                                      (my-disable))))]
+      (is (clojure.string/includes? code "define-minor-mode"))
+      (is (clojure.string/includes? code "(if my-mode"))
+      (is (clojure.string/includes? code "(my-enable)"))
+      (is (clojure.string/includes? code "(my-disable)"))))
+
+  (testing "define-minor-mode without docstring"
+    (let [code (analyze-and-emit '(define-minor-mode simple-mode
+                                    :lighter " S"))]
+      (is (clojure.string/includes? code "define-minor-mode"))
+      (is (clojure.string/includes? code "simple-mode"))
+      (is (clojure.string/includes? code ":lighter \" S\""))))
+
+  (testing "define-minor-mode full example"
+    (let [code (analyze-and-emit '(define-minor-mode hive-mcp-eca-mode
+                                    "Minor mode for ECA integration."
+                                    :init-value nil
+                                    :lighter " ECA"
+                                    :global t
+                                    :group 'hive-mcp-eca
+                                    (if hive-mcp-eca-mode
+                                      (hive-mcp-eca--enable)
+                                      (hive-mcp-eca--disable))))]
+      (is (clojure.string/includes? code "define-minor-mode"))
+      (is (clojure.string/includes? code "hive-mcp-eca-mode"))
+      (is (clojure.string/includes? code "\"Minor mode for ECA integration.\""))
+      (is (clojure.string/includes? code ":init-value nil"))
+      (is (clojure.string/includes? code ":lighter \" ECA\""))
+      (is (clojure.string/includes? code ":global t"))
+      (is (clojure.string/includes? code ":group"))
+      (is (clojure.string/includes? code "(if hive-mcp-eca-mode")))))
+
+;; ============================================================================
 ;; defgroup - Customization Groups (clel-030)
 ;; ============================================================================
 

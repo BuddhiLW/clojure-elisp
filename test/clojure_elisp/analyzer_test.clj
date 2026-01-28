@@ -1033,6 +1033,100 @@
         (is (= 'utils.helpers (:ns fn-node)))))))
 
 ;; ============================================================================
+;; with-eval-after-load (clel-033)
+;; ============================================================================
+
+(deftest analyze-with-eval-after-load-test
+  (testing "basic with-eval-after-load with quoted symbol"
+    (let [ast (analyze '(with-eval-after-load 'hive-mcp-addons
+                          (register-addon 'eca)))]
+      (is (= :with-eval-after-load (:op ast)))
+      (is (= :quote (:op (:feature ast))))
+      (is (= 'hive-mcp-addons (:form (:feature ast))))
+      (is (= 1 (count (:body ast))))))
+
+  (testing "with-eval-after-load with multiple body forms"
+    (let [ast (analyze '(with-eval-after-load 'my-feature
+                          (setup-feature)
+                          (configure-feature :option 1)))]
+      (is (= :with-eval-after-load (:op ast)))
+      (is (= 2 (count (:body ast))))))
+
+  (testing "with-eval-after-load with string feature"
+    (let [ast (analyze '(with-eval-after-load "my-package"
+                          (init)))]
+      (is (= :with-eval-after-load (:op ast)))
+      (is (= :const (:op (:feature ast))))
+      (is (= "my-package" (:val (:feature ast))))))
+
+  (testing "body forms are analyzed"
+    (let [ast (analyze '(with-eval-after-load 'feature
+                          (+ 1 2)))]
+      (is (= :invoke (:op (first (:body ast))))))))
+
+;; ============================================================================
+;; define-minor-mode (clel-032)
+;; ============================================================================
+
+(deftest analyze-define-minor-mode-test
+  (testing "basic define-minor-mode with docstring and options"
+    (let [ast (analyze '(define-minor-mode my-mode
+                          "A test minor mode."
+                          :init-value nil
+                          :lighter " M"
+                          :global t))]
+      (is (= :define-minor-mode (:op ast)))
+      (is (= 'my-mode (:name ast)))
+      (is (= "A test minor mode." (:docstring ast)))
+      (is (= nil (get-in ast [:options :init-value])))
+      (is (= " M" (get-in ast [:options :lighter])))
+      (is (= 't (get-in ast [:options :global])))))
+
+  (testing "define-minor-mode with :group option"
+    (let [ast (analyze '(define-minor-mode hive-mcp-eca-mode
+                          "Minor mode for ECA."
+                          :group 'hive-mcp-eca))]
+      (is (= :define-minor-mode (:op ast)))
+      (is (= 'hive-mcp-eca-mode (:name ast)))
+      (is (= '(quote hive-mcp-eca) (get-in ast [:options :group])))))
+
+  (testing "define-minor-mode with body"
+    (let [ast (analyze '(define-minor-mode my-mode
+                          "Toggle my mode."
+                          :lighter " My"
+                          (if my-mode
+                            (my-enable)
+                            (my-disable))))]
+      (is (= :define-minor-mode (:op ast)))
+      (is (= 1 (count (:body ast))))
+      (is (= :if (:op (first (:body ast)))))))
+
+  (testing "define-minor-mode with multiple body forms"
+    (let [ast (analyze '(define-minor-mode test-mode
+                          "A test mode."
+                          :init-value nil
+                          (setup-stuff)
+                          (when test-mode
+                            (activate))))]
+      (is (= :define-minor-mode (:op ast)))
+      (is (= 2 (count (:body ast))))))
+
+  (testing "define-minor-mode without docstring"
+    (let [ast (analyze '(define-minor-mode simple-mode
+                          :lighter " S"))]
+      (is (= :define-minor-mode (:op ast)))
+      (is (= 'simple-mode (:name ast)))
+      (is (nil? (:docstring ast)))
+      (is (= " S" (get-in ast [:options :lighter])))))
+
+  (testing "define-minor-mode with :keymap option"
+    (let [ast (analyze '(define-minor-mode keymap-mode
+                          "Mode with keymap."
+                          :keymap '(("C-c C-x" . my-command))))]
+      (is (= :define-minor-mode (:op ast)))
+      (is (some? (get-in ast [:options :keymap]))))))
+
+;; ============================================================================
 ;; defgroup - Customization Groups (clel-030)
 ;; ============================================================================
 

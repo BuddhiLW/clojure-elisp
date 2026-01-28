@@ -380,6 +380,12 @@
   (let [body-str (str/join " " (map emit body))]
     (format "(clel-lazy-seq-create (lambda () %s))" body-str)))
 
+(defmethod emit-node :with-eval-after-load
+  [{:keys [feature body]}]
+  (let [feature-str (emit feature)
+        body-str (str/join "\n  " (map emit body))]
+    (format "(with-eval-after-load %s\n  %s)" feature-str body-str)))
+
 (defmethod emit-node :let
   [{:keys [bindings body]}]
   (let [binding-strs (map (fn [{:keys [name init]}]
@@ -733,6 +739,35 @@
   (let [fn-str (emit fn)
         args-str (map emit args)]
     (apply emit-sexp fn-str args-str)))
+
+(defmethod emit-node :define-minor-mode
+  [{:keys [name docstring options body]}]
+  (let [mode-name (mangle-name name)
+        ;; Helper to emit option values (handles quoted forms, etc.)
+        emit-option-val (fn [v]
+                          (cond
+                            (nil? v) "nil"
+                            (true? v) "t"
+                            (false? v) "nil"
+                            (string? v) (pr-str v)
+                            (keyword? v) (str v)
+                            (and (seq? v) (= 'quote (first v)))
+                            (str "'" (second v))
+                            :else (str v)))
+        ;; Emit options as keyword-value pairs
+        options-str (->> options
+                         (map (fn [[k v]]
+                                (str (str k) " " (emit-option-val v))))
+                         (str/join "\n  "))
+        ;; Emit body forms
+        body-str (when (seq body)
+                   (str/join "\n  " (map emit body)))
+        ;; Build the full form
+        parts (cond-> [(str "(define-minor-mode " mode-name)]
+                docstring (conj (str "  " (pr-str docstring)))
+                (seq options-str) (conj (str "  " options-str))
+                (seq body-str) (conj (str "  " body-str)))]
+    (str (str/join "\n" parts) ")")))
 
 (defmethod emit-node :defgroup
   [{:keys [name value docstring options]}]

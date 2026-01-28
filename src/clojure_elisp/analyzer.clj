@@ -843,6 +843,40 @@
 ;; Macro System
 ;; ============================================================================
 
+(defn analyze-with-eval-after-load
+  "Analyze (with-eval-after-load feature body...) forms.
+   The feature is typically a quoted symbol or string."
+  [[_ feature & body]]
+  (ast-node :with-eval-after-load
+            :feature (analyze feature)
+            :body (mapv analyze body)))
+
+(defn analyze-define-minor-mode
+  "Analyze (define-minor-mode name docstring? options... body...) forms.
+   Options are keyword-value pairs like :init-value, :lighter, :global, :group, :keymap.
+   Body forms are executed when the mode is toggled."
+  [[_ mode-name & rest-forms]]
+  (let [;; Check if first element is a docstring
+        [docstring rest-forms] (if (string? (first rest-forms))
+                                 [(first rest-forms) (rest rest-forms)]
+                                 [nil rest-forms])
+        ;; Parse keyword options until we hit a non-keyword or run out
+        parse-options (fn [forms]
+                        (loop [remaining forms
+                               options {}]
+                          (if (and (seq remaining)
+                                   (keyword? (first remaining))
+                                   (seq (rest remaining)))
+                            (recur (drop 2 remaining)
+                                   (assoc options (first remaining) (second remaining)))
+                            [options remaining])))
+        [options body-forms] (parse-options rest-forms)]
+    (ast-node :define-minor-mode
+              :name mode-name
+              :docstring docstring
+              :options options
+              :body (mapv analyze body-forms))))
+
 (defn analyze-defgroup
   "Analyze (defgroup name value docstring? keyword-value-options...) forms.
    Options are keyword-value pairs like :group, :prefix, :tag, :link.
@@ -1017,6 +1051,8 @@
    'try analyze-try
    'throw analyze-throw
    'lazy-seq analyze-lazy-seq
+   'with-eval-after-load analyze-with-eval-after-load
+   'define-minor-mode analyze-define-minor-mode
    'defgroup analyze-defgroup
    'defcustom analyze-defcustom})
 
