@@ -242,6 +242,11 @@
   [{:keys [form]}]
   (str "'" (pr-str form)))
 
+(defmethod emit-node :defmacro
+  [_]
+  ;; Macros are compile-time only — emit nothing
+  "")
+
 (defmethod emit-node :def
   [{:keys [name docstring init]}]
   (let [elisp-name (mangle-name name)]

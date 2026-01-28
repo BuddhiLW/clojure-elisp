@@ -26,6 +26,51 @@
   (update env :locals into locals))
 
 ;; ============================================================================
+;; Macro Registry
+;; ============================================================================
+
+(defonce ^{:doc "Compile-time macro registry. Maps symbol -> macro fn."}
+  macro-registry
+  (atom {}))
+
+(defn clear-macros!
+  "Clear all registered macros. Useful for tests."
+  []
+  (reset! macro-registry {}))
+
+(defn get-macro
+  "Look up a macro by name. Returns the macro fn or nil."
+  [sym]
+  (get @macro-registry sym))
+
+(defn register-macro!
+  "Register a macro fn under the given name."
+  [sym macro-fn]
+  (swap! macro-registry assoc sym macro-fn))
+
+(defn macroexpand-1-clel
+  "Expand a ClojureElisp macro form by one step.
+   If the form is a list whose first element is a registered macro,
+   applies the macro fn and returns the result. Otherwise returns
+   the form unchanged."
+  [form]
+  (if (and (seq? form)
+           (symbol? (first form)))
+    (if-let [macro-fn (get-macro (first form))]
+      (apply macro-fn (rest form))
+      form)
+    form))
+
+(defn macroexpand-clel
+  "Fully expand a ClojureElisp macro form.
+   Repeatedly applies macroexpand-1-clel until the form stops changing."
+  [form]
+  (let [expanded (macroexpand-1-clel form)]
+    (if (identical? expanded form)
+      form
+      (recur expanded))))
+
+;; ============================================================================
 ;; Source Location
 ;; ============================================================================
 
@@ -779,6 +824,30 @@
             :value (analyze value)))
 
 ;; ============================================================================
+;; Macro System
+;; ============================================================================
+
+(defn analyze-defmacro
+  "Analyze (defmacro name [params] body) forms.
+   Evaluates the macro body as a Clojure function and registers it
+   in the compile-time macro registry. Returns a :defmacro AST node
+   that the emitter should skip (macros are compile-time only)."
+  [[_ name & fdecl]]
+  (let [[docstring fdecl] (if (string? (first fdecl))
+                            [(first fdecl) (rest fdecl)]
+                            [nil fdecl])
+        [params & body] fdecl
+        ;; Build and eval a Clojure fn from the macro body.
+        ;; Since the compiler runs on the JVM, the macro fn executes
+        ;; at compile time and produces forms for analysis.
+        macro-fn (eval (list* 'fn params body))]
+    (register-macro! name macro-fn)
+    (ast-node :defmacro
+              :name name
+              :docstring docstring
+              :params params)))
+
+;; ============================================================================
 ;; Collection Analyzers
 ;; ============================================================================
 
@@ -861,6 +930,7 @@
   "Map of special form symbols to their analyzers."
   {'def analyze-def
    'defn analyze-defn
+   'defmacro analyze-defmacro
    'defmulti analyze-defmulti
    'defmethod analyze-defmethod
    'defprotocol analyze-defprotocol
@@ -945,12 +1015,16 @@
           (set? form)
           (analyze-set form)
 
-          ;; List (special form or invocation)
+          ;; List (special form, macro, or invocation)
           (seq? form)
           (let [op (first form)]
             (if-let [analyzer (get special-forms op)]
               (analyzer form)
-              (analyze-invoke form)))
+              ;; Check ClojureElisp macro registry before treating as invoke
+              (if-let [macro-fn (when (symbol? op) (get-macro op))]
+                (let [expanded (apply macro-fn (rest form))]
+                  (analyze expanded))
+                (analyze-invoke form))))
 
           :else
           (ast-node :unknown :form form))))))

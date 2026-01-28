@@ -824,3 +824,211 @@
       (is (= 'count (:target ast)))
       (is (= :invoke (get-in ast [:value :op]))))))
 
+;; ============================================================================
+;; Macro System (clel-027)
+;; ============================================================================
+
+(deftest analyze-defmacro-test
+  (testing "defmacro produces :defmacro AST node"
+    (let [ast (analyze '(defmacro unless [pred body]
+                          (list 'if (list 'not pred) body nil)))]
+      (is (= :defmacro (:op ast)))
+      (is (= 'unless (:name ast)))))
+
+  (testing "defmacro with docstring"
+    (let [ast (analyze '(defmacro unless "Opposite of when" [pred body]
+                          (list 'if (list 'not pred) body nil)))]
+      (is (= :defmacro (:op ast)))
+      (is (= "Opposite of when" (:docstring ast)))))
+
+  (testing "defmacro registers macro in registry"
+    (ana/clear-macros!)
+    (analyze '(defmacro my-macro [x] (list 'inc x)))
+    (is (fn? (ana/get-macro 'my-macro)))))
+
+(deftest analyze-macro-expansion-test
+  (testing "macro invocation is expanded and analyzed"
+    (ana/clear-macros!)
+    (analyze '(defmacro unless [pred body]
+                (list 'if (list 'not pred) body nil)))
+    (let [ast (analyze '(unless true 42))]
+      ;; Should expand to (if (not true) 42 nil) and analyze that
+      (is (= :if (:op ast)))
+      (is (= :invoke (:op (:test ast))))
+      (is (= 'not (:name (:fn (:test ast)))))))
+
+  (testing "macro with syntax-quote expansion"
+    (ana/clear-macros!)
+    (analyze '(defmacro when-not [test & body]
+                `(if (not ~test) (do ~@body) nil)))
+    (let [ast (analyze '(when-not false 1 2))]
+      (is (= :if (:op ast)))))
+
+  (testing "nested macro expansion"
+    (ana/clear-macros!)
+    (analyze '(defmacro double-it [x]
+                (list '* 2 x)))
+    (let [ast (analyze '(+ (double-it 5) 1))]
+      ;; (+ (* 2 5) 1)
+      (is (= :invoke (:op ast)))
+      (is (= :invoke (:op (first (:args ast)))))))
+
+  (testing "macros must be defined before use"
+    (ana/clear-macros!)
+    ;; Without defining the macro, it should be treated as a regular invocation
+    (let [ast (analyze '(my-undefined-macro 1 2))]
+      (is (= :invoke (:op ast))))))
+
+(deftest analyze-macroexpand-1-test
+  (testing "macroexpand-1 expands one level"
+    (ana/clear-macros!)
+    (analyze '(defmacro unless [pred body]
+                (list 'if (list 'not pred) body nil)))
+    (let [expanded (ana/macroexpand-1-clel '(unless true 42))]
+      (is (= 'if (first expanded)))
+      (is (list? expanded))))
+
+  (testing "macroexpand-1 returns form unchanged if not a macro"
+    (ana/clear-macros!)
+    (let [form '(+ 1 2)
+          result (ana/macroexpand-1-clel form)]
+      (is (= form result)))))
+
+(deftest analyze-macroexpand-test
+  (testing "macroexpand fully expands nested macros"
+    (ana/clear-macros!)
+    (analyze '(defmacro unless [pred body]
+                (list 'if (list 'not pred) body nil)))
+    (analyze '(defmacro unless2 [pred body]
+                (list 'unless pred body)))
+    (let [expanded (ana/macroexpand-clel '(unless2 true 42))]
+      ;; unless2 -> unless -> if
+      (is (= 'if (first expanded))))))
+
+;; ============================================================================
+;; Namespace System - build-ns-env (clel-028)
+;; ============================================================================
+
+(deftest build-ns-env-test
+  (testing "empty requires produces empty env"
+    (let [env (ana/build-ns-env [])]
+      (is (= {} (:aliases env)))
+      (is (= {} (:refers env)))))
+
+  (testing "builds aliases from :as"
+    (let [env (ana/build-ns-env [{:ns 'clojure.string :as 'str}
+                                 {:ns 'my.utils :as 'u}])]
+      (is (= {'str 'clojure.string
+              'u 'my.utils}
+             (:aliases env)))))
+
+  (testing "builds refers from :refer"
+    (let [env (ana/build-ns-env [{:ns 'clojure.string :refer ['join 'split]}])]
+      (is (= {'join 'clojure.string
+              'split 'clojure.string}
+             (:refers env)))))
+
+  (testing "builds both aliases and refers"
+    (let [env (ana/build-ns-env [{:ns 'clojure.string :as 'str :refer ['join]}])]
+      (is (= {'str 'clojure.string} (:aliases env)))
+      (is (= {'join 'clojure.string} (:refers env)))))
+
+  (testing "ignores requires without :as or :refer"
+    (let [env (ana/build-ns-env [{:ns 'clojure.string}])]
+      (is (= {} (:aliases env)))
+      (is (= {} (:refers env))))))
+
+;; ============================================================================
+;; Namespace System - Symbol Resolution (clel-028)
+;; ============================================================================
+
+(deftest analyze-aliased-symbol-test
+  (testing "aliased qualified symbol resolves to full namespace"
+    (binding [ana/*env* (merge ana/*env*
+                               {:aliases {'str 'clojure.string}})]
+      (let [ast (analyze 'str/join)]
+        (is (= :var (:op ast)))
+        (is (= 'join (:name ast)))
+        (is (= 'clojure.string (:ns ast))))))
+
+  (testing "non-aliased qualified symbol preserves original namespace"
+    (binding [ana/*env* (merge ana/*env*
+                               {:aliases {'str 'clojure.string}})]
+      (let [ast (analyze 'other.ns/foo)]
+        (is (= :var (:op ast)))
+        (is (= 'foo (:name ast)))
+        (is (= 'other.ns (:ns ast))))))
+
+  (testing "unqualified symbol is not affected by aliases"
+    (binding [ana/*env* (merge ana/*env*
+                               {:aliases {'str 'clojure.string}})]
+      (let [ast (analyze 'foo)]
+        (is (= :var (:op ast)))
+        (is (= 'foo (:name ast)))
+        (is (nil? (:ns ast)))))))
+
+(deftest analyze-referred-symbol-test
+  (testing "referred symbol resolves to source namespace"
+    (binding [ana/*env* (merge ana/*env*
+                               {:refers {'join 'clojure.string}})]
+      (let [ast (analyze 'join)]
+        (is (= :var (:op ast)))
+        (is (= 'join (:name ast)))
+        (is (= 'clojure.string (:ns ast))))))
+
+  (testing "non-referred symbol is unaffected"
+    (binding [ana/*env* (merge ana/*env*
+                               {:refers {'join 'clojure.string}})]
+      (let [ast (analyze 'split)]
+        (is (= :var (:op ast)))
+        (is (= 'split (:name ast)))
+        (is (nil? (:ns ast))))))
+
+  (testing "local shadows referred symbol"
+    (binding [ana/*env* (merge ana/*env*
+                               {:locals #{'join}
+                                :refers {'join 'clojure.string}})]
+      (let [ast (analyze 'join)]
+        (is (= :local (:op ast)))
+        (is (= 'join (:name ast)))))))
+
+;; ============================================================================
+;; Namespace System - analyze-file-forms (clel-028)
+;; ============================================================================
+
+(deftest analyze-file-forms-test
+  (testing "file with ns form establishes context for subsequent forms"
+    (let [forms '[(ns my.app
+                    (:require [clojure.string :as str]))
+                  (defn greet [name] (str/join ", " name))]
+          asts (ana/analyze-file-forms forms)]
+      ;; First AST is the ns node
+      (is (= :ns (:op (first asts))))
+      (is (= 'my.app (:name (first asts))))
+      ;; Second AST is defn, and its body should have resolved str/join
+      (let [defn-ast (second asts)]
+        (is (= :defn (:op defn-ast))))))
+
+  (testing "file without ns form works normally"
+    (let [forms '[(def x 1) (def y 2)]
+          asts (ana/analyze-file-forms forms)]
+      (is (= 2 (count asts)))
+      (is (every? #(= :def (:op %)) asts))))
+
+  (testing "ns establishes current namespace in env"
+    (let [forms '[(ns my.app) (def x 42)]
+          asts (ana/analyze-file-forms forms)]
+      ;; The def node's env should have :ns set to my.app
+      (is (= 'my.app (get-in (second asts) [:env :ns])))))
+
+  (testing "ns with :refer makes symbols available"
+    (let [forms '[(ns my.app
+                    (:require [utils.helpers :refer [helper]]))
+                  (helper 42)]
+          asts (ana/analyze-file-forms forms)]
+      (let [invoke-ast (second asts)
+            fn-node (:fn invoke-ast)]
+        (is (= :var (:op fn-node)))
+        (is (= 'helper (:name fn-node)))
+        (is (= 'utils.helpers (:ns fn-node)))))))
+
