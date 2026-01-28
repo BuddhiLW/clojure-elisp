@@ -586,13 +586,32 @@
   (str ";; Unknown node: " (pr-str node)))
 
 ;; ============================================================================
+;; Source Location Comments
+;; ============================================================================
+
+(def ^:dynamic *emit-source-comments*
+  "When true, emit ;;; L<line>:C<col> comments before top-level forms."
+  false)
+
+(defn- source-comment
+  "Generate a source location comment string for an AST node, or nil."
+  [{:keys [line column]}]
+  (when (and *emit-source-comments* line)
+    (str ";;; L" line (when column (str ":C" column)))))
+
+;; ============================================================================
 ;; Main Emit Function
 ;; ============================================================================
 
 (defn emit
-  "Emit an AST node to Elisp source code."
+  "Emit an AST node to Elisp source code.
+   When *emit-source-comments* is true, prepends ;;; L<line>:C<col> comments."
   [node]
-  (emit-node node))
+  (let [code (emit-node node)
+        comment (source-comment node)]
+    (if comment
+      (str comment "\n" code)
+      code)))
 
 (comment
   (require '[clojure-elisp.analyzer :as ana])

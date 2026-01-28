@@ -636,3 +636,72 @@
       (is (= :defmethod (:op ast)))
       (is (= 2 (count (:body ast)))))))
 
+;; ============================================================================
+;; Source Location Tracking (clel-020)
+;; ============================================================================
+
+(deftest analyze-source-location-from-metadata-test
+  (testing "AST nodes carry :line/:column from form metadata"
+    (let [form (with-meta '(+ 1 2) {:line 10 :column 5})
+          ast (analyze form)]
+      (is (= 10 (:line ast)))
+      (is (= 5 (:column ast)))))
+
+  (testing "forms without metadata produce nodes without :line/:column"
+    (let [ast (analyze 42)]
+      (is (nil? (:line ast)))
+      (is (nil? (:column ast)))))
+
+  (testing "defn form preserves source location"
+    (let [form (with-meta '(defn foo [x] x) {:line 3 :column 1})
+          ast (analyze form)]
+      (is (= 3 (:line ast)))
+      (is (= 1 (:column ast)))))
+
+  (testing "let form preserves source location"
+    (let [form (with-meta '(let [a 1] a) {:line 7 :column 0})
+          ast (analyze form)]
+      (is (= 7 (:line ast)))
+      (is (= 0 (:column ast))))))
+
+(deftest analyze-source-location-propagation-test
+  (testing "nested forms get their own source locations"
+    (let [inner (with-meta '(+ 1 2) {:line 5 :column 10})
+          outer (with-meta (list 'let ['x inner] 'x) {:line 4 :column 0})
+          ast (analyze outer)]
+      ;; Outer let gets line 4
+      (is (= 4 (:line ast)))
+      ;; Inner (+ 1 2) in the binding init gets line 5
+      (let [init-node (:init (first (:bindings ast)))]
+        (is (= 5 (:line init-node)))
+        (is (= 10 (:column init-node))))))
+
+  (testing "child nodes inherit parent context when they lack metadata"
+    ;; A symbol like 'x inside a let won't have its own metadata,
+    ;; but it should inherit from the enclosing form's context
+    (let [form (with-meta '(let [x 1] x) {:line 10 :column 2})
+          ast (analyze form)]
+      ;; The body node (x as local) should have inherited context
+      (let [body-node (first (:body ast))]
+        (is (= 10 (:line body-node)))
+        (is (= 2 (:column body-node)))))))
+
+(deftest analyze-source-location-line-numbering-reader-test
+  (testing "forms from LineNumberingPushbackReader carry reader-attached metadata"
+    (let [rdr (clojure.lang.LineNumberingPushbackReader.
+               (java.io.StringReader. "(defn greet [name] (str \"Hello \" name))"))
+          form (read rdr)
+          ast (analyze form)]
+      (is (number? (:line ast)))
+      (is (= 1 (:line ast)))))
+
+  (testing "multiple forms from LineNumberingPushbackReader carry line info"
+    (let [rdr (clojure.lang.LineNumberingPushbackReader.
+               (java.io.StringReader. "(+ 1 2)\n(defn foo [x] x)"))
+          form1 (read rdr)
+          form2 (read rdr)
+          ast1 (analyze form1)
+          ast2 (analyze form2)]
+      (is (= 1 (:line ast1)))
+      (is (= 2 (:line ast2))))))
+

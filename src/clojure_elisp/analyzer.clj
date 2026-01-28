@@ -16,19 +16,51 @@
    :locals #{}
    :in-tail-position? false})
 
+(def ^:dynamic *source-context*
+  "Current source location context {:line N :column N}, or nil."
+  nil)
+
 (defn with-locals
   "Add locals to the environment."
   [env locals]
   (update env :locals into locals))
 
 ;; ============================================================================
+;; Source Location
+;; ============================================================================
+
+(defn extract-source-location
+  "Extract :line and :column from form metadata, if available."
+  [form]
+  (when-let [m (meta form)]
+    (when (or (:line m) (:column m))
+      (cond-> {}
+        (:line m)   (assoc :line (:line m))
+        (:column m) (assoc :column (:column m))))))
+
+(defn analysis-error
+  "Create an ex-info with source location context."
+  [msg data]
+  (let [loc *source-context*]
+    (ex-info (if loc
+               (format "%s at %s:%s"
+                       msg
+                       (or (:line loc) "?")
+                       (or (:column loc) "?"))
+               msg)
+             (merge data loc))))
+
+;; ============================================================================
 ;; AST Node Constructors
 ;; ============================================================================
 
 (defn ast-node
-  "Create an AST node with common fields."
+  "Create an AST node with common fields.
+   Includes :line and :column from *source-context* when available."
   [op & {:as fields}]
-  (merge {:op op :env *env*} fields))
+  (merge {:op op :env *env*}
+         *source-context*
+         fields))
 
 ;; ============================================================================
 ;; Special Form Analyzers
@@ -770,65 +802,72 @@
    'lazy-seq analyze-lazy-seq})
 
 (defn analyze
-  "Analyze a Clojure form into an AST node."
+  "Analyze a Clojure form into an AST node.
+   Captures source location from form metadata and propagates it
+   through *source-context* so child nodes inherit location context."
   [form]
-  ;; Macroexpand first to handle ->, ->>, doto, cond->, etc.
-  ;; Skip macroexpand for interop forms (.method, .-field, elisp/fn)
-  ;; since Clojure would try to handle them as Java interop.
-  (let [form (if (and (seq? form)
-                      (symbol? (first form))
-                      (not (contains? special-forms (first form)))
-                      (not (interop-symbol? (first form))))
-               (macroexpand form)
-               form)]
-    (cond
-      ;; Nil
-      (nil? form)
-      (ast-node :const :val nil :type :nil)
+  ;; Extract source location from this form's metadata (if any).
+  ;; If the form has location, use it; otherwise keep the parent's context.
+  (let [loc (extract-source-location form)
+        ctx (or loc *source-context*)]
+    (binding [*source-context* ctx]
+      ;; Macroexpand first to handle ->, ->>, doto, cond->, etc.
+      ;; Skip macroexpand for interop forms (.method, .-field, elisp/fn)
+      ;; since Clojure would try to handle them as Java interop.
+      (let [form (if (and (seq? form)
+                          (symbol? (first form))
+                          (not (contains? special-forms (first form)))
+                          (not (interop-symbol? (first form))))
+                   (macroexpand form)
+                   form)]
+        (cond
+          ;; Nil
+          (nil? form)
+          (ast-node :const :val nil :type :nil)
 
-      ;; Boolean
-      (boolean? form)
-      (ast-node :const :val form :type :bool)
+          ;; Boolean
+          (boolean? form)
+          (ast-node :const :val form :type :bool)
 
-      ;; Number
-      (number? form)
-      (ast-node :const :val form :type :number)
+          ;; Number
+          (number? form)
+          (ast-node :const :val form :type :number)
 
-      ;; String
-      (string? form)
-      (ast-node :const :val form :type :string)
+          ;; String
+          (string? form)
+          (ast-node :const :val form :type :string)
 
-      ;; Keyword
-      (keyword? form)
-      (ast-node :const :val form :type :keyword)
+          ;; Keyword
+          (keyword? form)
+          (ast-node :const :val form :type :keyword)
 
-      ;; Symbol
-      (symbol? form)
-      (if (contains? (:locals *env*) form)
-        (ast-node :local :name form)
-        (ast-node :var :name form))
+          ;; Symbol
+          (symbol? form)
+          (if (contains? (:locals *env*) form)
+            (ast-node :local :name form)
+            (ast-node :var :name form))
 
-      ;; Vector
-      (vector? form)
-      (analyze-vector form)
+          ;; Vector
+          (vector? form)
+          (analyze-vector form)
 
-      ;; Map
-      (map? form)
-      (analyze-map form)
+          ;; Map
+          (map? form)
+          (analyze-map form)
 
-      ;; Set
-      (set? form)
-      (analyze-set form)
+          ;; Set
+          (set? form)
+          (analyze-set form)
 
-      ;; List (special form or invocation)
-      (seq? form)
-      (let [op (first form)]
-        (if-let [analyzer (get special-forms op)]
-          (analyzer form)
-          (analyze-invoke form)))
+          ;; List (special form or invocation)
+          (seq? form)
+          (let [op (first form)]
+            (if-let [analyzer (get special-forms op)]
+              (analyzer form)
+              (analyze-invoke form)))
 
-      :else
-      (ast-node :unknown :form form))))
+          :else
+          (ast-node :unknown :form form))))))
 
 (comment
   (analyze '(defn foo [x] (+ x 1)))

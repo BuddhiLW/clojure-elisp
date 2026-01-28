@@ -569,3 +569,36 @@
   (testing "dorun maps to clel-dorun"
     (is (= "(clel-dorun xs)" (analyze-and-emit '(dorun xs))))))
 
+;; ============================================================================
+;; Source Location Comments (clel-020)
+;; ============================================================================
+
+(deftest emit-source-comments-test
+  (testing "source comments disabled by default"
+    (let [form (with-meta '(defn foo [x] x) {:line 10 :column 1})
+          result (-> form ana/analyze emit/emit)]
+      (is (not (clojure.string/includes? result ";;; L10")))))
+
+  (testing "source comments emitted when *emit-source-comments* is true"
+    (let [form (with-meta '(defn foo [x] x) {:line 10 :column 1})
+          result (binding [emit/*emit-source-comments* true]
+                   (-> form ana/analyze emit/emit))]
+      (is (clojure.string/includes? result ";;; L10:C1"))))
+
+  (testing "source comments for def forms"
+    (let [form (with-meta '(def bar 42) {:line 5 :column 0})
+          result (binding [emit/*emit-source-comments* true]
+                   (-> form ana/analyze emit/emit))]
+      (is (clojure.string/includes? result ";;; L5:C0"))))
+
+  (testing "no source comment when node lacks location"
+    (let [result (binding [emit/*emit-source-comments* true]
+                   (analyze-and-emit 42))]
+      (is (not (clojure.string/includes? result ";;;")))))
+
+  (testing "source comments for fn (lambda) forms"
+    (let [form (with-meta '(fn [x] x) {:line 20 :column 3})
+          result (binding [emit/*emit-source-comments* true]
+                   (-> form ana/analyze emit/emit))]
+      (is (clojure.string/includes? result ";;; L20:C3")))))
+
