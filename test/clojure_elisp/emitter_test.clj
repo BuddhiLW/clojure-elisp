@@ -420,6 +420,80 @@
     (is (= "(clel-map f xs)" (analyze-and-emit '(map f xs))))))
 
 ;; ============================================================================
+;; Sequence Functions (clel-029)
+;; ============================================================================
+
+(deftest emit-seq-map-test
+  (testing "map with function and collection"
+    (is (= "(clel-map f xs)" (analyze-and-emit '(map f xs)))))
+  (testing "map with lambda"
+    (let [result (analyze-and-emit '(map (fn [x] (+ x 1)) xs))]
+      (is (clojure.string/includes? result "clel-map"))
+      (is (clojure.string/includes? result "lambda"))))
+  (testing "map with core function"
+    (is (= "(clel-map 1+ xs)" (analyze-and-emit '(map inc xs))))))
+
+(deftest emit-seq-filter-test
+  (testing "filter with predicate and collection"
+    (is (= "(clel-filter pred xs)" (analyze-and-emit '(filter pred xs)))))
+  (testing "filter with lambda"
+    (let [result (analyze-and-emit '(filter (fn [x] (> x 0)) xs))]
+      (is (clojure.string/includes? result "clel-filter"))
+      (is (clojure.string/includes? result "lambda"))))
+  (testing "filter with core predicate"
+    (is (= "(clel-filter cl-evenp nums)" (analyze-and-emit '(filter even? nums))))))
+
+(deftest emit-seq-reduce-test
+  (testing "reduce with function and collection"
+    (is (= "(clel-reduce f xs)" (analyze-and-emit '(reduce f xs)))))
+  (testing "reduce with initial value"
+    (is (= "(clel-reduce f 0 xs)" (analyze-and-emit '(reduce f 0 xs)))))
+  (testing "reduce with + function"
+    (is (= "(clel-reduce + xs)" (analyze-and-emit '(reduce + xs)))))
+  (testing "reduce with lambda"
+    (let [result (analyze-and-emit '(reduce (fn [acc x] (+ acc x)) 0 xs))]
+      (is (clojure.string/includes? result "clel-reduce"))
+      (is (clojure.string/includes? result "lambda")))))
+
+(deftest emit-seq-take-test
+  (testing "take n elements"
+    (is (= "(clel-take 5 xs)" (analyze-and-emit '(take 5 xs)))))
+  (testing "take with variable"
+    (is (= "(clel-take n xs)" (analyze-and-emit '(take n xs))))))
+
+(deftest emit-seq-drop-test
+  (testing "drop n elements"
+    (is (= "(clel-drop 3 xs)" (analyze-and-emit '(drop 3 xs)))))
+  (testing "drop with variable"
+    (is (= "(clel-drop n xs)" (analyze-and-emit '(drop n xs))))))
+
+(deftest emit-seq-partition-test
+  (testing "partition with size"
+    (is (= "(clel-partition 2 xs)" (analyze-and-emit '(partition 2 xs)))))
+  (testing "partition with variable size"
+    (is (= "(clel-partition n coll)" (analyze-and-emit '(partition n coll))))))
+
+(deftest emit-seq-take-while-test
+  (testing "take-while with predicate"
+    (is (= "(clel-take-while pred xs)" (analyze-and-emit '(take-while pred xs)))))
+  (testing "take-while with lambda"
+    (let [result (analyze-and-emit '(take-while (fn [x] (< x 10)) xs))]
+      (is (clojure.string/includes? result "clel-take-while"))
+      (is (clojure.string/includes? result "lambda"))))
+  (testing "take-while with core predicate"
+    (is (= "(clel-take-while cl-plusp nums)" (analyze-and-emit '(take-while pos? nums))))))
+
+(deftest emit-seq-drop-while-test
+  (testing "drop-while with predicate"
+    (is (= "(clel-drop-while pred xs)" (analyze-and-emit '(drop-while pred xs)))))
+  (testing "drop-while with lambda"
+    (let [result (analyze-and-emit '(drop-while (fn [x] (< x 5)) xs))]
+      (is (clojure.string/includes? result "clel-drop-while"))
+      (is (clojure.string/includes? result "lambda"))))
+  (testing "drop-while with core predicate"
+    (is (= "(clel-drop-while cl-minusp nums)" (analyze-and-emit '(drop-while neg? nums))))))
+
+;; ============================================================================
 ;; Full Pipeline Tests
 ;; ============================================================================
 
