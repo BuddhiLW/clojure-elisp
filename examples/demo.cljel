@@ -1,0 +1,14 @@
+(ns demo)
+
+(defn greet [name]
+  (str "Hello, " name "!"))
+
+(defn factorial [n]
+  (if (<= n 1)
+    1
+    (* n (factorial (dec n)))))
+
+(def answer 42)
+
+(let [x 10 y 20]
+  (+ x y))
