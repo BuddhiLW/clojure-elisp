@@ -413,3 +413,77 @@
     (let [result (clel/compile-file-string "(defn foo [x] x)")]
       (is (str/includes? result "defun"))
       (is (str/includes? result "foo")))))
+
+;; ============================================================================
+;; Source Location Tracking (clel-020)
+;; ============================================================================
+
+(deftest source-location-file-reading-test
+  (testing "read-all-forms from string preserves line numbers"
+    ;; Forms read from a string should have :line metadata
+    (let [source "(defn foo [x] x)\n(defn bar [y] y)"
+          ;; Use internal function via compile-file-string which uses read-all-forms
+          ;; We can test by compiling with source comments enabled
+          result (binding [clojure-elisp.emitter/*emit-source-comments* true]
+                   (clel/compile-file-string source))]
+      ;; First form should be at line 1
+      (is (str/includes? result ";;; L1"))
+      ;; Second form should be at line 2
+      (is (str/includes? result ";;; L2"))))
+
+  (testing "multiline forms have correct starting line"
+    (let [source "(defn multiline
+                    [x y]
+                    (+ x y))
+                  (def after 42)"
+          result (binding [clojure-elisp.emitter/*emit-source-comments* true]
+                   (clel/compile-file-string source))]
+      ;; defn starts at line 1
+      (is (str/includes? result ";;; L1"))
+      ;; def after is on line 4 (after the multiline defn)
+      (is (str/includes? result ";;; L4")))))
+
+(deftest compile-file-source-location-test
+  (testing "compile-file preserves source locations"
+    (let [input-file (java.io.File/createTempFile "test-src" ".cljel")
+          output-file (java.io.File/createTempFile "test-out" ".el")]
+      (try
+        ;; Write multiline source
+        (spit input-file "(ns my.test)\n\n(defn foo [x]\n  (+ x 1))\n\n(def bar 42)")
+        ;; Compile with source comments
+        (binding [clojure-elisp.emitter/*emit-source-comments* true]
+          (clel/compile-file (.getAbsolutePath input-file)
+                             (.getAbsolutePath output-file)))
+        (let [content (slurp output-file)]
+          ;; ns at line 1
+          (is (str/includes? content ";;; L1"))
+          ;; defn at line 3
+          (is (str/includes? content ";;; L3"))
+          ;; def at line 6
+          (is (str/includes? content ";;; L6")))
+        (finally
+          (.delete input-file)
+          (.delete output-file))))))
+
+(deftest source-location-propagation-test
+  (testing "nested forms preserve their own locations in AST"
+    (let [source "(let [x (+ 1 2)] x)"
+          rdr (clojure.lang.LineNumberingPushbackReader.
+               (java.io.StringReader. source))
+          form (read rdr)
+          ast (ana/analyze form)]
+      ;; Top-level let should have line 1
+      (is (= 1 (:line ast)))
+      ;; The init expression (+ 1 2) inherits context since symbols don't have metadata
+      (is (some? (:line (:init (first (:bindings ast)))))))))
+
+(deftest source-location-error-context-test
+  (testing "analysis-error includes source location"
+    (let [err (ana/analysis-error "Test error" {:foo 1})]
+      ;; Without source context, error should not have location prefix
+      (is (= "Test error" (.getMessage err)))))
+
+  (testing "analysis-error with source context includes location"
+    (binding [ana/*source-context* {:line 10 :column 5}]
+      (let [err (ana/analysis-error "Test error" {:foo 1})]
+        (is (str/includes? (.getMessage err) "10:5"))))))

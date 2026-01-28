@@ -43,9 +43,12 @@
 ;; ============================================================================
 
 (defn- read-all-forms
-  "Read all forms from a string."
+  "Read all forms from a string, preserving source line/column metadata.
+   Uses LineNumberingPushbackReader so the Clojure reader attaches
+   :line and :column metadata to forms."
   [s]
-  (let [rdr (java.io.PushbackReader. (java.io.StringReader. s))]
+  (let [rdr (clojure.lang.LineNumberingPushbackReader.
+             (java.io.StringReader. s))]
     (loop [forms []]
       (let [form (try (read rdr) (catch Exception _ ::eof))]
         (if (= ::eof form)
