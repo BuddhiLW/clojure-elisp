@@ -15,6 +15,9 @@ target/
 .lsp/
 .clj-kondo/
 
+# Binaries
+/clel
+
 # OS
 .DS_Store
 Thumbs.db
