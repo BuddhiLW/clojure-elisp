@@ -798,3 +798,140 @@
           call-code (emit/emit (second asts))]
       (is (clojure.string/includes? call-code "my-utils-helper")))))
 
+;; ============================================================================
+;; defgroup - Customization Groups (clel-030)
+;; ============================================================================
+
+(deftest emit-defgroup-test
+  (testing "basic defgroup emits Elisp defgroup form"
+    (let [code (analyze-and-emit '(defgroup hive-mcp-eca nil
+                                    "Integration between hive-mcp and ECA."))]
+      (is (clojure.string/includes? code "defgroup"))
+      (is (clojure.string/includes? code "hive-mcp-eca"))
+      (is (clojure.string/includes? code "nil"))
+      (is (clojure.string/includes? code "\"Integration between hive-mcp and ECA.\""))))
+
+  (testing "defgroup with :group option"
+    (let [code (analyze-and-emit '(defgroup my-package nil
+                                    "My package customizations."
+                                    :group 'emacs))]
+      (is (clojure.string/includes? code "defgroup"))
+      (is (clojure.string/includes? code "my-package"))
+      (is (clojure.string/includes? code ":group"))
+      (is (clojure.string/includes? code "'emacs"))))
+
+  (testing "defgroup with :prefix option"
+    (let [code (analyze-and-emit '(defgroup my-package nil
+                                    "My package."
+                                    :prefix "my-package-"))]
+      (is (clojure.string/includes? code "defgroup"))
+      (is (clojure.string/includes? code ":prefix"))
+      (is (clojure.string/includes? code "\"my-package-\""))))
+
+  (testing "defgroup with multiple options"
+    (let [code (analyze-and-emit '(defgroup hive-mcp-eca nil
+                                    "Integration docs."
+                                    :group 'hive-mcp
+                                    :prefix "hive-mcp-eca-"
+                                    :tag "HiveMCP ECA"))]
+      (is (clojure.string/includes? code "defgroup"))
+      (is (clojure.string/includes? code "hive-mcp-eca"))
+      (is (clojure.string/includes? code ":group"))
+      (is (clojure.string/includes? code "'hive-mcp"))
+      (is (clojure.string/includes? code ":prefix"))
+      (is (clojure.string/includes? code "\"hive-mcp-eca-\""))
+      (is (clojure.string/includes? code ":tag"))
+      (is (clojure.string/includes? code "\"HiveMCP ECA\""))))
+
+  (testing "defgroup without docstring"
+    (let [code (analyze-and-emit '(defgroup simple-group nil))]
+      (is (clojure.string/includes? code "defgroup"))
+      (is (clojure.string/includes? code "simple-group"))
+      (is (clojure.string/includes? code "nil"))))
+
+  (testing "defgroup full example from spec"
+    (let [code (analyze-and-emit '(defgroup hive-mcp-eca nil
+                                    "Integration between hive-mcp and ECA."
+                                    :group 'hive-mcp
+                                    :prefix "hive-mcp-eca-"))]
+      (is (clojure.string/includes? code "(defgroup hive-mcp-eca nil"))
+      (is (clojure.string/includes? code "\"Integration between hive-mcp and ECA.\""))
+      (is (clojure.string/includes? code ":group 'hive-mcp"))
+      (is (clojure.string/includes? code ":prefix \"hive-mcp-eca-\"")))))
+
+;; ============================================================================
+;; defcustom - User Customization Variables (clel-031)
+;; ============================================================================
+
+(deftest emit-defcustom-test
+  (testing "basic defcustom emits Elisp defcustom form"
+    (let [code (analyze-and-emit '(defcustom hive-mcp-eca-auto-context nil
+                                    "When non-nil, automatically include MCP context."))]
+      (is (clojure.string/includes? code "defcustom"))
+      (is (clojure.string/includes? code "hive-mcp-eca-auto-context"))
+      (is (clojure.string/includes? code "nil"))
+      (is (clojure.string/includes? code "\"When non-nil, automatically include MCP context.\""))))
+
+  (testing "defcustom with integer default"
+    (let [code (analyze-and-emit '(defcustom hive-mcp-eca-timeout 30
+                                    "Timeout in seconds."))]
+      (is (clojure.string/includes? code "defcustom"))
+      (is (clojure.string/includes? code "hive-mcp-eca-timeout"))
+      (is (clojure.string/includes? code "30"))))
+
+  (testing "defcustom with :type option"
+    (let [code (analyze-and-emit '(defcustom my-var nil
+                                    "My variable."
+                                    :type 'boolean))]
+      (is (clojure.string/includes? code "defcustom"))
+      (is (clojure.string/includes? code ":type"))
+      (is (clojure.string/includes? code "'boolean"))))
+
+  (testing "defcustom with :group option"
+    (let [code (analyze-and-emit '(defcustom my-var nil
+                                    "My variable."
+                                    :group 'my-group))]
+      (is (clojure.string/includes? code "defcustom"))
+      (is (clojure.string/includes? code ":group"))
+      (is (clojure.string/includes? code "'my-group"))))
+
+  (testing "defcustom with multiple options"
+    (let [code (analyze-and-emit '(defcustom hive-mcp-eca-timeout 30
+                                    "Timeout in seconds."
+                                    :type 'integer
+                                    :group 'hive-mcp-eca
+                                    :safe 'integerp))]
+      (is (clojure.string/includes? code "defcustom"))
+      (is (clojure.string/includes? code "hive-mcp-eca-timeout"))
+      (is (clojure.string/includes? code "30"))
+      (is (clojure.string/includes? code ":type"))
+      (is (clojure.string/includes? code "'integer"))
+      (is (clojure.string/includes? code ":group"))
+      (is (clojure.string/includes? code "'hive-mcp-eca"))
+      (is (clojure.string/includes? code ":safe"))
+      (is (clojure.string/includes? code "'integerp"))))
+
+  (testing "defcustom with string default"
+    (let [code (analyze-and-emit '(defcustom my-prefix "prefix-"
+                                    "The prefix to use."
+                                    :type 'string))]
+      (is (clojure.string/includes? code "defcustom"))
+      (is (clojure.string/includes? code "\"prefix-\""))
+      (is (clojure.string/includes? code ":type 'string"))))
+
+  (testing "defcustom without docstring"
+    (let [code (analyze-and-emit '(defcustom simple-var true))]
+      (is (clojure.string/includes? code "defcustom"))
+      (is (clojure.string/includes? code "simple-var"))
+      (is (clojure.string/includes? code " t"))))
+
+  (testing "defcustom full example from spec"
+    (let [code (analyze-and-emit '(defcustom hive-mcp-eca-auto-context nil
+                                    "When non-nil, automatically include MCP context."
+                                    :type 'boolean
+                                    :group 'hive-mcp-eca))]
+      (is (clojure.string/includes? code "(defcustom hive-mcp-eca-auto-context nil"))
+      (is (clojure.string/includes? code "\"When non-nil, automatically include MCP context.\""))
+      (is (clojure.string/includes? code ":type 'boolean"))
+      (is (clojure.string/includes? code ":group 'hive-mcp-eca")))))
+

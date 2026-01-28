@@ -734,6 +734,60 @@
         args-str (map emit args)]
     (apply emit-sexp fn-str args-str)))
 
+(defmethod emit-node :defgroup
+  [{:keys [name value docstring options]}]
+  (let [group-name (mangle-name name)
+        ;; Helper to emit option values (handles quoted forms, etc.)
+        emit-option-val (fn [v]
+                          (cond
+                            (nil? v) "nil"
+                            (true? v) "t"
+                            (false? v) "nil"
+                            (string? v) (pr-str v)
+                            (keyword? v) (str v)
+                            (and (seq? v) (= 'quote (first v)))
+                            (str "'" (second v))
+                            :else (str v)))
+        ;; Emit value (typically nil)
+        value-str (emit-option-val value)
+        ;; Emit options as keyword-value pairs
+        options-str (->> options
+                         (map (fn [[k v]]
+                                (str (str k) " " (emit-option-val v))))
+                         (str/join "\n  "))
+        ;; Build the full form
+        parts (cond-> [(str "(defgroup " group-name " " value-str)]
+                docstring (conj (str "  " (pr-str docstring)))
+                (seq options-str) (conj (str "  " options-str)))]
+    (str (str/join "\n" parts) ")")))
+
+(defmethod emit-node :defcustom
+  [{:keys [name default docstring options]}]
+  (let [var-name (mangle-name name)
+        ;; Helper to emit option values (handles quoted forms, etc.)
+        emit-option-val (fn [v]
+                          (cond
+                            (nil? v) "nil"
+                            (true? v) "t"
+                            (false? v) "nil"
+                            (string? v) (pr-str v)
+                            (keyword? v) (str v)
+                            (and (seq? v) (= 'quote (first v)))
+                            (str "'" (second v))
+                            :else (str v)))
+        ;; Emit default value
+        default-str (emit-option-val default)
+        ;; Emit options as keyword-value pairs
+        options-str (->> options
+                         (map (fn [[k v]]
+                                (str (str k) " " (emit-option-val v))))
+                         (str/join "\n  "))
+        ;; Build the full form
+        parts (cond-> [(str "(defcustom " var-name " " default-str)]
+                docstring (conj (str "  " (pr-str docstring)))
+                (seq options-str) (conj (str "  " options-str)))]
+    (str (str/join "\n" parts) ")")))
+
 (defmethod emit-node :default
   [node]
   (str ";; Unknown node: " (pr-str node)))

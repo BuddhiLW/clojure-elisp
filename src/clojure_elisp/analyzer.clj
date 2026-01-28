@@ -843,6 +843,51 @@
 ;; Macro System
 ;; ============================================================================
 
+(defn analyze-defgroup
+  "Analyze (defgroup name value docstring? keyword-value-options...) forms.
+   Options are keyword-value pairs like :group, :prefix, :tag, :link.
+
+   Example:
+   (defgroup hive-mcp-eca nil
+     \"Integration between hive-mcp and ECA.\"
+     :group 'hive-mcp
+     :prefix \"hive-mcp-eca-\")"
+  [[_ group-name value & rest-forms]]
+  (let [;; Check if first element is a docstring
+        [docstring rest-forms] (if (string? (first rest-forms))
+                                 [(first rest-forms) (rest rest-forms)]
+                                 [nil rest-forms])
+        ;; Parse keyword options into a map
+        options (apply hash-map rest-forms)]
+    (ast-node :defgroup
+              :name group-name
+              :value value
+              :docstring docstring
+              :options options)))
+
+(defn analyze-defcustom
+  "Analyze (defcustom name default docstring? keyword-value-options...) forms.
+   Options are keyword-value pairs like :type, :group, :safe, :set, :get, etc.
+
+   Example:
+   (defcustom hive-mcp-eca-timeout 30
+     \"Timeout in seconds.\"
+     :type 'integer
+     :group 'hive-mcp-eca
+     :safe 'integerp)"
+  [[_ var-name default & rest-forms]]
+  (let [;; Check if first element is a docstring
+        [docstring rest-forms] (if (string? (first rest-forms))
+                                 [(first rest-forms) (rest rest-forms)]
+                                 [nil rest-forms])
+        ;; Parse keyword options into a map
+        options (apply hash-map rest-forms)]
+    (ast-node :defcustom
+              :name var-name
+              :default default
+              :docstring docstring
+              :options options)))
+
 (defn analyze-defmacro
   "Analyze (defmacro name [params] body) forms.
    Evaluates the macro body as a Clojure function and registers it
@@ -971,7 +1016,9 @@
    'recur analyze-recur
    'try analyze-try
    'throw analyze-throw
-   'lazy-seq analyze-lazy-seq})
+   'lazy-seq analyze-lazy-seq
+   'defgroup analyze-defgroup
+   'defcustom analyze-defcustom})
 
 (defn analyze
   "Analyze a Clojure form into an AST node.

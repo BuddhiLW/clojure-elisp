@@ -1032,3 +1032,117 @@
         (is (= 'helper (:name fn-node)))
         (is (= 'utils.helpers (:ns fn-node)))))))
 
+;; ============================================================================
+;; defgroup - Customization Groups (clel-030)
+;; ============================================================================
+
+(deftest analyze-defgroup-test
+  (testing "basic defgroup with nil value and docstring"
+    (let [ast (analyze '(defgroup hive-mcp-eca nil
+                          "Integration between hive-mcp and ECA."))]
+      (is (= :defgroup (:op ast)))
+      (is (= 'hive-mcp-eca (:name ast)))
+      (is (nil? (:value ast)))
+      (is (= "Integration between hive-mcp and ECA." (:docstring ast)))
+      (is (empty? (:options ast)))))
+
+  (testing "defgroup with keyword options"
+    (let [ast (analyze '(defgroup my-package nil
+                          "My package customizations."
+                          :group 'emacs
+                          :prefix "my-package-"))]
+      (is (= :defgroup (:op ast)))
+      (is (= 'my-package (:name ast)))
+      (is (= "My package customizations." (:docstring ast)))
+      (is (= ''emacs (:group (:options ast))))
+      (is (= "my-package-" (:prefix (:options ast))))))
+
+  (testing "defgroup with multiple options"
+    (let [ast (analyze '(defgroup hive-mcp-eca nil
+                          "Integration docs."
+                          :group 'hive-mcp
+                          :prefix "hive-mcp-eca-"
+                          :tag "HiveMCP ECA"))]
+      (is (= :defgroup (:op ast)))
+      (is (= ''hive-mcp (:group (:options ast))))
+      (is (= "hive-mcp-eca-" (:prefix (:options ast))))
+      (is (= "HiveMCP ECA" (:tag (:options ast))))))
+
+  (testing "defgroup without docstring"
+    (let [ast (analyze '(defgroup simple-group nil))]
+      (is (= :defgroup (:op ast)))
+      (is (= 'simple-group (:name ast)))
+      (is (nil? (:docstring ast)))
+      (is (empty? (:options ast)))))
+
+  (testing "defgroup with :link option"
+    (let [ast (analyze '(defgroup my-package nil
+                          "My package."
+                          :link '(url-link :tag "Homepage" "https://example.com")))]
+      (is (= :defgroup (:op ast)))
+      (is (some? (:link (:options ast)))))))
+
+;; ============================================================================
+;; defcustom - User Customization Variables (clel-031)
+;; ============================================================================
+
+(deftest analyze-defcustom-test
+  (testing "basic defcustom with nil default and docstring"
+    (let [ast (analyze '(defcustom hive-mcp-eca-auto-context nil
+                          "When non-nil, automatically include MCP context."))]
+      (is (= :defcustom (:op ast)))
+      (is (= 'hive-mcp-eca-auto-context (:name ast)))
+      (is (nil? (:default ast)))
+      (is (= "When non-nil, automatically include MCP context." (:docstring ast)))
+      (is (empty? (:options ast)))))
+
+  (testing "defcustom with integer default"
+    (let [ast (analyze '(defcustom hive-mcp-eca-timeout 30
+                          "Timeout in seconds."))]
+      (is (= :defcustom (:op ast)))
+      (is (= 'hive-mcp-eca-timeout (:name ast)))
+      (is (= 30 (:default ast)))
+      (is (= "Timeout in seconds." (:docstring ast)))))
+
+  (testing "defcustom with :type and :group options"
+    (let [ast (analyze '(defcustom my-var nil
+                          "My variable."
+                          :type 'boolean
+                          :group 'my-group))]
+      (is (= :defcustom (:op ast)))
+      (is (= ''boolean (:type (:options ast))))
+      (is (= ''my-group (:group (:options ast))))))
+
+  (testing "defcustom with multiple options"
+    (let [ast (analyze '(defcustom hive-mcp-eca-timeout 30
+                          "Timeout in seconds."
+                          :type 'integer
+                          :group 'hive-mcp-eca
+                          :safe 'integerp))]
+      (is (= :defcustom (:op ast)))
+      (is (= ''integer (:type (:options ast))))
+      (is (= ''hive-mcp-eca (:group (:options ast))))
+      (is (= ''integerp (:safe (:options ast))))))
+
+  (testing "defcustom with string default"
+    (let [ast (analyze '(defcustom my-prefix "prefix-"
+                          "The prefix to use."
+                          :type 'string))]
+      (is (= :defcustom (:op ast)))
+      (is (= "prefix-" (:default ast)))
+      (is (= ''string (:type (:options ast))))))
+
+  (testing "defcustom without docstring"
+    (let [ast (analyze '(defcustom simple-var true))]
+      (is (= :defcustom (:op ast)))
+      (is (= 'simple-var (:name ast)))
+      (is (= true (:default ast)))
+      (is (nil? (:docstring ast)))))
+
+  (testing "defcustom with complex :type option"
+    (let [ast (analyze '(defcustom my-choice nil
+                          "A choice option."
+                          :type '(choice (const nil) (string :tag "Custom"))))]
+      (is (= :defcustom (:op ast)))
+      (is (some? (:type (:options ast)))))))
+
