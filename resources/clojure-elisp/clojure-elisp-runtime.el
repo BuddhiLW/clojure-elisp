@@ -177,6 +177,43 @@ Examples:
                 (t (format "%s" x))))
              args ""))
 
+(defun clel-subs (s start &optional end)
+  "Extract substring from S starting at START to END (optional)."
+  (if (null s) ""
+      (substring s start end)))
+
+(defun clel-str-join (sep coll)
+  "Join elements of COLL as strings, separated by SEP."
+  (if (null coll) ""
+      (let ((strings (mapcar #'clel-str (clel-seq-force coll))))
+        (string-join strings sep))))
+
+(defun clel-str-split (s re)
+  "Split S by regex RE."
+  (if (null s) nil
+      (split-string s re)))
+
+(defun clel-str-replace (s match replacement)
+  "Replace all occurrences of MATCH in S with REPLACEMENT.
+MATCH is treated as a literal string."
+  (if (null s) ""
+      (replace-regexp-in-string (regexp-quote match) replacement s)))
+
+(defun clel-str-trim (s)
+  "Trim whitespace from both ends of S."
+  (if (null s) ""
+      (string-trim s)))
+
+(defun clel-str-lower (s)
+  "Convert S to lowercase."
+  (if (null s) ""
+      (downcase s)))
+
+(defun clel-str-upper (s)
+  "Convert S to uppercase."
+  (if (null s) ""
+      (upcase s)))
+
 ;;; Function Utilities
 
 (defun clel-constantly (x)
