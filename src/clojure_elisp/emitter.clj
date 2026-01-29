@@ -162,15 +162,86 @@
    'add-watch "clel-add-watch"
    'remove-watch "clel-remove-watch"
 
-   ;; Emacs-specific
+   ;; Emacs buffer operations
    'message "message"
    'buffer-string "buffer-string"
+   'buffer-substring "buffer-substring"
+   'buffer-substring-no-properties "buffer-substring-no-properties"
    'point "point"
+   'point-min "point-min"
+   'point-max "point-max"
    'goto-char "goto-char"
+   'forward-char "forward-char"
+   'backward-char "backward-char"
+   'forward-line "forward-line"
+   'beginning-of-line "beginning-of-line"
+   'end-of-line "end-of-line"
    'insert "insert"
+   'insert-buffer-substring "insert-buffer-substring"
    'delete-char "delete-char"
+   'delete-region "delete-region"
+   'erase-buffer "erase-buffer"
    'buffer-name "buffer-name"
-   'current-buffer "current-buffer"})
+   'current-buffer "current-buffer"
+   'set-buffer "set-buffer"
+   'get-buffer "get-buffer"
+   'get-buffer-create "get-buffer-create"
+   'kill-buffer "kill-buffer"
+   'buffer-live-p "buffer-live-p"
+   'buffer-modified-p "buffer-modified-p"
+   'set-buffer-modified-p "set-buffer-modified-p"
+   'mark "mark"
+   'set-mark "set-mark"
+   'region-beginning "region-beginning"
+   'region-end "region-end"
+   'use-region-p "use-region-p"
+   'narrow-to-region "narrow-to-region"
+   'widen "widen"
+   'buffer-narrowed-p "buffer-narrowed-p"
+
+   ;; Emacs text properties
+   'put-text-property "put-text-property"
+   'get-text-property "get-text-property"
+   'remove-text-properties "remove-text-properties"
+   'propertize "propertize"
+
+   ;; Emacs process operations
+   'start-process "start-process"
+   'call-process "call-process"
+   'process-send-string "process-send-string"
+   'process-send-region "process-send-region"
+   'process-send-eof "process-send-eof"
+   'set-process-filter "set-process-filter"
+   'set-process-sentinel "set-process-sentinel"
+   'process-buffer "process-buffer"
+   'process-status "process-status"
+   'process-live-p "process-live-p"
+   'delete-process "delete-process"
+   'get-process "get-process"
+   'process-list "process-list"
+
+   ;; Emacs file operations
+   'find-file "find-file"
+   'find-file-noselect "find-file-noselect"
+   'write-file "write-file"
+   'save-buffer "save-buffer"
+   'buffer-file-name "buffer-file-name"
+   'file-exists-p "file-exists-p"
+   'file-readable-p "file-readable-p"
+   'file-writable-p "file-writable-p"
+   'file-directory-p "file-directory-p"
+   'expand-file-name "expand-file-name"
+   'file-name-directory "file-name-directory"
+   'file-name-nondirectory "file-name-nondirectory"
+
+   ;; Emacs window operations
+   'selected-window "selected-window"
+   'select-window "select-window"
+   'window-buffer "window-buffer"
+   'set-window-buffer "set-window-buffer"
+   'split-window "split-window"
+   'delete-window "delete-window"
+   'other-window "other-window"})
 
 ;; ============================================================================
 ;; Emission Helpers
@@ -385,6 +456,41 @@
   (let [feature-str (emit feature)
         body-str (str/join "\n  " (map emit body))]
     (format "(with-eval-after-load %s\n  %s)" feature-str body-str)))
+
+;; ============================================================================
+;; Emacs Buffer/Process Interop (clel-031)
+;; ============================================================================
+
+(defmethod emit-node :save-excursion
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(save-excursion\n    %s)" body-str)))
+
+(defmethod emit-node :save-restriction
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(save-restriction\n    %s)" body-str)))
+
+(defmethod emit-node :with-current-buffer
+  [{:keys [buffer body]}]
+  (let [buffer-str (emit buffer)
+        body-str (str/join "\n    " (map emit body))]
+    (format "(with-current-buffer %s\n    %s)" buffer-str body-str)))
+
+(defmethod emit-node :with-temp-buffer
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(with-temp-buffer\n    %s)" body-str)))
+
+(defmethod emit-node :save-current-buffer
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(save-current-buffer\n    %s)" body-str)))
+
+(defmethod emit-node :with-output-to-string
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(with-output-to-string\n    %s)" body-str)))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]

@@ -1198,3 +1198,177 @@
       (is (clojure.string/includes? code ":type 'boolean"))
       (is (clojure.string/includes? code ":group 'hive-mcp-eca")))))
 
+;; ============================================================================
+;; Emacs Buffer/Process Interop (clel-031)
+;; ============================================================================
+
+(deftest emit-buffer-function-mappings-test
+  (testing "buffer-string maps directly"
+    (is (= "(buffer-string)" (analyze-and-emit '(buffer-string)))))
+
+  (testing "buffer-substring maps directly"
+    (is (= "(buffer-substring start end)" (analyze-and-emit '(buffer-substring start end)))))
+
+  (testing "point maps directly"
+    (is (= "(point)" (analyze-and-emit '(point)))))
+
+  (testing "point-min maps directly"
+    (is (= "(point-min)" (analyze-and-emit '(point-min)))))
+
+  (testing "point-max maps directly"
+    (is (= "(point-max)" (analyze-and-emit '(point-max)))))
+
+  (testing "goto-char maps directly"
+    (is (= "(goto-char pos)" (analyze-and-emit '(goto-char pos)))))
+
+  (testing "insert maps directly"
+    (is (= "(insert \"hello\")" (analyze-and-emit '(insert "hello")))))
+
+  (testing "erase-buffer maps directly"
+    (is (= "(erase-buffer)" (analyze-and-emit '(erase-buffer)))))
+
+  (testing "delete-region maps directly"
+    (is (= "(delete-region start end)" (analyze-and-emit '(delete-region start end)))))
+
+  (testing "narrow-to-region maps directly"
+    (is (= "(narrow-to-region start end)" (analyze-and-emit '(narrow-to-region start end)))))
+
+  (testing "widen maps directly"
+    (is (= "(widen)" (analyze-and-emit '(widen))))))
+
+(deftest emit-process-function-mappings-test
+  (testing "start-process maps directly"
+    (is (= "(start-process \"name\" nil \"cmd\")"
+           (analyze-and-emit '(start-process "name" nil "cmd")))))
+
+  (testing "process-send-string maps directly"
+    (is (= "(process-send-string proc \"input\")"
+           (analyze-and-emit '(process-send-string proc "input")))))
+
+  (testing "set-process-filter maps directly"
+    (is (= "(set-process-filter proc handler)"
+           (analyze-and-emit '(set-process-filter proc handler)))))
+
+  (testing "process-live-p maps directly"
+    (is (= "(process-live-p proc)"
+           (analyze-and-emit '(process-live-p proc))))))
+
+(deftest emit-file-function-mappings-test
+  (testing "find-file maps directly"
+    (is (= "(find-file path)" (analyze-and-emit '(find-file path)))))
+
+  (testing "find-file-noselect maps directly"
+    (is (= "(find-file-noselect path)" (analyze-and-emit '(find-file-noselect path)))))
+
+  (testing "file-exists-p maps directly"
+    (is (= "(file-exists-p path)" (analyze-and-emit '(file-exists-p path)))))
+
+  (testing "expand-file-name maps directly"
+    (is (= "(expand-file-name path)" (analyze-and-emit '(expand-file-name path))))))
+
+(deftest emit-save-excursion-test
+  (testing "basic save-excursion emits Elisp form"
+    (let [code (analyze-and-emit '(save-excursion
+                                   (goto-char (point-min))
+                                   (insert "hello")))]
+      (is (clojure.string/includes? code "(save-excursion"))
+      (is (clojure.string/includes? code "(goto-char (point-min))"))
+      (is (clojure.string/includes? code "(insert \"hello\")"))))
+
+  (testing "save-excursion with single body form"
+    (let [code (analyze-and-emit '(save-excursion (point)))]
+      (is (clojure.string/includes? code "(save-excursion"))
+      (is (clojure.string/includes? code "(point)")))))
+
+(deftest emit-save-restriction-test
+  (testing "basic save-restriction emits Elisp form"
+    (let [code (analyze-and-emit '(save-restriction
+                                   (narrow-to-region start end)
+                                   (do-something)))]
+      (is (clojure.string/includes? code "(save-restriction"))
+      (is (clojure.string/includes? code "(narrow-to-region start end)"))
+      (is (clojure.string/includes? code "(do-something)"))))
+
+  (testing "save-restriction with widen"
+    (let [code (analyze-and-emit '(save-restriction (widen)))]
+      (is (clojure.string/includes? code "(save-restriction"))
+      (is (clojure.string/includes? code "(widen)")))))
+
+(deftest emit-with-current-buffer-test
+  (testing "basic with-current-buffer emits Elisp form"
+    (let [code (analyze-and-emit '(with-current-buffer buf
+                                    (buffer-string)))]
+      (is (clojure.string/includes? code "(with-current-buffer buf"))
+      (is (clojure.string/includes? code "(buffer-string)"))))
+
+  (testing "with-current-buffer with buffer name string"
+    (let [code (analyze-and-emit '(with-current-buffer "*scratch*"
+                                    (erase-buffer)))]
+      (is (clojure.string/includes? code "(with-current-buffer \"*scratch*\""))
+      (is (clojure.string/includes? code "(erase-buffer)"))))
+
+  (testing "with-current-buffer with get-buffer-create"
+    (let [code (analyze-and-emit '(with-current-buffer (get-buffer-create "*log*")
+                                    (goto-char (point-max))
+                                    (insert "log entry")))]
+      (is (clojure.string/includes? code "(with-current-buffer (get-buffer-create \"*log*\")"))
+      (is (clojure.string/includes? code "(goto-char (point-max))"))
+      (is (clojure.string/includes? code "(insert \"log entry\")")))))
+
+(deftest emit-with-temp-buffer-test
+  (testing "basic with-temp-buffer emits Elisp form"
+    (let [code (analyze-and-emit '(with-temp-buffer
+                                    (insert "temp content")
+                                    (buffer-string)))]
+      (is (clojure.string/includes? code "(with-temp-buffer"))
+      (is (clojure.string/includes? code "(insert \"temp content\")"))
+      (is (clojure.string/includes? code "(buffer-string)"))))
+
+  (testing "with-temp-buffer single form"
+    (let [code (analyze-and-emit '(with-temp-buffer (point-max)))]
+      (is (clojure.string/includes? code "(with-temp-buffer"))
+      (is (clojure.string/includes? code "(point-max)")))))
+
+(deftest emit-save-current-buffer-test
+  (testing "basic save-current-buffer emits Elisp form"
+    (let [code (analyze-and-emit '(save-current-buffer
+                                   (set-buffer other-buf)
+                                   (do-work)))]
+      (is (clojure.string/includes? code "(save-current-buffer"))
+      (is (clojure.string/includes? code "(set-buffer other-buf)"))
+      (is (clojure.string/includes? code "(do-work)")))))
+
+(deftest emit-with-output-to-string-test
+  (testing "basic with-output-to-string emits Elisp form"
+    (let [code (analyze-and-emit '(with-output-to-string
+                                    (princ "output")))]
+      (is (clojure.string/includes? code "(with-output-to-string"))
+      (is (clojure.string/includes? code "(princ \"output\")"))))
+
+  (testing "with-output-to-string multiple forms"
+    (let [code (analyze-and-emit '(with-output-to-string
+                                    (princ "hello ")
+                                    (princ "world")))]
+      (is (clojure.string/includes? code "(with-output-to-string"))
+      (is (clojure.string/includes? code "hello"))
+      (is (clojure.string/includes? code "world")))))
+
+(deftest emit-combined-buffer-ops-test
+  (testing "nested save-excursion and with-current-buffer"
+    (let [code (analyze-and-emit '(save-excursion
+                                   (with-current-buffer other
+                                     (goto-char (point-min)))))]
+      (is (clojure.string/includes? code "(save-excursion"))
+      (is (clojure.string/includes? code "(with-current-buffer other"))
+      (is (clojure.string/includes? code "(goto-char (point-min))"))))
+
+  (testing "save-restriction inside save-excursion"
+    (let [code (analyze-and-emit '(save-excursion
+                                   (save-restriction
+                                    (narrow-to-region start end)
+                                    (buffer-string))))]
+      (is (clojure.string/includes? code "(save-excursion"))
+      (is (clojure.string/includes? code "(save-restriction"))
+      (is (clojure.string/includes? code "(narrow-to-region start end)"))
+      (is (clojure.string/includes? code "(buffer-string)")))))
+

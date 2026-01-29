@@ -934,6 +934,53 @@
               :closed-over (vec closed-locals))))
 
 ;; ============================================================================
+;; Emacs Buffer/Process Interop (clel-031)
+;; ============================================================================
+
+(defn analyze-save-excursion
+  "Analyze (save-excursion body...) forms.
+   Saves point and mark, executes body, then restores them."
+  [[_ & body]]
+  (ast-node :save-excursion
+            :body (mapv analyze body)))
+
+(defn analyze-save-restriction
+  "Analyze (save-restriction body...) forms.
+   Saves the current narrowing state, executes body, then restores it."
+  [[_ & body]]
+  (ast-node :save-restriction
+            :body (mapv analyze body)))
+
+(defn analyze-with-current-buffer
+  "Analyze (with-current-buffer buffer body...) forms.
+   Executes body with buffer as the current buffer."
+  [[_ buffer & body]]
+  (ast-node :with-current-buffer
+            :buffer (analyze buffer)
+            :body (mapv analyze body)))
+
+(defn analyze-with-temp-buffer
+  "Analyze (with-temp-buffer body...) forms.
+   Creates a temporary buffer, executes body in it, then kills the buffer."
+  [[_ & body]]
+  (ast-node :with-temp-buffer
+            :body (mapv analyze body)))
+
+(defn analyze-save-current-buffer
+  "Analyze (save-current-buffer body...) forms.
+   Saves the current buffer, executes body, then restores current buffer."
+  [[_ & body]]
+  (ast-node :save-current-buffer
+            :body (mapv analyze body)))
+
+(defn analyze-with-output-to-string
+  "Analyze (with-output-to-string body...) forms.
+   Captures all output to a string and returns it."
+  [[_ & body]]
+  (ast-node :with-output-to-string
+            :body (mapv analyze body)))
+
+;; ============================================================================
 ;; Macro System
 ;; ============================================================================
 
@@ -1152,7 +1199,14 @@
    'with-eval-after-load analyze-with-eval-after-load
    'define-minor-mode analyze-define-minor-mode
    'defgroup analyze-defgroup
-   'defcustom analyze-defcustom})
+   'defcustom analyze-defcustom
+   ;; Emacs buffer/process interop (clel-031)
+   'save-excursion analyze-save-excursion
+   'save-restriction analyze-save-restriction
+   'with-current-buffer analyze-with-current-buffer
+   'with-temp-buffer analyze-with-temp-buffer
+   'save-current-buffer analyze-save-current-buffer
+   'with-output-to-string analyze-with-output-to-string})
 
 (defn analyze
   "Analyze a Clojure form into an AST node.
