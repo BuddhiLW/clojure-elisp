@@ -1437,3 +1437,71 @@
                                     (use loop-count!)))]
       (is (clojure.string/includes? code "(cl-dotimes (loop-count-bang 10)")))))
 
+;; ============================================================================
+;; For List Comprehension (clel-039)
+;; ============================================================================
+
+(deftest emit-for-basic-test
+  (testing "basic for emits mapcar"
+    (let [code (analyze-and-emit '(for [x coll]
+                                    (inc x)))]
+      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(lambda (x)"))
+      (is (clojure.string/includes? code "(1+ x)"))
+      (is (clojure.string/includes? code "(clel-seq coll)"))))
+
+  (testing "for with literal collection"
+    (let [code (analyze-and-emit '(for [x [1 2 3]]
+                                    (* x 2)))]
+      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(lambda (x)"))
+      (is (clojure.string/includes? code "(* x 2)"))))
+
+  (testing "for binding name is mangled"
+    (let [code (analyze-and-emit '(for [item? items]
+                                    item?))]
+      (is (clojure.string/includes? code "(lambda (item-p)")))))
+
+(deftest emit-for-when-test
+  (testing "for with :when emits cl-mapcan"
+    (let [code (analyze-and-emit '(for [x coll :when (even? x)]
+                                    x))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(lambda (x)"))
+      (is (clojure.string/includes? code "(when (cl-evenp x)"))
+      (is (clojure.string/includes? code "(list x)"))))
+
+  (testing "for with :when filters correctly"
+    (let [code (analyze-and-emit '(for [n numbers :when (pos? n)]
+                                    (str n)))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(when (cl-plusp n)"))
+      (is (clojure.string/includes? code "(list (clel-str n))")))))
+
+(deftest emit-for-let-test
+  (testing "for with :let emits let* wrapper"
+    (let [code (analyze-and-emit '(for [x coll :let [y (inc x)]]
+                                    y))]
+      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(let* ((y (1+ x)))"))
+      (is (clojure.string/includes? code "y)"))))
+
+  (testing "for with multiple :let bindings"
+    (let [code (analyze-and-emit '(for [x coll :let [y (inc x) z (* x 2)]]
+                                    (+ y z)))]
+      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(let*"))
+      (is (clojure.string/includes? code "(y (1+ x))"))
+      (is (clojure.string/includes? code "(z (* x 2))"))
+      (is (clojure.string/includes? code "(+ y z)")))))
+
+(deftest emit-for-combined-test
+  (testing "for with :when and :let"
+    (let [code (analyze-and-emit '(for [x coll :when (pos? x) :let [y (* x 2)]]
+                                    y))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(when (cl-plusp x)"))
+      (is (clojure.string/includes? code "(let* ((y (* x 2)))"))
+      ;; The let wrapper is inside the list call
+      (is (clojure.string/includes? code "(list (let*")))))
+

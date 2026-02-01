@@ -977,3 +977,85 @@
       (is (str/includes? code "clel-update-in"))
       (is (str/includes? code "clel-get-in")))))
 
+;; ============================================================================
+;; For List Comprehension (clel-039)
+;; ============================================================================
+
+(deftest for-basic-compilation-test
+  (testing "basic for compiles to mapcar"
+    (is (str/includes? (clel/emit '(for [x coll] x)) "mapcar"))
+    (is (str/includes? (clel/emit '(for [x coll] x)) "lambda")))
+
+  (testing "for with body expression"
+    (let [code (clel/emit '(for [x numbers] (inc x)))]
+      (is (str/includes? code "mapcar"))
+      (is (str/includes? code "(1+ x)"))))
+
+  (testing "for wraps collection in clel-seq"
+    (let [code (clel/emit '(for [item items] item))]
+      (is (str/includes? code "clel-seq"))))
+
+  (testing "for with literal vector"
+    (let [code (clel/emit '(for [x [1 2 3]] (* x x)))]
+      (is (str/includes? code "mapcar"))
+      (is (str/includes? code "(* x x)")))))
+
+(deftest for-when-compilation-test
+  (testing "for with :when compiles to cl-mapcan"
+    (is (str/includes? (clel/emit '(for [x coll :when (even? x)] x)) "cl-mapcan")))
+
+  (testing "for :when includes condition"
+    (let [code (clel/emit '(for [x numbers :when (pos? x)] x))]
+      (is (str/includes? code "when"))
+      (is (str/includes? code "cl-plusp"))))
+
+  (testing "for :when wraps body in list"
+    (let [code (clel/emit '(for [x coll :when (pred x)] (process x)))]
+      (is (str/includes? code "(list (process x))"))))
+
+  (testing "for :when with complex predicate"
+    (let [code (clel/emit '(for [n data :when (and (pos? n) (even? n))] n))]
+      (is (str/includes? code "cl-mapcan"))
+      (is (str/includes? code "and")))))
+
+(deftest for-let-compilation-test
+  (testing "for with :let compiles with let*"
+    (is (str/includes? (clel/emit '(for [x coll :let [y (inc x)]] y)) "let*")))
+
+  (testing "for :let includes bindings"
+    (let [code (clel/emit '(for [x numbers :let [doubled (* x 2)]] doubled))]
+      (is (str/includes? code "let*"))
+      (is (str/includes? code "doubled"))
+      (is (str/includes? code "(* x 2)"))))
+
+  (testing "for with multiple :let bindings"
+    (let [code (clel/emit '(for [x coll :let [a (inc x) b (dec x)]] (+ a b)))]
+      (is (str/includes? code "let*"))
+      (is (str/includes? code "(a (1+ x))"))
+      (is (str/includes? code "(b (1- x))")))))
+
+(deftest for-combined-modifiers-test
+  (testing "for with :when and :let"
+    (let [code (clel/emit '(for [x coll :when (pos? x) :let [y (* x 2)]] y))]
+      (is (str/includes? code "cl-mapcan"))
+      (is (str/includes? code "when"))
+      (is (str/includes? code "let*"))))
+
+  (testing "for :when + :let preserves order"
+    (let [code (clel/emit '(for [n numbers :when (even? n) :let [half (/ n 2)]] half))]
+      (is (str/includes? code "cl-mapcan"))
+      (is (str/includes? code "cl-evenp"))
+      (is (str/includes? code "half"))))
+
+  (testing "for in let binding"
+    (let [code (clel/emit '(let [squares (for [x nums] (* x x))]
+                             (first squares)))]
+      (is (str/includes? code "mapcar"))
+      (is (str/includes? code "squares"))))
+
+  (testing "nested for (via map)"
+    (let [code (clel/emit '(for [x xs]
+                             (for [y ys]
+                               (+ x y))))]
+      (is (= 2 (count (re-seq #"mapcar" code)))))))
+

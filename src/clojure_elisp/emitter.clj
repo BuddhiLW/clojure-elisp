@@ -531,6 +531,32 @@
         body-str (str/join "\n    " (map emit body))]
     (format "(cl-dotimes (%s %s)\n    %s)" binding-str count-str body-str)))
 
+(defmethod emit-node :for
+  [{:keys [binding coll body] :as node}]
+  (let [when-clause (:when node)
+        let-clause (:let node)
+        binding-str (mangle-name binding)
+        coll-str (emit coll)
+        ;; Build the innermost body expression
+        body-expr (if (= 1 (count body))
+                    (emit (first body))
+                    (format "(progn %s)" (str/join " " (map emit body))))
+        ;; Wrap with :let bindings if present
+        body-with-let (if let-clause
+                        (let [let-strs (map (fn [{:keys [name init]}]
+                                              (format "(%s %s)" (mangle-name name) (emit init)))
+                                            let-clause)]
+                          (format "(let* (%s) %s)" (str/join " " let-strs) body-expr))
+                        body-expr)
+        ;; If :when is present, use cl-mapcan to filter
+        ;; Otherwise use simple mapcar
+        lambda-body (if when-clause
+                      (format "(when %s (list %s))" (emit when-clause) body-with-let)
+                      body-with-let)
+        map-fn (if when-clause "cl-mapcan" "mapcar")]
+    (format "(%s (lambda (%s) %s) (clel-seq %s))"
+            map-fn binding-str lambda-body coll-str)))
+
 (defmethod emit-node :let
   [{:keys [bindings body]}]
   (let [binding-strs (map (fn [{:keys [name init]}]

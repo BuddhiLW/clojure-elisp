@@ -1410,3 +1410,95 @@
       (is (= :dotimes (:op ast)))
       (is (= :invoke (:op (:count ast)))))))
 
+;; ============================================================================
+;; For List Comprehension (clel-039)
+;; ============================================================================
+
+(deftest analyze-for-basic-test
+  (testing "basic for with single binding"
+    (let [ast (analyze '(for [x coll]
+                          (inc x)))]
+      (is (= :for (:op ast)))
+      (is (= 'x (:binding ast)))
+      (is (= :var (:op (:coll ast))))
+      (is (= 'coll (:name (:coll ast))))
+      (is (nil? (:when ast)))
+      (is (nil? (:let ast)))
+      (is (= 1 (count (:body ast))))))
+
+  (testing "for binding is local in body"
+    (let [ast (analyze '(for [x items]
+                          x))]
+      (is (= :for (:op ast)))
+      (is (= :local (:op (first (:body ast)))))
+      (is (= 'x (:name (first (:body ast)))))))
+
+  (testing "for with literal collection"
+    (let [ast (analyze '(for [x [1 2 3]]
+                          (* x x)))]
+      (is (= :for (:op ast)))
+      (is (= :vector (:op (:coll ast)))))))
+
+(deftest analyze-for-when-test
+  (testing "for with :when modifier"
+    (let [ast (analyze '(for [x coll :when (even? x)]
+                          x))]
+      (is (= :for (:op ast)))
+      (is (= 'x (:binding ast)))
+      (is (some? (:when ast)))
+      (is (= :invoke (:op (:when ast))))
+      (is (nil? (:let ast)))))
+
+  (testing "for :when can reference binding"
+    (let [ast (analyze '(for [n numbers :when (pos? n)]
+                          (str n)))]
+      (is (= :for (:op ast)))
+      (is (some? (:when ast)))
+      ;; The 'n' in the when clause should be analyzed as local
+      (let [when-args (:args (:when ast))]
+        (is (= :local (:op (first when-args))))
+        (is (= 'n (:name (first when-args))))))))
+
+(deftest analyze-for-let-test
+  (testing "for with :let modifier"
+    (let [ast (analyze '(for [x coll :let [y (inc x)]]
+                          y))]
+      (is (= :for (:op ast)))
+      (is (= 'x (:binding ast)))
+      (is (nil? (:when ast)))
+      (is (some? (:let ast)))
+      (is (= 1 (count (:let ast))))
+      (is (= 'y (:name (first (:let ast)))))))
+
+  (testing "for with multiple :let bindings"
+    (let [ast (analyze '(for [x coll :let [y (inc x) z (* x 2)]]
+                          (+ y z)))]
+      (is (= :for (:op ast)))
+      (is (= 2 (count (:let ast))))
+      (is (= 'y (:name (first (:let ast)))))
+      (is (= 'z (:name (second (:let ast)))))))
+
+  (testing "for :let binding is local in body"
+    (let [ast (analyze '(for [x coll :let [squared (* x x)]]
+                          squared))]
+      (is (= :for (:op ast)))
+      ;; Body should reference 'squared' as local
+      (is (= :local (:op (first (:body ast)))))
+      (is (= 'squared (:name (first (:body ast))))))))
+
+(deftest analyze-for-combined-modifiers-test
+  (testing "for with :when and :let"
+    (let [ast (analyze '(for [x coll :when (pos? x) :let [y (* x 2)]]
+                          y))]
+      (is (= :for (:op ast)))
+      (is (some? (:when ast)))
+      (is (some? (:let ast)))
+      (is (= 'y (:name (first (:let ast)))))))
+
+  (testing "for with :let before :when"
+    (let [ast (analyze '(for [x coll :let [y (inc x)] :when (even? y)]
+                          y))]
+      (is (= :for (:op ast)))
+      (is (some? (:when ast)))
+      (is (some? (:let ast))))))
+

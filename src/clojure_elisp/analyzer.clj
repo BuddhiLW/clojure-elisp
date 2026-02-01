@@ -1008,6 +1008,67 @@
               :body (binding [*env* (with-locals *env* #{sym})]
                       (mapv analyze body)))))
 
+(defn parse-for-bindings
+  "Parse for binding vector into structured form.
+   Returns {:binding sym :coll ast :when ast|nil :let [{:name :init}]|nil}
+   Supports: [x coll], [x coll :when pred], [x coll :let [y expr]], [x coll :when pred :let [y expr]]"
+  [bindings]
+  (let [[sym coll-form & modifiers] bindings
+        coll-ast (analyze coll-form)]
+    (loop [mods modifiers
+           when-clause nil
+           let-bindings nil]
+      (if (empty? mods)
+        {:binding sym
+         :coll coll-ast
+         :when when-clause
+         :let let-bindings}
+        (let [[kw & rest-mods] mods]
+          (case kw
+            :when (let [[pred & remaining] rest-mods]
+                    (recur remaining
+                           (binding [*env* (with-locals *env* #{sym})]
+                             (analyze pred))
+                           let-bindings))
+            :let (let [[let-vec & remaining] rest-mods
+                       pairs (partition 2 let-vec)
+                       analyzed-lets (binding [*env* (with-locals *env* #{sym})]
+                                       (mapv (fn [[n v]]
+                                               {:name n :init (analyze v)})
+                                             pairs))]
+                   (recur remaining
+                          when-clause
+                          analyzed-lets))
+            :while (let [[pred & remaining] rest-mods]
+                     ;; :while is more complex - for now, treat like :when
+                     ;; Full implementation would need early termination
+                     (recur remaining
+                            (binding [*env* (with-locals *env* #{sym})]
+                              (analyze pred))
+                            let-bindings))
+            ;; Unknown modifier, skip
+            (recur (rest mods) when-clause let-bindings)))))))
+
+(defn analyze-for
+  "Analyze (for [x coll :when pred :let [y expr]] body) forms.
+   List comprehension that returns a lazy sequence.
+   Supports :when for filtering and :let for intermediate bindings."
+  [[_ bindings & body]]
+  (let [parsed (parse-for-bindings bindings)
+        for-binding (:binding parsed)
+        when-clause (:when parsed)
+        let-clause (:let parsed)
+        ;; Build environment with binding and any :let bindings
+        let-syms (if let-clause (set (map :name let-clause)) #{})
+        all-locals (into #{for-binding} let-syms)]
+    (ast-node :for
+              :binding for-binding
+              :coll (:coll parsed)
+              :when when-clause
+              :let let-clause
+              :body (binding [*env* (with-locals *env* all-locals)]
+                      (mapv analyze body)))))
+
 ;; ============================================================================
 ;; Macro System
 ;; ============================================================================
@@ -1235,9 +1296,10 @@
    'with-temp-buffer analyze-with-temp-buffer
    'save-current-buffer analyze-save-current-buffer
    'with-output-to-string analyze-with-output-to-string
-   ;; Iteration forms (clel-035)
+   ;; Iteration forms (clel-035, clel-039)
    'doseq analyze-doseq
-   'dotimes analyze-dotimes})
+   'dotimes analyze-dotimes
+   'for analyze-for})
 
 (defn analyze
   "Analyze a Clojure form into an AST node.
