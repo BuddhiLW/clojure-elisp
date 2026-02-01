@@ -892,7 +892,8 @@
   (testing "var with :ns emits namespace-qualified mangled name"
     (let [node {:op :var :name 'join :ns 'clojure.string}
           code (emit/emit node)]
-      (is (= "clojure-string-join" code))))
+      ;; clojure.string/join is mapped to clel-str-join in core-fn-mapping
+      (is (= "clel-str-join" code))))
 
   (testing "var without :ns uses core mapping or plain name"
     (let [node {:op :var :name 'first}
@@ -945,7 +946,8 @@
                   (str/join ", " items)]
           asts (ana/analyze-file-forms forms)
           call-code (emit/emit (second asts))]
-      (is (clojure.string/includes? call-code "clojure-string-join"))))
+      ;; clojure.string/join is mapped to clel-str-join
+      (is (clojure.string/includes? call-code "clel-str-join"))))
 
   (testing "referred symbol emits fully qualified name"
     (let [forms '[(ns my.app

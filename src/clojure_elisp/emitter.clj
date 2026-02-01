@@ -147,13 +147,37 @@
    'not-every? "clel-not-every-p"
    'not-any? "clel-not-any-p"
 
-   ;; Strings
+   ;; Strings (core)
    'str "clel-str"
    'subs "substring"
    'format "format"
    'pr-str "prin1-to-string"
    'println "message"
    'print "princ"
+
+   ;; clojure.string namespace
+   'clojure.string/join "clel-str-join"
+   'clojure.string/split "clel-str-split"
+   'clojure.string/replace "clel-str-replace"
+   'clojure.string/replace-first "clel-str-replace-first"
+   'clojure.string/re-quote-replacement "regexp-quote"
+   'clojure.string/trim "clel-str-trim"
+   'clojure.string/triml "clel-str-triml"
+   'clojure.string/trimr "clel-str-trimr"
+   'clojure.string/lower-case "clel-str-lower"
+   'clojure.string/upper-case "clel-str-upper"
+   'clojure.string/capitalize "clel-str-capitalize"
+   'clojure.string/blank? "clel-str-blank-p"
+   'clojure.string/includes? "clel-str-includes-p"
+   'clojure.string/starts-with? "clel-str-starts-with-p"
+   'clojure.string/ends-with? "clel-str-ends-with-p"
+   'clojure.string/reverse "clel-str-reverse"
+   'clojure.string/index-of "clel-str-index-of"
+   'clojure.string/last-index-of "clel-str-last-index-of"
+   ;; Regex string functions
+   're-matches "clel-str-re-matches"
+   're-find "clel-str-re-find"
+   're-seq "clel-str-re-seq"
 
    ;; Math
    'min "cl-min"
@@ -337,9 +361,11 @@
     (or (get core-fn-mapping name)
         (str "clojure-core-" (mangle-name name)))
 
-    ;; Other namespace - fully qualified mangled name
+    ;; Other namespace - check fully-qualified symbol in mapping first
     :else
-    (str (mangle-name ns) "-" (mangle-name name))))
+    (let [qualified-sym (symbol (str ns) (str name))]
+      (or (get core-fn-mapping qualified-sym)
+          (str (mangle-name ns) "-" (mangle-name name))))))
 
 (defmethod emit-node :vector
   [{:keys [items]}]

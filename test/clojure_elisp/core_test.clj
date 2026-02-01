@@ -398,8 +398,8 @@
       (is (str/includes? result "my-app"))
       ;; defn should be prefixed
       (is (str/includes? result "my-app-greet"))
-      ;; str/join should resolve
-      (is (str/includes? result "clojure-string-join"))
+      ;; str/join should resolve to clel-str-join via core-fn-mapping
+      (is (str/includes? result "clel-str-join"))
       ;; provide at end
       (is (str/includes? result "(provide 'my-app)"))))
 

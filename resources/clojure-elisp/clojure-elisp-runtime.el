@@ -327,6 +327,106 @@ MATCH is treated as a literal string."
   (if (null s) ""
       (upcase s)))
 
+(defun clel-str-capitalize (s)
+  "Capitalize S (uppercase first char, lowercase rest)."
+  (if (or (null s) (string-empty-p s)) ""
+    (concat (upcase (substring s 0 1))
+            (downcase (substring s 1)))))
+
+(defun clel-str-triml (s)
+  "Trim whitespace from left (start) of S."
+  (if (null s) ""
+    (string-trim-left s)))
+
+(defun clel-str-trimr (s)
+  "Trim whitespace from right (end) of S."
+  (if (null s) ""
+    (string-trim-right s)))
+
+(defun clel-str-blank-p (s)
+  "Return t if S is nil, empty, or contains only whitespace."
+  (or (null s)
+      (string-empty-p s)
+      (string-match-p "\\`[[:space:]]*\\'" s)))
+
+(defun clel-str-includes-p (s substr)
+  "Return t if S contains SUBSTR."
+  (if (or (null s) (null substr)) nil
+    (not (null (string-match-p (regexp-quote substr) s)))))
+
+(defun clel-str-starts-with-p (s prefix)
+  "Return t if S starts with PREFIX."
+  (if (or (null s) (null prefix)) nil
+    (string-prefix-p prefix s)))
+
+(defun clel-str-ends-with-p (s suffix)
+  "Return t if S ends with SUFFIX."
+  (if (or (null s) (null suffix)) nil
+    (string-suffix-p suffix s)))
+
+(defun clel-str-reverse (s)
+  "Reverse string S."
+  (if (null s) ""
+    (concat (nreverse (string-to-list s)))))
+
+(defun clel-str-replace-first (s match replacement)
+  "Replace first occurrence of MATCH in S with REPLACEMENT."
+  (if (null s) ""
+    (replace-regexp-in-string (regexp-quote match) replacement s nil nil 1)))
+
+(defun clel-str-re-replace (s pattern replacement)
+  "Replace all matches of regex PATTERN in S with REPLACEMENT."
+  (if (null s) ""
+    (replace-regexp-in-string pattern replacement s)))
+
+(defun clel-str-re-replace-first (s pattern replacement)
+  "Replace first match of regex PATTERN in S with REPLACEMENT."
+  (if (null s) ""
+    (replace-regexp-in-string pattern replacement s nil nil 1)))
+
+(defun clel-str-re-matches (re s)
+  "Return match data if RE matches entire string S, else nil."
+  (if (or (null re) (null s)) nil
+    (when (string-match-p (concat "\\`" re "\\'") s)
+      (string-match re s)
+      (match-string 0 s))))
+
+(defun clel-str-re-find (re s)
+  "Return first match of RE in S, or nil."
+  (if (or (null re) (null s)) nil
+    (when (string-match re s)
+      (match-string 0 s))))
+
+(defun clel-str-re-seq (re s)
+  "Return list of all matches of RE in S."
+  (if (or (null re) (null s)) nil
+    (let ((matches nil)
+          (start 0))
+      (while (string-match re s start)
+        (push (match-string 0 s) matches)
+        (setq start (match-end 0)))
+      (nreverse matches))))
+
+(defun clel-str-index-of (s substr &optional from-index)
+  "Return index of first occurrence of SUBSTR in S, or nil.
+Optional FROM-INDEX specifies starting position."
+  (if (or (null s) (null substr)) nil
+    (let ((pos (string-match (regexp-quote substr) s (or from-index 0))))
+      pos)))
+
+(defun clel-str-last-index-of (s substr &optional from-index)
+  "Return index of last occurrence of SUBSTR in S, or nil."
+  (if (or (null s) (null substr)) nil
+    (let ((len (length s))
+          (sublen (length substr))
+          (limit (or from-index len))
+          (result nil))
+      (dotimes (i (min (1+ limit) (- len sublen -1)))
+        (when (and (<= (+ i sublen) len)
+                   (string= substr (substring s i (+ i sublen))))
+          (setq result i)))
+      result)))
+
 ;;; Function Utilities
 
 (defun clel-constantly (x)

@@ -1059,3 +1059,117 @@
                                (+ x y))))]
       (is (= 2 (count (re-seq #"mapcar" code)))))))
 
+;; ============================================================================
+;; String Functions (clel-042)
+;; ============================================================================
+
+(deftest string-core-functions-test
+  (testing "str compiles to clel-str"
+    (is (str/includes? (clel/emit '(str "a" "b")) "clel-str"))
+    (is (str/includes? (clel/emit '(str x y z)) "clel-str")))
+
+  (testing "subs compiles to substring"
+    (is (str/includes? (clel/emit '(subs s 0 5)) "substring")))
+
+  (testing "format passes through"
+    (is (str/includes? (clel/emit '(format "%s: %d" name count)) "format"))))
+
+(deftest clojure-string-join-test
+  (testing "clojure.string/join compiles to clel-str-join"
+    (is (str/includes? (clel/emit '(clojure.string/join ", " items)) "clel-str-join")))
+
+  (testing "join with empty separator"
+    (let [code (clel/emit '(clojure.string/join "" parts))]
+      (is (str/includes? code "clel-str-join"))))
+
+  (testing "join preserves argument order"
+    (let [code (clel/emit '(clojure.string/join sep coll))]
+      (is (re-find #"clel-str-join\s+sep\s+coll" code)))))
+
+(deftest clojure-string-split-test
+  (testing "clojure.string/split compiles to clel-str-split"
+    (is (str/includes? (clel/emit '(clojure.string/split s #",")) "clel-str-split")))
+
+  (testing "split preserves argument order"
+    (let [code (clel/emit '(clojure.string/split text pattern))]
+      (is (re-find #"clel-str-split\s+text\s+pattern" code)))))
+
+(deftest clojure-string-replace-test
+  (testing "clojure.string/replace compiles to clel-str-replace"
+    (is (str/includes? (clel/emit '(clojure.string/replace s "old" "new")) "clel-str-replace")))
+
+  (testing "clojure.string/replace-first compiles to clel-str-replace-first"
+    (is (str/includes? (clel/emit '(clojure.string/replace-first s "x" "y")) "clel-str-replace-first"))))
+
+(deftest clojure-string-trim-test
+  (testing "clojure.string/trim compiles to clel-str-trim"
+    (is (str/includes? (clel/emit '(clojure.string/trim s)) "clel-str-trim")))
+
+  (testing "clojure.string/triml compiles to clel-str-triml"
+    (is (str/includes? (clel/emit '(clojure.string/triml s)) "clel-str-triml")))
+
+  (testing "clojure.string/trimr compiles to clel-str-trimr"
+    (is (str/includes? (clel/emit '(clojure.string/trimr s)) "clel-str-trimr"))))
+
+(deftest clojure-string-case-test
+  (testing "clojure.string/lower-case compiles to clel-str-lower"
+    (is (str/includes? (clel/emit '(clojure.string/lower-case s)) "clel-str-lower")))
+
+  (testing "clojure.string/upper-case compiles to clel-str-upper"
+    (is (str/includes? (clel/emit '(clojure.string/upper-case s)) "clel-str-upper")))
+
+  (testing "clojure.string/capitalize compiles to clel-str-capitalize"
+    (is (str/includes? (clel/emit '(clojure.string/capitalize s)) "clel-str-capitalize"))))
+
+(deftest clojure-string-predicates-test
+  (testing "clojure.string/blank? compiles to clel-str-blank-p"
+    (is (str/includes? (clel/emit '(clojure.string/blank? s)) "clel-str-blank-p")))
+
+  (testing "clojure.string/includes? compiles to clel-str-includes-p"
+    (is (str/includes? (clel/emit '(clojure.string/includes? s "needle")) "clel-str-includes-p")))
+
+  (testing "clojure.string/starts-with? compiles to clel-str-starts-with-p"
+    (is (str/includes? (clel/emit '(clojure.string/starts-with? s "prefix")) "clel-str-starts-with-p")))
+
+  (testing "clojure.string/ends-with? compiles to clel-str-ends-with-p"
+    (is (str/includes? (clel/emit '(clojure.string/ends-with? s "suffix")) "clel-str-ends-with-p"))))
+
+(deftest clojure-string-misc-test
+  (testing "clojure.string/reverse compiles to clel-str-reverse"
+    (is (str/includes? (clel/emit '(clojure.string/reverse s)) "clel-str-reverse")))
+
+  (testing "clojure.string/index-of compiles to clel-str-index-of"
+    (is (str/includes? (clel/emit '(clojure.string/index-of s "x")) "clel-str-index-of")))
+
+  (testing "clojure.string/last-index-of compiles to clel-str-last-index-of"
+    (is (str/includes? (clel/emit '(clojure.string/last-index-of s "x")) "clel-str-last-index-of"))))
+
+(deftest regex-string-functions-test
+  (testing "re-find compiles to clel-str-re-find"
+    (is (str/includes? (clel/emit '(re-find #"\\d+" s)) "clel-str-re-find")))
+
+  (testing "re-matches compiles to clel-str-re-matches"
+    (is (str/includes? (clel/emit '(re-matches #"\\d+" s)) "clel-str-re-matches")))
+
+  (testing "re-seq compiles to clel-str-re-seq"
+    (is (str/includes? (clel/emit '(re-seq #"\\w+" s)) "clel-str-re-seq"))))
+
+(deftest string-function-composition-test
+  (testing "chained string operations"
+    (let [code (clel/emit '(clojure.string/upper-case
+                            (clojure.string/trim s)))]
+      (is (str/includes? code "clel-str-upper"))
+      (is (str/includes? code "clel-str-trim"))))
+
+  (testing "string functions in let"
+    (let [code (clel/emit '(let [trimmed (clojure.string/trim s)
+                                 upper (clojure.string/upper-case trimmed)]
+                             upper))]
+      (is (str/includes? code "clel-str-trim"))
+      (is (str/includes? code "clel-str-upper"))))
+
+  (testing "string predicates in conditionals"
+    (let [code (clel/emit '(when (clojure.string/blank? s)
+                             (println "empty")))]
+      (is (str/includes? code "clel-str-blank-p")))))
+
