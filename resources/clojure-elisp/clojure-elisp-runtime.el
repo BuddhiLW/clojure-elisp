@@ -87,6 +87,119 @@ Works with alists and hash-tables."
       new))
    (t (error "clel-dissoc: unsupported collection type"))))
 
+(defun clel-get-in (m ks &optional not-found)
+  "Get nested value from M following keys KS.
+Returns NOT-FOUND (default nil) if path does not exist."
+  (let ((result m)
+        (keys ks))
+    ;; Force keys if it's a lazy seq or vector
+    (when (or (vectorp keys) (and (listp keys) (eq (car-safe keys) 'clel-lazy-seq)))
+      (setq keys (if (vectorp keys) (append keys nil) (clel-seq-force keys))))
+    (while (and keys result)
+      (setq result (clel-get result (car keys)))
+      (setq keys (cdr keys)))
+    (if (null result)
+        (or not-found nil)
+      result)))
+
+(defun clel-assoc-in (m ks v)
+  "Associate value V at nested path KS in M.
+Creates intermediate maps as needed."
+  (let ((keys ks))
+    ;; Force keys if it's a lazy seq or vector
+    (when (or (vectorp keys) (and (listp keys) (eq (car-safe keys) 'clel-lazy-seq)))
+      (setq keys (if (vectorp keys) (append keys nil) (clel-seq-force keys))))
+    (if (null keys)
+        m
+      (if (= 1 (length keys))
+          (clel-assoc m (car keys) v)
+        (clel-assoc m (car keys)
+                    (clel-assoc-in (clel-get m (car keys)) (cdr keys) v))))))
+
+(defun clel-update (m k f &rest args)
+  "Update value at K in M by applying F to old value and ARGS."
+  (clel-assoc m k (apply f (clel-get m k) args)))
+
+(defun clel-update-in (m ks f &rest args)
+  "Update value at nested path KS in M by applying F to old value and ARGS."
+  (let ((keys ks))
+    ;; Force keys if it's a lazy seq or vector
+    (when (or (vectorp keys) (and (listp keys) (eq (car-safe keys) 'clel-lazy-seq)))
+      (setq keys (if (vectorp keys) (append keys nil) (clel-seq-force keys))))
+    (if (null keys)
+        m
+      (if (= 1 (length keys))
+          (apply #'clel-update m (car keys) f args)
+        (clel-assoc m (car keys)
+                    (apply #'clel-update-in (clel-get m (car keys)) (cdr keys) f args))))))
+
+(defun clel-merge (&rest maps)
+  "Merge MAPS left to right.
+Later values override earlier. Returns alist or hash-table depending on first map."
+  (if (null maps)
+      nil
+    (let* ((first-map (car maps))
+           (result (cond
+                    ((null first-map) nil)
+                    ((hash-table-p first-map) (copy-hash-table first-map))
+                    ((listp first-map) (copy-alist first-map))
+                    (t (error "clel-merge: unsupported type")))))
+      (dolist (m (cdr maps))
+        (when m
+          (cond
+           ((hash-table-p result)
+            (cond
+             ((hash-table-p m)
+              (maphash (lambda (k v) (puthash k v result)) m))
+             ((listp m)
+              (dolist (pair m)
+                (puthash (car pair) (cdr pair) result)))))
+           ((listp result)
+            (cond
+             ((hash-table-p m)
+              (maphash (lambda (k v)
+                         (setf (alist-get k result nil nil 'equal) v))
+                       m))
+             ((listp m)
+              (dolist (pair m)
+                (setf (alist-get (car pair) result nil nil 'equal) (cdr pair)))))))))
+      result)))
+
+(defun clel-last (coll)
+  "Return the last element of COLL.
+Unlike Elisp `last' which returns a cons cell, this returns the element itself."
+  (cond
+   ((null coll) nil)
+   ((listp coll) (car (last coll)))
+   ((vectorp coll) (if (> (length coll) 0)
+                       (aref coll (1- (length coll)))
+                     nil))
+   (t nil)))
+
+(defun clel-contains-p (coll key)
+  "Return t if KEY exists in COLL.
+For maps/alists, checks if key is present.
+For sets (represented as lists), checks if element is present.
+For vectors, checks if index is valid."
+  (cond
+   ((null coll) nil)
+   ((hash-table-p coll)
+    (let ((not-found (gensym)))
+      (not (eq (gethash key coll not-found) not-found))))
+   ((listp coll)
+    ;; Check if alist (pairs) or set (elements)
+    (if (and (consp (car coll)) (not (listp (cdr (car coll)))))
+        ;; Alist - check keys
+        (not (null (assoc key coll)))
+      ;; Set or list - check membership
+      (not (null (member key coll)))))
+   ((vectorp coll)
+    ;; For vectors, check if index is valid
+    (and (integerp key)
+         (>= key 0)
+         (< key (length coll))))
+   (t nil)))
+
 (defun clel-keys (coll)
   "Return keys of COLL as a list."
   (cond
@@ -577,6 +690,52 @@ Returns ATOM."
 (defun clel-empty-p (coll)
   "Return t if COLL is empty or nil. Lazy-seq aware."
   (null (clel-seq-force coll)))
+
+;;; Sequence Generators
+
+(defun clel-range (&rest args)
+  "Generate a range of numbers.
+\(range) - returns empty list (infinite range not supported)
+\(range end) - returns (0 1 ... end-1)
+\(range start end) - returns (start start+1 ... end-1)
+\(range start end step) - returns (start start+step ... ) up to but not including end"
+  (let ((start 0)
+        (end nil)
+        (step 1))
+    (pcase (length args)
+      (0 nil)  ; (range) - would be infinite, return empty
+      (1 (setq end (car args)))
+      (2 (setq start (car args)
+               end (cadr args)))
+      (_ (setq start (car args)
+               end (cadr args)
+               step (caddr args))))
+    (when end
+      (let ((result nil)
+            (i start))
+        (if (> step 0)
+            (while (< i end)
+              (push i result)
+              (setq i (+ i step)))
+          (when (< step 0)
+            (while (> i end)
+              (push i result)
+              (setq i (+ i step)))))
+        (nreverse result)))))
+
+(defun clel-repeat (n x)
+  "Return a list of N copies of X."
+  (let ((result nil))
+    (dotimes (_ n)
+      (push x result))
+    result))
+
+(defun clel-repeatedly (n f)
+  "Call F N times with no arguments, returning a list of results."
+  (let ((result nil))
+    (dotimes (_ n)
+      (push (funcall f) result))
+    (nreverse result)))
 
 ;;; Protocol Support
 

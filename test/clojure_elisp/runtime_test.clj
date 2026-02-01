@@ -655,3 +655,325 @@
       (is (str/includes? code "cl-defmethod greet"))
       (is (str/includes? code "--create")))))
 
+;; ============================================================================
+;; Sequence Generators (clel-037)
+;; ============================================================================
+
+(deftest range-compilation-test
+  (testing "range compiles to clel-range"
+    (is (str/includes? (clel/emit '(range)) "clel-range"))
+    (is (str/includes? (clel/emit '(range 10)) "clel-range"))
+    (is (str/includes? (clel/emit '(range 1 10)) "clel-range"))
+    (is (str/includes? (clel/emit '(range 0 10 2)) "clel-range")))
+
+  (testing "range with single arg (end)"
+    (let [code (clel/emit '(range 5))]
+      (is (str/includes? code "clel-range"))
+      (is (str/includes? code "5"))))
+
+  (testing "range with start and end"
+    (let [code (clel/emit '(range 1 10))]
+      (is (str/includes? code "clel-range"))
+      (is (re-find #"clel-range\s+1\s+10" code))))
+
+  (testing "range with start, end, and step"
+    (let [code (clel/emit '(range 0 20 5))]
+      (is (str/includes? code "clel-range"))
+      (is (re-find #"clel-range\s+0\s+20\s+5" code))))
+
+  (testing "range in expression context"
+    (let [code (clel/emit '(let [nums (range 10)] (reduce + nums)))]
+      (is (str/includes? code "clel-range"))
+      (is (str/includes? code "clel-reduce"))))
+
+  (testing "range with map"
+    (let [code (clel/emit '(map inc (range 5)))]
+      (is (str/includes? code "clel-map"))
+      (is (str/includes? code "clel-range")))))
+
+(deftest repeat-compilation-test
+  (testing "repeat compiles to clel-repeat"
+    (is (str/includes? (clel/emit '(repeat 5 :x)) "clel-repeat")))
+
+  (testing "repeat preserves argument order"
+    (let [code (clel/emit '(repeat 3 "hello"))]
+      (is (str/includes? code "clel-repeat"))
+      (is (re-find #"clel-repeat\s+3\s+\"hello\"" code))))
+
+  (testing "repeat with variable args"
+    (let [code (clel/emit '(repeat n item))]
+      (is (re-find #"clel-repeat\s+n\s+item" code))))
+
+  (testing "repeat in let binding"
+    (let [code (clel/emit '(let [xs (repeat 5 0)] (count xs)))]
+      (is (str/includes? code "clel-repeat"))
+      (is (str/includes? code "length"))))
+
+  (testing "repeat with map"
+    (let [code (clel/emit '(map inc (repeat 3 0)))]
+      (is (str/includes? code "clel-map"))
+      (is (str/includes? code "clel-repeat")))))
+
+(deftest repeatedly-compilation-test
+  (testing "repeatedly compiles to clel-repeatedly"
+    (is (str/includes? (clel/emit '(repeatedly 5 rand)) "clel-repeatedly")))
+
+  (testing "repeatedly preserves argument order"
+    (let [code (clel/emit '(repeatedly n f))]
+      (is (re-find #"clel-repeatedly\s+n\s+f" code))))
+
+  (testing "repeatedly with inline fn"
+    (let [code (clel/emit '(repeatedly 3 (fn [] (rand))))]
+      (is (str/includes? code "clel-repeatedly"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "repeatedly in let binding"
+    (let [code (clel/emit '(let [vals (repeatedly 5 gen-val)] vals))]
+      (is (str/includes? code "clel-repeatedly"))))
+
+  (testing "repeatedly with reduce"
+    (let [code (clel/emit '(reduce + (repeatedly 10 random-int)))]
+      (is (str/includes? code "clel-reduce"))
+      (is (str/includes? code "clel-repeatedly")))))
+
+;; ============================================================================
+;; Common Accessor Functions (clel-038)
+;; ============================================================================
+
+(deftest second-compilation-test
+  (testing "second compiles to cadr"
+    (is (= "(cadr xs)" (clel/emit '(second xs))))
+    (is (= "(cadr (list 1 2 3))" (clel/emit '(second [1 2 3])))))
+
+  (testing "second in expression context"
+    (let [code (clel/emit '(let [x (second items)] x))]
+      (is (str/includes? code "cadr"))
+      (is (str/includes? code "let"))))
+
+  (testing "second preserves argument"
+    (is (re-find #"cadr\s+my-list" (clel/emit '(second my-list))))))
+
+(deftest last-compilation-test
+  (testing "last compiles to clel-last"
+    (is (str/includes? (clel/emit '(last xs)) "clel-last"))
+    (is (str/includes? (clel/emit '(last [1 2 3])) "clel-last")))
+
+  (testing "last in expression context"
+    (let [code (clel/emit '(let [x (last items)] x))]
+      (is (str/includes? code "clel-last"))
+      (is (str/includes? code "let"))))
+
+  (testing "last preserves argument"
+    (is (re-find #"clel-last\s+my-list" (clel/emit '(last my-list))))))
+
+(deftest butlast-compilation-test
+  (testing "butlast compiles to butlast"
+    (is (= "(butlast xs)" (clel/emit '(butlast xs))))
+    (is (str/includes? (clel/emit '(butlast [1 2 3])) "butlast")))
+
+  (testing "butlast in expression context"
+    (let [code (clel/emit '(let [x (butlast items)] x))]
+      (is (str/includes? code "butlast"))
+      (is (str/includes? code "let"))))
+
+  (testing "butlast preserves argument"
+    (is (re-find #"butlast\s+my-list" (clel/emit '(butlast my-list))))))
+
+(deftest min-compilation-test
+  (testing "min compiles to cl-min"
+    (is (= "(cl-min 1 2 3)" (clel/emit '(min 1 2 3))))
+    (is (= "(cl-min a b)" (clel/emit '(min a b)))))
+
+  (testing "min in expression context"
+    (let [code (clel/emit '(let [x (min a b c)] x))]
+      (is (str/includes? code "cl-min"))
+      (is (str/includes? code "let"))))
+
+  (testing "min preserves arguments"
+    (is (re-find #"cl-min\s+x\s+y\s+z" (clel/emit '(min x y z))))))
+
+(deftest max-compilation-test
+  (testing "max compiles to cl-max"
+    (is (= "(cl-max 1 2 3)" (clel/emit '(max 1 2 3))))
+    (is (= "(cl-max a b)" (clel/emit '(max a b)))))
+
+  (testing "max in expression context"
+    (let [code (clel/emit '(let [x (max a b c)] x))]
+      (is (str/includes? code "cl-max"))
+      (is (str/includes? code "let"))))
+
+  (testing "max preserves arguments"
+    (is (re-find #"cl-max\s+x\s+y\s+z" (clel/emit '(max x y z))))))
+
+(deftest contains-p-compilation-test
+  (testing "contains? compiles to clel-contains-p"
+    (is (str/includes? (clel/emit '(contains? m :key)) "clel-contains-p"))
+    (is (str/includes? (clel/emit '(contains? {:a 1} :a)) "clel-contains-p")))
+
+  (testing "contains? in conditional"
+    (let [code (clel/emit '(if (contains? m :key) (get m :key) :default))]
+      (is (str/includes? code "clel-contains-p"))
+      (is (str/includes? code "if"))))
+
+  (testing "contains? preserves argument order"
+    (is (re-find #"clel-contains-p\s+my-map\s+my-key" (clel/emit '(contains? my-map my-key))))))
+
+(deftest name-compilation-test
+  (testing "name compiles to symbol-name"
+    (is (= "(symbol-name :foo)" (clel/emit '(name :foo))))
+    (is (= "(symbol-name x)" (clel/emit '(name x)))))
+
+  (testing "name in expression context"
+    (let [code (clel/emit '(let [n (name :keyword)] n))]
+      (is (str/includes? code "symbol-name"))
+      (is (str/includes? code "let"))))
+
+  (testing "name preserves argument"
+    (is (re-find #"symbol-name\s+my-sym" (clel/emit '(name my-sym))))))
+
+;; ============================================================================
+;; Nested Data Functions (clel-036)
+;; ============================================================================
+
+(deftest get-in-compilation-test
+  (testing "get-in compiles to clel-get-in"
+    (is (str/includes? (clel/emit '(get-in m [:a :b])) "clel-get-in"))
+    (is (str/includes? (clel/emit '(get-in data [:x :y :z])) "clel-get-in")))
+
+  (testing "get-in with not-found value"
+    (let [code (clel/emit '(get-in m [:a :b] :default))]
+      (is (str/includes? code "clel-get-in"))
+      (is (str/includes? code ":default"))))
+
+  (testing "get-in preserves argument order"
+    (let [code (clel/emit '(get-in my-map path))]
+      (is (re-find #"clel-get-in\s+my-map\s+path" code))))
+
+  (testing "get-in in let binding"
+    (let [code (clel/emit '(let [val (get-in data [:a :b])] val))]
+      (is (str/includes? code "clel-get-in"))
+      (is (str/includes? code "let"))))
+
+  (testing "get-in in conditional"
+    (let [code (clel/emit '(if (get-in m [:x]) :found :not-found))]
+      (is (str/includes? code "clel-get-in"))
+      (is (str/includes? code "if")))))
+
+(deftest assoc-in-compilation-test
+  (testing "assoc-in compiles to clel-assoc-in"
+    (is (str/includes? (clel/emit '(assoc-in m [:a :b] 42)) "clel-assoc-in"))
+    (is (str/includes? (clel/emit '(assoc-in data [:x :y] val)) "clel-assoc-in")))
+
+  (testing "assoc-in preserves argument order"
+    (let [code (clel/emit '(assoc-in my-map [:k1 :k2] new-val))]
+      (is (str/includes? code "clel-assoc-in"))
+      (is (str/includes? code "my-map"))
+      (is (str/includes? code "new-val"))))
+
+  (testing "assoc-in in let binding"
+    (let [code (clel/emit '(let [m2 (assoc-in m [:a] 1)] m2))]
+      (is (str/includes? code "clel-assoc-in"))
+      (is (str/includes? code "let"))))
+
+  (testing "nested assoc-in"
+    (let [code (clel/emit '(assoc-in (assoc-in m [:a] 1) [:b] 2))]
+      (is (= 2 (count (re-seq #"clel-assoc-in" code)))))))
+
+(deftest update-compilation-test
+  (testing "update compiles to clel-update"
+    (is (str/includes? (clel/emit '(update m :a inc)) "clel-update"))
+    (is (str/includes? (clel/emit '(update data :count f)) "clel-update")))
+
+  (testing "update with additional args"
+    (let [code (clel/emit '(update m :vals conj item))]
+      (is (str/includes? code "clel-update"))
+      (is (str/includes? code "clel-conj"))
+      (is (str/includes? code "item"))))
+
+  (testing "update preserves argument order"
+    (let [code (clel/emit '(update my-map my-key my-fn))]
+      (is (re-find #"clel-update\s+my-map\s+my-key\s+my-fn" code))))
+
+  (testing "update in let binding"
+    (let [code (clel/emit '(let [m2 (update m :x inc)] m2))]
+      (is (str/includes? code "clel-update"))
+      (is (str/includes? code "let"))))
+
+  (testing "update with inline fn"
+    (let [code (clel/emit '(update m :val (fn [x] (+ x 1))))]
+      (is (str/includes? code "clel-update"))
+      (is (str/includes? code "lambda")))))
+
+(deftest update-in-compilation-test
+  (testing "update-in compiles to clel-update-in"
+    (is (str/includes? (clel/emit '(update-in m [:a :b] inc)) "clel-update-in"))
+    (is (str/includes? (clel/emit '(update-in data path f)) "clel-update-in")))
+
+  (testing "update-in with additional args"
+    (let [code (clel/emit '(update-in m [:a :b] conj item))]
+      (is (str/includes? code "clel-update-in"))
+      (is (str/includes? code "clel-conj"))
+      (is (str/includes? code "item"))))
+
+  (testing "update-in preserves argument order"
+    (let [code (clel/emit '(update-in my-map ks my-fn))]
+      (is (str/includes? code "clel-update-in"))
+      (is (str/includes? code "my-map"))
+      (is (str/includes? code "my-fn"))))
+
+  (testing "update-in in let binding"
+    (let [code (clel/emit '(let [m2 (update-in m [:x :y] inc)] m2))]
+      (is (str/includes? code "clel-update-in"))
+      (is (str/includes? code "let"))))
+
+  (testing "nested update-in"
+    (let [code (clel/emit '(update-in (update-in m [:a] inc) [:b] dec))]
+      (is (= 2 (count (re-seq #"clel-update-in" code)))))))
+
+(deftest merge-compilation-test
+  (testing "merge compiles to clel-merge"
+    (is (str/includes? (clel/emit '(merge m1 m2)) "clel-merge"))
+    (is (str/includes? (clel/emit '(merge {:a 1} {:b 2})) "clel-merge")))
+
+  (testing "merge with multiple maps"
+    (let [code (clel/emit '(merge m1 m2 m3 m4))]
+      (is (str/includes? code "clel-merge"))))
+
+  (testing "merge preserves argument order"
+    (let [code (clel/emit '(merge base-map overrides))]
+      (is (re-find #"clel-merge\s+base-map\s+overrides" code))))
+
+  (testing "merge in let binding"
+    (let [code (clel/emit '(let [combined (merge a b)] combined))]
+      (is (str/includes? code "clel-merge"))
+      (is (str/includes? code "let"))))
+
+  (testing "merge with get"
+    (let [code (clel/emit '(get (merge m1 m2) :key))]
+      (is (str/includes? code "clel-merge"))
+      (is (str/includes? code "clel-get")))))
+
+(deftest nested-data-integration-test
+  (testing "get-in + assoc-in composition"
+    (let [code (clel/emit '(assoc-in m [:a :b] (get-in m [:x :y])))]
+      (is (str/includes? code "clel-assoc-in"))
+      (is (str/includes? code "clel-get-in"))))
+
+  (testing "update + merge composition"
+    (let [code (clel/emit '(update (merge m1 m2) :count inc))]
+      (is (str/includes? code "clel-update"))
+      (is (str/includes? code "clel-merge"))))
+
+  (testing "update-in on merged data"
+    (let [code (clel/emit '(update-in (merge base config) [:settings :debug] not))]
+      (is (str/includes? code "clel-update-in"))
+      (is (str/includes? code "clel-merge"))))
+
+  (testing "nested operations in let"
+    (let [code (clel/emit '(let [data {:a {:b 1}}
+                                 updated (update-in data [:a :b] inc)
+                                 value (get-in updated [:a :b])]
+                             value))]
+      (is (str/includes? code "clel-update-in"))
+      (is (str/includes? code "clel-get-in")))))
+

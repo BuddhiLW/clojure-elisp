@@ -90,6 +90,9 @@
 
    ;; Collections
    'first "clel-first"
+   'second "cadr"
+   'last "clel-last"
+   'butlast "butlast"
    'rest "clel-rest"
    'next "clel-next"
    'cons "cons"
@@ -97,8 +100,14 @@
    'count "length"
    'nth "nth"
    'get "clel-get"
+   'contains? "clel-contains-p"
    'assoc "clel-assoc"
    'dissoc "clel-dissoc"
+   'get-in "clel-get-in"
+   'assoc-in "clel-assoc-in"
+   'update "clel-update"
+   'update-in "clel-update-in"
+   'merge "clel-merge"
    'keys "clel-keys"
    'vals "clel-vals"
    'seq "clel-seq"
@@ -127,6 +136,11 @@
    'group-by "clel-group-by"
    'frequencies "clel-frequencies"
 
+   ;; Sequence generators
+   'range "clel-range"
+   'repeat "clel-repeat"
+   'repeatedly "clel-repeatedly"
+
    ;; Sequence predicates
    'every? "clel-every-p"
    'some "clel-some"
@@ -140,6 +154,13 @@
    'pr-str "prin1-to-string"
    'println "message"
    'print "princ"
+
+   ;; Math
+   'min "cl-min"
+   'max "cl-max"
+
+   ;; Symbols
+   'name "symbol-name"
 
    ;; Functions
    'apply "apply"
@@ -491,6 +512,24 @@
   [{:keys [body]}]
   (let [body-str (str/join "\n    " (map emit body))]
     (format "(with-output-to-string\n    %s)" body-str)))
+
+;; ============================================================================
+;; Iteration Forms (clel-035)
+;; ============================================================================
+
+(defmethod emit-node :doseq
+  [{:keys [binding coll body]}]
+  (let [binding-str (mangle-name binding)
+        coll-str (emit coll)
+        body-str (str/join "\n    " (map emit body))]
+    (format "(dolist (%s (clel-seq %s))\n    %s)" binding-str coll-str body-str)))
+
+(defmethod emit-node :dotimes
+  [{:keys [binding count body]}]
+  (let [binding-str (mangle-name binding)
+        count-str (emit count)
+        body-str (str/join "\n    " (map emit body))]
+    (format "(cl-dotimes (%s %s)\n    %s)" binding-str count-str body-str)))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]

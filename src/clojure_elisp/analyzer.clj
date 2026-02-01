@@ -981,6 +981,34 @@
             :body (mapv analyze body)))
 
 ;; ============================================================================
+;; Iteration Forms (clel-035)
+;; ============================================================================
+
+(defn analyze-doseq
+  "Analyze (doseq [x coll] body...) forms.
+   Iterates over coll, binding each element to x and executing body for side effects."
+  [[_ bindings & body]]
+  (let [[sym coll-form] (take 2 bindings)
+        coll-ast (analyze coll-form)]
+    (ast-node :doseq
+              :binding sym
+              :coll coll-ast
+              :body (binding [*env* (with-locals *env* #{sym})]
+                      (mapv analyze body)))))
+
+(defn analyze-dotimes
+  "Analyze (dotimes [i n] body...) forms.
+   Executes body n times, with i bound to 0, 1, ..., n-1."
+  [[_ bindings & body]]
+  (let [[sym count-form] (take 2 bindings)
+        count-ast (analyze count-form)]
+    (ast-node :dotimes
+              :binding sym
+              :count count-ast
+              :body (binding [*env* (with-locals *env* #{sym})]
+                      (mapv analyze body)))))
+
+;; ============================================================================
 ;; Macro System
 ;; ============================================================================
 
@@ -1206,7 +1234,10 @@
    'with-current-buffer analyze-with-current-buffer
    'with-temp-buffer analyze-with-temp-buffer
    'save-current-buffer analyze-save-current-buffer
-   'with-output-to-string analyze-with-output-to-string})
+   'with-output-to-string analyze-with-output-to-string
+   ;; Iteration forms (clel-035)
+   'doseq analyze-doseq
+   'dotimes analyze-dotimes})
 
 (defn analyze
   "Analyze a Clojure form into an AST node.

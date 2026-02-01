@@ -606,7 +606,7 @@
   (testing "elisp/ namespace call with one arg"
     (is (= "(message \"hi\")" (analyze-and-emit '(elisp/message "hi")))))
   (testing "elisp/ namespace call with multiple args"
-    (is (= "(message \"hello %s\" name)" (analyze-and-emit '(elisp/message "hello %s" name)))))
+    (is (= "(message \"hello %s\" user-name)" (analyze-and-emit '(elisp/message "hello %s" user-name)))))
   (testing "elisp/ namespace call no args"
     (is (= "(point)" (analyze-and-emit '(elisp/point)))))
   (testing "elisp/ namespace call with quoted arg"
@@ -1371,4 +1371,69 @@
       (is (clojure.string/includes? code "(save-restriction"))
       (is (clojure.string/includes? code "(narrow-to-region start end)"))
       (is (clojure.string/includes? code "(buffer-string)")))))
+
+;; ============================================================================
+;; Iteration Forms - doseq/dotimes (clel-035)
+;; ============================================================================
+
+(deftest emit-doseq-test
+  (testing "basic doseq emits dolist with clel-seq"
+    (let [code (analyze-and-emit '(doseq [x items]
+                                    (println x)))]
+      (is (clojure.string/includes? code "(dolist"))
+      (is (clojure.string/includes? code "(clel-seq items)"))
+      (is (clojure.string/includes? code "(message x)"))))
+
+  (testing "doseq with vector literal collection"
+    (let [code (analyze-and-emit '(doseq [x [1 2 3]]
+                                    (process x)))]
+      (is (clojure.string/includes? code "(dolist"))
+      (is (clojure.string/includes? code "(clel-seq (list 1 2 3))"))
+      (is (clojure.string/includes? code "(process x)"))))
+
+  (testing "doseq with multiple body forms"
+    (let [code (analyze-and-emit '(doseq [item coll]
+                                    (println "processing")
+                                    (process item)))]
+      (is (clojure.string/includes? code "(dolist (item (clel-seq coll))"))
+      (is (clojure.string/includes? code "(message \"processing\")"))
+      (is (clojure.string/includes? code "(process item)"))))
+
+  (testing "doseq binding name is mangled"
+    (let [code (analyze-and-emit '(doseq [my-item? items]
+                                    (use my-item?)))]
+      (is (clojure.string/includes? code "(dolist (my-item-p")))))
+
+(deftest emit-dotimes-test
+  (testing "basic dotimes emits cl-dotimes"
+    (let [code (analyze-and-emit '(dotimes [i 5]
+                                    (println i)))]
+      (is (clojure.string/includes? code "(cl-dotimes"))
+      (is (clojure.string/includes? code "(i 5)"))
+      (is (clojure.string/includes? code "(message i)"))))
+
+  (testing "dotimes with var count"
+    (let [code (analyze-and-emit '(dotimes [i n]
+                                    (process i)))]
+      (is (clojure.string/includes? code "(cl-dotimes (i n)"))
+      (is (clojure.string/includes? code "(process i)"))))
+
+  (testing "dotimes with expression count"
+    (let [code (analyze-and-emit '(dotimes [i (count items)]
+                                    (process i)))]
+      (is (clojure.string/includes? code "(cl-dotimes (i (length items))"))
+      (is (clojure.string/includes? code "(process i)"))))
+
+  (testing "dotimes with multiple body forms"
+    (let [code (analyze-and-emit '(dotimes [i 3]
+                                    (println "iteration")
+                                    (do-work i)))]
+      (is (clojure.string/includes? code "(cl-dotimes (i 3)"))
+      (is (clojure.string/includes? code "(message \"iteration\")"))
+      (is (clojure.string/includes? code "(do-work i)"))))
+
+  (testing "dotimes binding name is mangled"
+    (let [code (analyze-and-emit '(dotimes [loop-count! 10]
+                                    (use loop-count!)))]
+      (is (clojure.string/includes? code "(cl-dotimes (loop-count-bang 10)")))))
 

@@ -1336,3 +1336,77 @@
       (is (= :defcustom (:op ast)))
       (is (some? (:type (:options ast)))))))
 
+;; ============================================================================
+;; Iteration Forms - doseq/dotimes (clel-035)
+;; ============================================================================
+
+(deftest analyze-doseq-test
+  (testing "basic doseq with vector literal"
+    (let [ast (analyze '(doseq [x [1 2 3]]
+                          (println x)))]
+      (is (= :doseq (:op ast)))
+      (is (= 'x (:binding ast)))
+      (is (= :vector (:op (:coll ast))))
+      (is (= 1 (count (:body ast))))
+      (is (= :invoke (:op (first (:body ast)))))))
+
+  (testing "doseq with var collection"
+    (let [ast (analyze '(doseq [item items]
+                          (process item)))]
+      (is (= :doseq (:op ast)))
+      (is (= 'item (:binding ast)))
+      (is (= :var (:op (:coll ast))))
+      (is (= 'items (:name (:coll ast))))))
+
+  (testing "doseq binding is local in body"
+    (let [ast (analyze '(doseq [x coll]
+                          x))]
+      (is (= :doseq (:op ast)))
+      (is (= :local (:op (first (:body ast)))))
+      (is (= 'x (:name (first (:body ast)))))))
+
+  (testing "doseq with multiple body expressions"
+    (let [ast (analyze '(doseq [x coll]
+                          (println "processing")
+                          (process x)))]
+      (is (= :doseq (:op ast)))
+      (is (= 2 (count (:body ast)))))))
+
+(deftest analyze-dotimes-test
+  (testing "basic dotimes with literal count"
+    (let [ast (analyze '(dotimes [i 5]
+                          (println i)))]
+      (is (= :dotimes (:op ast)))
+      (is (= 'i (:binding ast)))
+      (is (= :const (:op (:count ast))))
+      (is (= 5 (:val (:count ast))))
+      (is (= 1 (count (:body ast))))))
+
+  (testing "dotimes with var count"
+    (let [ast (analyze '(dotimes [i n]
+                          (do-something i)))]
+      (is (= :dotimes (:op ast)))
+      (is (= 'i (:binding ast)))
+      (is (= :var (:op (:count ast))))
+      (is (= 'n (:name (:count ast))))))
+
+  (testing "dotimes binding is local in body"
+    (let [ast (analyze '(dotimes [i 10]
+                          i))]
+      (is (= :dotimes (:op ast)))
+      (is (= :local (:op (first (:body ast)))))
+      (is (= 'i (:name (first (:body ast)))))))
+
+  (testing "dotimes with multiple body expressions"
+    (let [ast (analyze '(dotimes [i 3]
+                          (println "iteration")
+                          (process i)))]
+      (is (= :dotimes (:op ast)))
+      (is (= 2 (count (:body ast))))))
+
+  (testing "dotimes with expression count"
+    (let [ast (analyze '(dotimes [i (count items)]
+                          (process i)))]
+      (is (= :dotimes (:op ast)))
+      (is (= :invoke (:op (:count ast)))))))
+
