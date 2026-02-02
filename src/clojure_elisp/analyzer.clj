@@ -981,19 +981,108 @@
             :body (mapv analyze body)))
 
 ;; ============================================================================
-;; Iteration Forms (clel-035)
+;; Iteration Forms (clel-035, clel-045)
 ;; ============================================================================
 
+(defn- parse-iteration-clauses
+  "Parse a binding vector into a sequence of clauses.
+   Each clause is one of:
+   - {:type :binding :sym symbol :coll form}  - x coll
+   - {:type :let :bindings [[sym form]...]}   - :let [x expr y expr2]
+   - {:type :when :pred form}                 - :when predicate
+   - {:type :while :pred form}                - :while predicate
+
+   Handles: [x xs :when p y ys :let [z expr] :when q]"
+  [bindings]
+  (loop [remaining (seq bindings)
+         clauses []]
+    (if (empty? remaining)
+      clauses
+      (let [item (first remaining)]
+        (cond
+          ;; :when modifier
+          (= :when item)
+          (recur (drop 2 remaining)
+                 (conj clauses {:type :when :pred (second remaining)}))
+
+          ;; :while modifier
+          (= :while item)
+          (recur (drop 2 remaining)
+                 (conj clauses {:type :while :pred (second remaining)}))
+
+          ;; :let modifier
+          (= :let item)
+          (let [let-vec (second remaining)
+                pairs (vec (partition 2 let-vec))]
+            (recur (drop 2 remaining)
+                   (conj clauses {:type :let :bindings pairs})))
+
+          ;; Regular binding: sym coll
+          (symbol? item)
+          (recur (drop 2 remaining)
+                 (conj clauses {:type :binding :sym item :coll (second remaining)}))
+
+          ;; Unknown, skip
+          :else
+          (recur (rest remaining) clauses))))))
+
+(defn- analyze-iteration-clause
+  "Analyze a single iteration clause, updating env as needed.
+   Returns [analyzed-clause updated-locals]."
+  [clause current-locals]
+  (case (:type clause)
+    :binding
+    (let [coll-ast (binding [*env* (with-locals *env* current-locals)]
+                     (analyze (:coll clause)))
+          new-locals (conj current-locals (:sym clause))]
+      [{:type :binding
+        :sym (:sym clause)
+        :coll coll-ast}
+       new-locals])
+
+    :let
+    (let [pairs (:bindings clause)
+          ;; Analyze let bindings sequentially
+          [analyzed-lets final-locals]
+          (reduce (fn [[lets locals] [sym form]]
+                    (let [init-ast (binding [*env* (with-locals *env* locals)]
+                                     (analyze form))
+                          new-locals (conj locals sym)]
+                      [(conj lets {:name sym :init init-ast}) new-locals]))
+                  [[] current-locals]
+                  pairs)]
+      [{:type :let :bindings analyzed-lets} final-locals])
+
+    :when
+    (let [pred-ast (binding [*env* (with-locals *env* current-locals)]
+                     (analyze (:pred clause)))]
+      [{:type :when :pred pred-ast} current-locals])
+
+    :while
+    (let [pred-ast (binding [*env* (with-locals *env* current-locals)]
+                     (analyze (:pred clause)))]
+      [{:type :while :pred pred-ast} current-locals])))
+
+(defn- analyze-iteration-clauses
+  "Analyze all iteration clauses, threading environment through.
+   Returns [analyzed-clauses all-locals]."
+  [clauses initial-locals]
+  (reduce (fn [[analyzed locals] clause]
+            (let [[analyzed-clause new-locals] (analyze-iteration-clause clause locals)]
+              [(conj analyzed analyzed-clause) new-locals]))
+          [[] initial-locals]
+          clauses))
+
 (defn analyze-doseq
-  "Analyze (doseq [x coll] body...) forms.
-   Iterates over coll, binding each element to x and executing body for side effects."
+  "Analyze (doseq [x coll :when p y coll2 :let [z expr]] body...) forms.
+   Supports multiple bindings with :when, :while, and :let modifiers.
+   Iterates over collections, executing body for side effects."
   [[_ bindings & body]]
-  (let [[sym coll-form] (take 2 bindings)
-        coll-ast (analyze coll-form)]
+  (let [clauses (parse-iteration-clauses bindings)
+        [analyzed-clauses all-locals] (analyze-iteration-clauses clauses #{})]
     (ast-node :doseq
-              :binding sym
-              :coll coll-ast
-              :body (binding [*env* (with-locals *env* #{sym})]
+              :clauses analyzed-clauses
+              :body (binding [*env* (with-locals *env* all-locals)]
                       (mapv analyze body)))))
 
 (defn analyze-dotimes
@@ -1008,64 +1097,15 @@
               :body (binding [*env* (with-locals *env* #{sym})]
                       (mapv analyze body)))))
 
-(defn parse-for-bindings
-  "Parse for binding vector into structured form.
-   Returns {:binding sym :coll ast :when ast|nil :let [{:name :init}]|nil}
-   Supports: [x coll], [x coll :when pred], [x coll :let [y expr]], [x coll :when pred :let [y expr]]"
-  [bindings]
-  (let [[sym coll-form & modifiers] bindings
-        coll-ast (analyze coll-form)]
-    (loop [mods modifiers
-           when-clause nil
-           let-bindings nil]
-      (if (empty? mods)
-        {:binding sym
-         :coll coll-ast
-         :when when-clause
-         :let let-bindings}
-        (let [[kw & rest-mods] mods]
-          (case kw
-            :when (let [[pred & remaining] rest-mods]
-                    (recur remaining
-                           (binding [*env* (with-locals *env* #{sym})]
-                             (analyze pred))
-                           let-bindings))
-            :let (let [[let-vec & remaining] rest-mods
-                       pairs (partition 2 let-vec)
-                       analyzed-lets (binding [*env* (with-locals *env* #{sym})]
-                                       (mapv (fn [[n v]]
-                                               {:name n :init (analyze v)})
-                                             pairs))]
-                   (recur remaining
-                          when-clause
-                          analyzed-lets))
-            :while (let [[pred & remaining] rest-mods]
-                     ;; :while is more complex - for now, treat like :when
-                     ;; Full implementation would need early termination
-                     (recur remaining
-                            (binding [*env* (with-locals *env* #{sym})]
-                              (analyze pred))
-                            let-bindings))
-            ;; Unknown modifier, skip
-            (recur (rest mods) when-clause let-bindings)))))))
-
 (defn analyze-for
-  "Analyze (for [x coll :when pred :let [y expr]] body) forms.
+  "Analyze (for [x coll :when pred y coll2 :let [z expr]] body) forms.
    List comprehension that returns a lazy sequence.
-   Supports :when for filtering and :let for intermediate bindings."
+   Supports multiple bindings with :when, :while, and :let modifiers."
   [[_ bindings & body]]
-  (let [parsed (parse-for-bindings bindings)
-        for-binding (:binding parsed)
-        when-clause (:when parsed)
-        let-clause (:let parsed)
-        ;; Build environment with binding and any :let bindings
-        let-syms (if let-clause (set (map :name let-clause)) #{})
-        all-locals (into #{for-binding} let-syms)]
+  (let [clauses (parse-iteration-clauses bindings)
+        [analyzed-clauses all-locals] (analyze-iteration-clauses clauses #{})]
     (ast-node :for
-              :binding for-binding
-              :coll (:coll parsed)
-              :when when-clause
-              :let let-clause
+              :clauses analyzed-clauses
               :body (binding [*env* (with-locals *env* all-locals)]
                       (mapv analyze body)))))
 

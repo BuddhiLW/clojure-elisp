@@ -1337,7 +1337,7 @@
       (is (some? (:type (:options ast)))))))
 
 ;; ============================================================================
-;; Iteration Forms - doseq/dotimes (clel-035)
+;; Iteration Forms - doseq/dotimes (clel-035, clel-045)
 ;; ============================================================================
 
 (deftest analyze-doseq-test
@@ -1345,8 +1345,10 @@
     (let [ast (analyze '(doseq [x [1 2 3]]
                           (println x)))]
       (is (= :doseq (:op ast)))
-      (is (= 'x (:binding ast)))
-      (is (= :vector (:op (:coll ast))))
+      (is (= 1 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= 'x (:sym (first (:clauses ast)))))
+      (is (= :vector (:op (:coll (first (:clauses ast))))))
       (is (= 1 (count (:body ast))))
       (is (= :invoke (:op (first (:body ast)))))))
 
@@ -1354,9 +1356,9 @@
     (let [ast (analyze '(doseq [item items]
                           (process item)))]
       (is (= :doseq (:op ast)))
-      (is (= 'item (:binding ast)))
-      (is (= :var (:op (:coll ast))))
-      (is (= 'items (:name (:coll ast))))))
+      (is (= 'item (:sym (first (:clauses ast)))))
+      (is (= :var (:op (:coll (first (:clauses ast))))))
+      (is (= 'items (:name (:coll (first (:clauses ast))))))))
 
   (testing "doseq binding is local in body"
     (let [ast (analyze '(doseq [x coll]
@@ -1370,7 +1372,44 @@
                           (println "processing")
                           (process x)))]
       (is (= :doseq (:op ast)))
-      (is (= 2 (count (:body ast)))))))
+      (is (= 2 (count (:body ast))))))
+
+  (testing "doseq with multiple bindings (clel-045)"
+    (let [ast (analyze '(doseq [x xs y ys]
+                          (process x y)))]
+      (is (= :doseq (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (= 'x (:sym (first (:clauses ast)))))
+      (is (= 'y (:sym (second (:clauses ast)))))))
+
+  (testing "doseq with :when modifier (clel-045)"
+    (let [ast (analyze '(doseq [x coll :when (even? x)]
+                          (process x)))]
+      (is (= :doseq (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= :when (:type (second (:clauses ast)))))
+      (is (= :invoke (:op (:pred (second (:clauses ast))))))))
+
+  (testing "doseq with :let modifier (clel-045)"
+    (let [ast (analyze '(doseq [x coll :let [y (inc x)]]
+                          (process y)))]
+      (is (= :doseq (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= :let (:type (second (:clauses ast)))))
+      (is (= 1 (count (:bindings (second (:clauses ast))))))
+      (is (= 'y (:name (first (:bindings (second (:clauses ast)))))))))
+
+  (testing "doseq with multiple bindings and :when (clel-045)"
+    (let [ast (analyze '(doseq [x xs :when (pos? x) y ys :when (even? y)]
+                          (process x y)))]
+      (is (= :doseq (:op ast)))
+      (is (= 4 (count (:clauses ast))))
+      ;; x xs :when (pos? x) y ys :when (even? y)
+      (is (= [:binding :when :binding :when] (mapv :type (:clauses ast))))
+      (is (= 'x (:sym (first (:clauses ast)))))
+      (is (= 'y (:sym (nth (:clauses ast) 2)))))))
 
 (deftest analyze-dotimes-test
   (testing "basic dotimes with literal count"
@@ -1411,7 +1450,7 @@
       (is (= :invoke (:op (:count ast)))))))
 
 ;; ============================================================================
-;; For List Comprehension (clel-039)
+;; For List Comprehension (clel-039, clel-045)
 ;; ============================================================================
 
 (deftest analyze-for-basic-test
@@ -1419,11 +1458,11 @@
     (let [ast (analyze '(for [x coll]
                           (inc x)))]
       (is (= :for (:op ast)))
-      (is (= 'x (:binding ast)))
-      (is (= :var (:op (:coll ast))))
-      (is (= 'coll (:name (:coll ast))))
-      (is (nil? (:when ast)))
-      (is (nil? (:let ast)))
+      (is (= 1 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= 'x (:sym (first (:clauses ast)))))
+      (is (= :var (:op (:coll (first (:clauses ast))))))
+      (is (= 'coll (:name (:coll (first (:clauses ast))))))
       (is (= 1 (count (:body ast))))))
 
   (testing "for binding is local in body"
@@ -1437,25 +1476,26 @@
     (let [ast (analyze '(for [x [1 2 3]]
                           (* x x)))]
       (is (= :for (:op ast)))
-      (is (= :vector (:op (:coll ast)))))))
+      (is (= :vector (:op (:coll (first (:clauses ast)))))))))
 
 (deftest analyze-for-when-test
   (testing "for with :when modifier"
     (let [ast (analyze '(for [x coll :when (even? x)]
                           x))]
       (is (= :for (:op ast)))
-      (is (= 'x (:binding ast)))
-      (is (some? (:when ast)))
-      (is (= :invoke (:op (:when ast))))
-      (is (nil? (:let ast)))))
+      (is (= 2 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= 'x (:sym (first (:clauses ast)))))
+      (is (= :when (:type (second (:clauses ast)))))
+      (is (= :invoke (:op (:pred (second (:clauses ast))))))))
 
   (testing "for :when can reference binding"
     (let [ast (analyze '(for [n numbers :when (pos? n)]
                           (str n)))]
       (is (= :for (:op ast)))
-      (is (some? (:when ast)))
+      (is (= :when (:type (second (:clauses ast)))))
       ;; The 'n' in the when clause should be analyzed as local
-      (let [when-args (:args (:when ast))]
+      (let [when-args (:args (:pred (second (:clauses ast))))]
         (is (= :local (:op (first when-args))))
         (is (= 'n (:name (first when-args))))))))
 
@@ -1464,19 +1504,22 @@
     (let [ast (analyze '(for [x coll :let [y (inc x)]]
                           y))]
       (is (= :for (:op ast)))
-      (is (= 'x (:binding ast)))
-      (is (nil? (:when ast)))
-      (is (some? (:let ast)))
-      (is (= 1 (count (:let ast))))
-      (is (= 'y (:name (first (:let ast)))))))
+      (is (= 2 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= 'x (:sym (first (:clauses ast)))))
+      (is (= :let (:type (second (:clauses ast)))))
+      (is (= 1 (count (:bindings (second (:clauses ast))))))
+      (is (= 'y (:name (first (:bindings (second (:clauses ast)))))))))
 
   (testing "for with multiple :let bindings"
     (let [ast (analyze '(for [x coll :let [y (inc x) z (* x 2)]]
                           (+ y z)))]
       (is (= :for (:op ast)))
-      (is (= 2 (count (:let ast))))
-      (is (= 'y (:name (first (:let ast)))))
-      (is (= 'z (:name (second (:let ast)))))))
+      (let [let-clause (second (:clauses ast))]
+        (is (= :let (:type let-clause)))
+        (is (= 2 (count (:bindings let-clause))))
+        (is (= 'y (:name (first (:bindings let-clause)))))
+        (is (= 'z (:name (second (:bindings let-clause))))))))
 
   (testing "for :let binding is local in body"
     (let [ast (analyze '(for [x coll :let [squared (* x x)]]
@@ -1491,14 +1534,99 @@
     (let [ast (analyze '(for [x coll :when (pos? x) :let [y (* x 2)]]
                           y))]
       (is (= :for (:op ast)))
-      (is (some? (:when ast)))
-      (is (some? (:let ast)))
-      (is (= 'y (:name (first (:let ast)))))))
+      (is (= 3 (count (:clauses ast))))
+      (is (= [:binding :when :let] (mapv :type (:clauses ast))))
+      (let [let-clause (nth (:clauses ast) 2)]
+        (is (= 'y (:name (first (:bindings let-clause))))))))
 
   (testing "for with :let before :when"
     (let [ast (analyze '(for [x coll :let [y (inc x)] :when (even? y)]
                           y))]
       (is (= :for (:op ast)))
-      (is (some? (:when ast)))
-      (is (some? (:let ast))))))
+      (is (= 3 (count (:clauses ast))))
+      (is (= [:binding :let :when] (mapv :type (:clauses ast)))))))
+
+(deftest analyze-for-multi-binding-test
+  (testing "for with multiple bindings (clel-045)"
+    (let [ast (analyze '(for [x xs y ys]
+                          [x y]))]
+      (is (= :for (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (= 'x (:sym (first (:clauses ast)))))
+      (is (= 'y (:sym (second (:clauses ast)))))))
+
+  (testing "for with multiple bindings and :when on each (clel-045)"
+    (let [ast (analyze '(for [x xs :when (even? x)
+                              y ys :when (odd? y)]
+                          (* x y)))]
+      (is (= :for (:op ast)))
+      (is (= 4 (count (:clauses ast))))
+      (is (= [:binding :when :binding :when] (mapv :type (:clauses ast))))))
+
+  (testing "for with multiple bindings and :let (clel-045)"
+    (let [ast (analyze '(for [x xs
+                              y ys
+                              :let [sum (+ x y)]]
+                          sum))]
+      (is (= :for (:op ast)))
+      (is (= 3 (count (:clauses ast))))
+      (is (= [:binding :binding :let] (mapv :type (:clauses ast))))))
+
+  (testing "for with complex multi-binding (clel-045)"
+    (let [ast (analyze '(for [x [1 2 3]
+                              :let [x2 (* x 2)]
+                              y [4 5 6]
+                              :when (even? (+ x y))]
+                          [x y x2]))]
+      (is (= :for (:op ast)))
+      (is (= 4 (count (:clauses ast))))
+      (is (= [:binding :let :binding :when] (mapv :type (:clauses ast)))))))
+
+(deftest analyze-for-while-test
+  (testing "for with :while modifier (clel-045)"
+    (let [ast (analyze '(for [x xs :while (pos? x)] x))]
+      (is (= :for (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= :while (:type (second (:clauses ast)))))
+      (is (= :invoke (:op (:pred (second (:clauses ast))))))))
+
+  (testing "for with :while after binding (clel-045)"
+    (let [ast (analyze '(for [x xs :while (< x 10)] (* x 2)))]
+      (is (= :for (:op ast)))
+      (is (= :while (:type (second (:clauses ast)))))
+      (is (= :invoke (:op (:pred (second (:clauses ast))))))))
+
+  (testing "for with :while and :let combined (clel-045)"
+    (let [ast (analyze '(for [x xs :while (pos? x) :let [y (inc x)]] y))]
+      (is (= :for (:op ast)))
+      (is (= 3 (count (:clauses ast))))
+      (is (= [:binding :while :let] (mapv :type (:clauses ast))))))
+
+  (testing "for with :while in multi-binding (clel-045)"
+    (let [ast (analyze '(for [x xs :while (some? x) y ys] [x y]))]
+      (is (= :for (:op ast)))
+      (is (= 3 (count (:clauses ast))))
+      (is (= [:binding :while :binding] (mapv :type (:clauses ast)))))))
+
+(deftest analyze-doseq-while-test
+  (testing "doseq with :while modifier (clel-045)"
+    (let [ast (analyze '(doseq [x xs :while (pos? x)] (process x)))]
+      (is (= :doseq (:op ast)))
+      (is (= 2 (count (:clauses ast))))
+      (is (= :binding (:type (first (:clauses ast)))))
+      (is (= :while (:type (second (:clauses ast)))))
+      (is (= :invoke (:op (:pred (second (:clauses ast))))))))
+
+  (testing "doseq with :while and :when combined (clel-045)"
+    (let [ast (analyze '(doseq [x xs :while (pos? x) :when (even? x)] (process x)))]
+      (is (= :doseq (:op ast)))
+      (is (= 3 (count (:clauses ast))))
+      (is (= [:binding :while :when] (mapv :type (:clauses ast))))))
+
+  (testing "doseq with :while in multi-binding (clel-045)"
+    (let [ast (analyze '(doseq [x xs :while (valid? x) y (children x)] (process y)))]
+      (is (= :doseq (:op ast)))
+      (is (= 3 (count (:clauses ast))))
+      (is (= [:binding :while :binding] (mapv :type (:clauses ast)))))))
 
