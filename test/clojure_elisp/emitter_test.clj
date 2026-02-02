@@ -1444,20 +1444,20 @@
 ;; ============================================================================
 
 (deftest emit-for-basic-test
-  (testing "basic for emits mapcar"
+  (testing "basic for emits cl-mapcan with list wrapper"
     (let [code (analyze-and-emit '(for [x coll]
                                     (inc x)))]
-      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(cl-mapcan"))
       (is (clojure.string/includes? code "(lambda (x)"))
-      (is (clojure.string/includes? code "(1+ x)"))
+      (is (clojure.string/includes? code "(list (1+ x))"))
       (is (clojure.string/includes? code "(clel-seq coll)"))))
 
   (testing "for with literal collection"
     (let [code (analyze-and-emit '(for [x [1 2 3]]
                                     (* x 2)))]
-      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(cl-mapcan"))
       (is (clojure.string/includes? code "(lambda (x)"))
-      (is (clojure.string/includes? code "(* x 2)"))))
+      (is (clojure.string/includes? code "(list (* x 2))"))))
 
   (testing "for binding name is mangled"
     (let [code (analyze-and-emit '(for [item? items]
@@ -1484,18 +1484,18 @@
   (testing "for with :let emits let* wrapper"
     (let [code (analyze-and-emit '(for [x coll :let [y (inc x)]]
                                     y))]
-      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(cl-mapcan"))
       (is (clojure.string/includes? code "(let* ((y (1+ x)))"))
-      (is (clojure.string/includes? code "y)"))))
+      (is (clojure.string/includes? code "(list y)"))))
 
   (testing "for with multiple :let bindings"
     (let [code (analyze-and-emit '(for [x coll :let [y (inc x) z (* x 2)]]
                                     (+ y z)))]
-      (is (clojure.string/includes? code "(mapcar"))
+      (is (clojure.string/includes? code "(cl-mapcan"))
       (is (clojure.string/includes? code "(let*"))
       (is (clojure.string/includes? code "(y (1+ x))"))
       (is (clojure.string/includes? code "(z (* x 2))"))
-      (is (clojure.string/includes? code "(+ y z)")))))
+      (is (clojure.string/includes? code "(list (+ y z))")))))
 
 (deftest emit-for-combined-test
   (testing "for with :when and :let"
@@ -1504,6 +1504,287 @@
       (is (clojure.string/includes? code "(cl-mapcan"))
       (is (clojure.string/includes? code "(when (cl-plusp x)"))
       (is (clojure.string/includes? code "(let* ((y (* x 2)))"))
-      ;; The let wrapper is inside the list call
-      (is (clojure.string/includes? code "(list (let*")))))
+      ;; The list call is inside the let wrapper
+      (is (clojure.string/includes? code "(list y)")))))
+
+;; ============================================================================
+;; Set Operations (clel-044)
+;; ============================================================================
+
+(deftest emit-set-constructor-test
+  (testing "set constructor maps to clel-set-from-coll"
+    (is (= "(clel-set-from-coll xs)" (analyze-and-emit '(set xs)))))
+
+  (testing "set with literal collection"
+    (let [code (analyze-and-emit '(set [1 2 3]))]
+      (is (clojure.string/includes? code "clel-set-from-coll"))))
+
+  (testing "hash-set maps to clel-set"
+    (is (clojure.string/includes? (analyze-and-emit '(hash-set 1 2 3)) "clel-set")))
+
+  (testing "set? predicate maps to clel-set-p"
+    (is (= "(clel-set-p x)" (analyze-and-emit '(set? x)))))
+
+  (testing "disj maps to clel-set-remove"
+    (is (= "(clel-set-remove s :a)" (analyze-and-emit '(disj s :a))))))
+
+(deftest emit-set-union-test
+  (testing "clojure.set/union maps to clel-set-union"
+    (let [code (analyze-and-emit '(clojure.set/union s1 s2))]
+      (is (clojure.string/includes? code "clel-set-union"))))
+
+  (testing "union with multiple sets"
+    (let [code (analyze-and-emit '(clojure.set/union a b c))]
+      (is (clojure.string/includes? code "clel-set-union"))
+      (is (clojure.string/includes? code "a"))
+      (is (clojure.string/includes? code "b"))
+      (is (clojure.string/includes? code "c")))))
+
+(deftest emit-set-intersection-test
+  (testing "clojure.set/intersection maps to clel-set-intersection"
+    (let [code (analyze-and-emit '(clojure.set/intersection s1 s2))]
+      (is (clojure.string/includes? code "clel-set-intersection"))))
+
+  (testing "intersection with multiple sets"
+    (let [code (analyze-and-emit '(clojure.set/intersection a b c))]
+      (is (clojure.string/includes? code "clel-set-intersection")))))
+
+(deftest emit-set-difference-test
+  (testing "clojure.set/difference maps to clel-set-difference"
+    (let [code (analyze-and-emit '(clojure.set/difference s1 s2))]
+      (is (clojure.string/includes? code "clel-set-difference"))))
+
+  (testing "difference with multiple sets"
+    (let [code (analyze-and-emit '(clojure.set/difference a b c))]
+      (is (clojure.string/includes? code "clel-set-difference")))))
+
+(deftest emit-set-subset-superset-test
+  (testing "clojure.set/subset? maps to clel-set-subset-p"
+    (let [code (analyze-and-emit '(clojure.set/subset? s1 s2))]
+      (is (clojure.string/includes? code "clel-set-subset-p"))))
+
+  (testing "clojure.set/superset? maps to clel-set-superset-p"
+    (let [code (analyze-and-emit '(clojure.set/superset? s1 s2))]
+      (is (clojure.string/includes? code "clel-set-superset-p")))))
+
+(deftest emit-set-select-test
+  (testing "clojure.set/select maps to clel-set-select"
+    (let [code (analyze-and-emit '(clojure.set/select even? s))]
+      (is (clojure.string/includes? code "clel-set-select"))))
+
+  (testing "select with lambda predicate"
+    (let [code (analyze-and-emit '(clojure.set/select (fn [x] (> x 0)) s))]
+      (is (clojure.string/includes? code "clel-set-select"))
+      (is (clojure.string/includes? code "lambda")))))
+
+(deftest emit-set-relational-test
+  (testing "clojure.set/project maps to clel-set-project"
+    (let [code (analyze-and-emit '(clojure.set/project xrel [:a :b]))]
+      (is (clojure.string/includes? code "clel-set-project"))))
+
+  (testing "clojure.set/rename maps to clel-set-rename"
+    (let [code (analyze-and-emit '(clojure.set/rename xrel {:old :new}))]
+      (is (clojure.string/includes? code "clel-set-rename"))))
+
+  (testing "clojure.set/rename-keys maps to clel-rename-keys"
+    (let [code (analyze-and-emit '(clojure.set/rename-keys m {:old :new}))]
+      (is (clojure.string/includes? code "clel-rename-keys"))))
+
+  (testing "clojure.set/join maps to clel-set-join"
+    (let [code (analyze-and-emit '(clojure.set/join xrel yrel))]
+      (is (clojure.string/includes? code "clel-set-join"))))
+
+  (testing "clojure.set/index maps to clel-set-index"
+    (let [code (analyze-and-emit '(clojure.set/index xrel [:a]))]
+      (is (clojure.string/includes? code "clel-set-index"))))
+
+  (testing "clojure.set/map-invert maps to clel-map-invert"
+    (let [code (analyze-and-emit '(clojure.set/map-invert m))]
+      (is (clojure.string/includes? code "clel-map-invert")))))
+
+;; ============================================================================
+;; Transducers (clel-043)
+;; ============================================================================
+
+(deftest emit-transduce-test
+  (testing "transduce maps to clel-transduce"
+    (let [code (analyze-and-emit '(transduce xform f coll))]
+      (is (clojure.string/includes? code "clel-transduce"))))
+
+  (testing "transduce with init value"
+    (let [code (analyze-and-emit '(transduce xform f init coll))]
+      (is (clojure.string/includes? code "clel-transduce"))
+      (is (clojure.string/includes? code "xform"))
+      (is (clojure.string/includes? code "f"))
+      (is (clojure.string/includes? code "init"))
+      (is (clojure.string/includes? code "coll"))))
+
+  (testing "transduce with comp xform"
+    (let [code (analyze-and-emit '(transduce (comp (map inc) (filter even?)) + coll))]
+      (is (clojure.string/includes? code "clel-transduce"))
+      (is (clojure.string/includes? code "clel-comp"))
+      (is (clojure.string/includes? code "clel-map"))
+      (is (clojure.string/includes? code "clel-filter")))))
+
+(deftest emit-keep-test
+  (testing "keep maps to clel-keep"
+    (let [code (analyze-and-emit '(keep identity coll))]
+      (is (clojure.string/includes? code "clel-keep"))))
+
+  (testing "keep with lambda"
+    (let [code (analyze-and-emit '(keep (fn [x] (when (pos? x) x)) nums))]
+      (is (clojure.string/includes? code "clel-keep"))
+      (is (clojure.string/includes? code "lambda"))))
+
+  (testing "keep-indexed maps to clel-keep-indexed"
+    (let [code (analyze-and-emit '(keep-indexed (fn [i x] x) coll))]
+      (is (clojure.string/includes? code "clel-keep-indexed")))))
+
+(deftest emit-reduced-test
+  (testing "reduced maps to clel-reduced"
+    (let [code (analyze-and-emit '(reduced x))]
+      (is (= "(clel-reduced x)" code))))
+
+  (testing "reduced? maps to clel-reduced-p"
+    (let [code (analyze-and-emit '(reduced? x))]
+      (is (= "(clel-reduced-p x)" code))))
+
+  (testing "unreduced maps to clel-unreduced"
+    (let [code (analyze-and-emit '(unreduced x))]
+      (is (= "(clel-unreduced x)" code)))))
+
+(deftest emit-eduction-test
+  (testing "eduction maps to clel-eduction"
+    (let [code (analyze-and-emit '(eduction xform coll))]
+      (is (clojure.string/includes? code "clel-eduction"))))
+
+  (testing "eduction with composed xform"
+    (let [code (analyze-and-emit '(eduction (comp (map inc) (take 5)) data))]
+      (is (clojure.string/includes? code "clel-eduction")))))
+
+(deftest emit-cat-test
+  (testing "cat maps to clel-cat-xf"
+    (let [code (analyze-and-emit '(transduce cat conj nested))]
+      (is (clojure.string/includes? code "clel-cat-xf")))))
+
+(deftest emit-transducer-in-context-test
+  (testing "transducer with reduce as step function"
+    (let [code (analyze-and-emit '(transduce (map inc) + 0 [1 2 3]))]
+      (is (clojure.string/includes? code "clel-transduce"))
+      (is (clojure.string/includes? code "clel-map"))))
+
+  (testing "transducer composition with comp"
+    (let [code (analyze-and-emit '(let [xf (comp (filter even?) (take 5))]
+                                    (transduce xf conj [] data)))]
+      (is (clojure.string/includes? code "clel-comp"))
+      (is (clojure.string/includes? code "clel-filter"))
+      (is (clojure.string/includes? code "clel-take"))
+      (is (clojure.string/includes? code "clel-transduce")))))
+
+;; ============================================================================
+;; Multi-binding for/doseq (clel-045)
+;; ============================================================================
+
+(deftest emit-for-multi-binding-test
+  (testing "for with two bindings creates nested cl-mapcan"
+    (let [code (analyze-and-emit '(for [x [1 2] y [3 4]] [x y]))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(lambda (x)"))
+      (is (clojure.string/includes? code "(lambda (y)"))
+      ;; Should have nested mapcan for cartesian product
+      (is (= 2 (count (re-seq #"cl-mapcan" code))))))
+
+  (testing "for with three bindings creates triple nesting"
+    (let [code (analyze-and-emit '(for [x xs y ys z zs] [x y z]))]
+      (is (= 3 (count (re-seq #"cl-mapcan" code))))
+      (is (clojure.string/includes? code "(lambda (x)"))
+      (is (clojure.string/includes? code "(lambda (y)"))
+      (is (clojure.string/includes? code "(lambda (z)"))))
+
+  (testing "multi-binding for with :when between bindings"
+    (let [code (analyze-and-emit '(for [x xs :when (pos? x) y ys] [x y]))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(when (cl-plusp x)"))
+      ;; Two mapcan levels + when filter
+      (is (= 2 (count (re-seq #"cl-mapcan" code))))))
+
+  (testing "multi-binding for with :let between bindings"
+    (let [code (analyze-and-emit '(for [x xs :let [x2 (* x 2)] y ys] [x2 y]))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(let*"))
+      (is (clojure.string/includes? code "(x2 (* x 2))"))))
+
+  (testing "complex multi-binding for with :when and :let"
+    (let [code (analyze-and-emit '(for [x [1 2 3]
+                                        y [4 5 6]
+                                        :when (even? (+ x y))
+                                        :let [z (* x y)]]
+                                    [x y z]))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(lambda (x)"))
+      (is (clojure.string/includes? code "(lambda (y)"))
+      (is (clojure.string/includes? code "(when (cl-evenp (+ x y))"))
+      (is (clojure.string/includes? code "(let* ((z (* x y)))"))
+      (is (clojure.string/includes? code "(list (list x y z))")))))
+
+(deftest emit-doseq-multi-binding-test
+  (testing "doseq with two bindings creates nested dolist"
+    (let [code (analyze-and-emit '(doseq [x [1 2] y [3 4]] (process x y)))]
+      (is (clojure.string/includes? code "(dolist"))
+      (is (clojure.string/includes? code "(x (clel-seq"))
+      (is (clojure.string/includes? code "(y (clel-seq"))
+      ;; Should have nested dolist
+      (is (= 2 (count (re-seq #"dolist" code))))))
+
+  (testing "doseq with three bindings creates triple nesting"
+    (let [code (analyze-and-emit '(doseq [x xs y ys z zs] (process x y z)))]
+      (is (= 3 (count (re-seq #"dolist" code))))))
+
+  (testing "multi-binding doseq with :when between bindings"
+    (let [code (analyze-and-emit '(doseq [x xs :when (pos? x) y ys] (process x y)))]
+      (is (clojure.string/includes? code "(dolist"))
+      (is (clojure.string/includes? code "(when (cl-plusp x)"))
+      (is (= 2 (count (re-seq #"dolist" code))))))
+
+  (testing "multi-binding doseq with :let between bindings"
+    (let [code (analyze-and-emit '(doseq [x xs :let [x2 (* x 2)] y ys] (process x2 y)))]
+      (is (clojure.string/includes? code "(dolist"))
+      (is (clojure.string/includes? code "(let*"))
+      (is (clojure.string/includes? code "(x2 (* x 2))"))))
+
+  (testing "complex multi-binding doseq"
+    (let [code (analyze-and-emit '(doseq [x items
+                                          :when (valid? x)
+                                          y (children x)
+                                          :let [name (get-name y)]]
+                                    (println name)))]
+      (is (clojure.string/includes? code "(dolist"))
+      (is (clojure.string/includes? code "(when (valid-p x)"))
+      (is (clojure.string/includes? code "(let*"))
+      (is (clojure.string/includes? code "(name (get-name y))")))))
+
+(deftest emit-for-while-test
+  (testing "for with :while emits as when (approximation for map-based iteration)"
+    (let [code (analyze-and-emit '(for [x xs :while (pos? x)] x))]
+      ;; Note: :while is approximated as :when since map-based for
+      ;; doesn't support true early termination
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(when (cl-plusp x)"))))
+
+  (testing "for with :while and other modifiers"
+    (let [code (analyze-and-emit '(for [x xs :while (pos? x) :let [y (* x 2)]] y))]
+      (is (clojure.string/includes? code "(cl-mapcan"))
+      (is (clojure.string/includes? code "(when"))
+      (is (clojure.string/includes? code "(let*")))))
+
+(deftest emit-doseq-while-test
+  (testing "doseq with :while uses cl-block for early termination"
+    (let [code (analyze-and-emit '(doseq [x xs :while (pos? x)] (process x)))]
+      (is (clojure.string/includes? code "(cl-block nil"))
+      (is (clojure.string/includes? code "(unless (cl-plusp x) (cl-return))"))))
+
+  (testing "doseq with :while and multiple bindings"
+    (let [code (analyze-and-emit '(doseq [x xs :while (< (count processed) 10) y ys] (process x y)))]
+      (is (clojure.string/includes? code "(cl-block nil"))
+      (is (clojure.string/includes? code "(dolist")))))
 

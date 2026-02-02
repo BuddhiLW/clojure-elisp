@@ -695,6 +695,94 @@ Returns ATOM."
              (cons (nreverse group)
                    (clel-partition n cur)))))))))
 
+(defun clel-partition-all (n s)
+  "Partition S into groups of N elements, including incomplete final group."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((forced (clel-seq-force s)))
+       (when forced
+         (let ((group nil)
+               (cur forced)
+               (count 0))
+           (while (and cur (< count n))
+             (push (clel-first cur) group)
+             (setq cur (clel-rest cur))
+             (setq count (1+ count)))
+           (when (> count 0)
+             (cons (nreverse group)
+                   (clel-partition-all n cur)))))))))
+
+(defun clel-partition-by (f s)
+  "Partition S into groups by the value of (F elem).
+Each group contains consecutive elements with the same (F elem) value."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((forced (clel-seq-force s)))
+       (when forced
+         (let* ((first-elem (clel-first forced))
+                (first-val (funcall f first-elem))
+                (group (list first-elem))
+                (cur (clel-rest forced)))
+           (while (and cur (equal (funcall f (clel-first cur)) first-val))
+             (push (clel-first cur) group)
+             (setq cur (clel-rest cur)))
+           (cons (nreverse group)
+                 (clel-partition-by f cur))))))))
+
+(defun clel-interpose (sep s)
+  "Interpose SEP between elements of S."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((forced (clel-seq-force s)))
+       (when forced
+         (cons (clel-first forced)
+               (let ((rest (clel-rest forced)))
+                 (clel-lazy-seq-create
+                  (lambda ()
+                    (when rest
+                      (cons sep (clel-interpose sep rest))))))))))))
+
+(defun clel-distinct (s)
+  "Return lazy seq of S with duplicates removed.
+Preserves order, keeping first occurrence of each element."
+  (let ((seen (make-hash-table :test 'equal)))
+    (cl-labels ((distinct-helper (cur)
+                  (clel-lazy-seq-create
+                   (lambda ()
+                     (let ((c (clel-seq-force cur)))
+                       (when c
+                         (let ((elem (clel-first c))
+                               (rest (clel-rest c)))
+                           (if (gethash elem seen)
+                               (clel-seq-force (distinct-helper rest))
+                             (puthash elem t seen)
+                             (cons elem (distinct-helper rest))))))))))
+      (distinct-helper s))))
+
+(defun clel-dedupe (s)
+  "Remove consecutive duplicates from S."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((forced (clel-seq-force s)))
+       (when forced
+         (let ((first-elem (clel-first forced))
+               (rest (clel-rest forced)))
+           ;; Skip consecutive duplicates
+           (while (and rest (equal (clel-first rest) first-elem))
+             (setq rest (clel-rest rest)))
+           (cons first-elem (clel-dedupe rest))))))))
+
+(defun clel-split-at (n s)
+  "Split S at position N. Returns list of (take n s) and (drop n s)."
+  (list (clel-doall (clel-take n s))
+        (clel-doall (clel-drop n s))))
+
+(defun clel-split-with (pred s)
+  "Split S at first element where PRED is false.
+Returns list of (take-while pred s) and (drop-while pred s)."
+  (list (clel-doall (clel-take-while pred s))
+        (clel-doall (clel-drop-while pred s))))
+
 ;;; Eager Sequence Functions
 
 (defun clel-reduce (f &rest args)
@@ -836,6 +924,782 @@ Returns ATOM."
     (dotimes (_ n)
       (push (funcall f) result))
     (nreverse result)))
+
+;;; Set Operations (clel-044)
+;; Sets are represented as hash-tables with t values: (puthash elem t set)
+;; This provides O(1) membership tests while supporting Clojure set semantics.
+
+(defun clel-set (&rest items)
+  "Create a set from ITEMS.
+Returns a hash-table where each item is a key with value t."
+  (let ((s (make-hash-table :test 'equal)))
+    (dolist (item items)
+      (puthash item t s))
+    s))
+
+(defun clel-set-from-coll (coll)
+  "Create a set from collection COLL."
+  (let ((s (make-hash-table :test 'equal)))
+    (dolist (item (clel-seq-force coll))
+      (puthash item t s))
+    s))
+
+(defun clel-set-p (x)
+  "Return t if X is a set (hash-table with all values t)."
+  (and (hash-table-p x)
+       (let ((is-set t))
+         (maphash (lambda (k v)
+                    (unless (eq v t)
+                      (setq is-set nil)))
+                  x)
+         is-set)))
+
+(defun clel-set-contains-p (s item)
+  "Return t if set S contains ITEM."
+  (if (hash-table-p s)
+      (gethash item s nil)
+    ;; Handle list-based sets for compatibility
+    (not (null (member item s)))))
+
+(defun clel-set-add (s item)
+  "Add ITEM to set S, returning new set."
+  (let ((new (copy-hash-table s)))
+    (puthash item t new)
+    new))
+
+(defun clel-set-remove (s item)
+  "Remove ITEM from set S, returning new set."
+  (let ((new (copy-hash-table s)))
+    (remhash item new)
+    new))
+
+(defun clel-set-union (&rest sets)
+  "Return the union of SETS."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (s sets)
+      (if (hash-table-p s)
+          (maphash (lambda (k v) (puthash k t result)) s)
+        ;; Handle lists
+        (dolist (item (clel-seq-force s))
+          (puthash item t result))))
+    result))
+
+(defun clel-set-intersection (&rest sets)
+  "Return the intersection of SETS."
+  (if (null sets)
+      (make-hash-table :test 'equal)
+    (let* ((first-set (car sets))
+           (rest-sets (cdr sets))
+           (result (make-hash-table :test 'equal)))
+      (if (hash-table-p first-set)
+          (maphash (lambda (k v)
+                     (when (cl-every (lambda (s)
+                                       (if (hash-table-p s)
+                                           (gethash k s)
+                                         (member k s)))
+                                     rest-sets)
+                       (puthash k t result)))
+                   first-set)
+        ;; Handle lists
+        (dolist (item (clel-seq-force first-set))
+          (when (cl-every (lambda (s)
+                            (if (hash-table-p s)
+                                (gethash item s)
+                              (member item s)))
+                          rest-sets)
+            (puthash item t result))))
+      result)))
+
+(defun clel-set-difference (s1 &rest sets)
+  "Return items in S1 not in any of SETS."
+  (let ((result (make-hash-table :test 'equal)))
+    (if (hash-table-p s1)
+        (maphash (lambda (k v)
+                   (unless (cl-some (lambda (s)
+                                      (if (hash-table-p s)
+                                          (gethash k s)
+                                        (member k s)))
+                                    sets)
+                     (puthash k t result)))
+                 s1)
+      ;; Handle lists
+      (dolist (item (clel-seq-force s1))
+        (unless (cl-some (lambda (s)
+                           (if (hash-table-p s)
+                               (gethash item s)
+                             (member item s)))
+                         sets)
+          (puthash item t result))))
+    result))
+
+(defun clel-set-subset-p (s1 s2)
+  "Return t if S1 is a subset of S2."
+  (let ((result t))
+    (if (hash-table-p s1)
+        (maphash (lambda (k v)
+                   (unless (if (hash-table-p s2)
+                               (gethash k s2)
+                             (member k s2))
+                     (setq result nil)))
+                 s1)
+      ;; Handle lists
+      (dolist (item (clel-seq-force s1))
+        (unless (if (hash-table-p s2)
+                    (gethash item s2)
+                  (member item s2))
+          (setq result nil))))
+    result))
+
+(defun clel-set-superset-p (s1 s2)
+  "Return t if S1 is a superset of S2."
+  (clel-set-subset-p s2 s1))
+
+(defun clel-set-select (pred s)
+  "Return a set of items in S for which PRED returns true."
+  (let ((result (make-hash-table :test 'equal)))
+    (if (hash-table-p s)
+        (maphash (lambda (k v)
+                   (when (funcall pred k)
+                     (puthash k t result)))
+                 s)
+      ;; Handle lists
+      (dolist (item (clel-seq-force s))
+        (when (funcall pred item)
+          (puthash item t result))))
+    result))
+
+(defun clel-set-project (xrel ks)
+  "Project a relation XREL (set of maps) onto the keys in KS."
+  (let ((result (make-hash-table :test 'equal))
+        (key-list (clel-seq-force ks)))
+    (if (hash-table-p xrel)
+        (maphash (lambda (m v)
+                   (let ((projected nil))
+                     (dolist (k key-list)
+                       (let ((val (clel-get m k)))
+                         (when val
+                           (push (cons k val) projected))))
+                     (puthash (nreverse projected) t result)))
+                 xrel)
+      ;; Handle list of maps
+      (dolist (m (clel-seq-force xrel))
+        (let ((projected nil))
+          (dolist (k key-list)
+            (let ((val (clel-get m k)))
+              (when val
+                (push (cons k val) projected))))
+          (puthash (nreverse projected) t result))))
+    result))
+
+(defun clel-set-rename (xrel kmap)
+  "Rename keys in relation XREL according to KMAP (old-key . new-key) pairs."
+  (let ((result (make-hash-table :test 'equal))
+        (rename-map (if (hash-table-p kmap)
+                        kmap
+                      ;; Convert alist to hash-table
+                      (let ((ht (make-hash-table :test 'equal)))
+                        (dolist (pair kmap)
+                          (puthash (car pair) (cdr pair) ht))
+                        ht))))
+    (if (hash-table-p xrel)
+        (maphash (lambda (m v)
+                   (let ((renamed nil))
+                     (cond
+                      ((hash-table-p m)
+                       (maphash (lambda (k val)
+                                  (let ((new-key (or (gethash k rename-map) k)))
+                                    (push (cons new-key val) renamed)))
+                                m))
+                      ((listp m)
+                       (dolist (pair m)
+                         (let ((new-key (or (gethash (car pair) rename-map) (car pair))))
+                           (push (cons new-key (cdr pair)) renamed)))))
+                     (puthash (nreverse renamed) t result)))
+                 xrel)
+      ;; Handle list of maps
+      (dolist (m (clel-seq-force xrel))
+        (let ((renamed nil))
+          (cond
+           ((hash-table-p m)
+            (maphash (lambda (k val)
+                       (let ((new-key (or (gethash k rename-map) k)))
+                         (push (cons new-key val) renamed)))
+                     m))
+           ((listp m)
+            (dolist (pair m)
+              (let ((new-key (or (gethash (car pair) rename-map) (car pair))))
+                (push (cons new-key (cdr pair)) renamed)))))
+          (puthash (nreverse renamed) t result))))
+    result))
+
+(defun clel-rename-keys (m kmap)
+  "Rename keys in map M according to KMAP (old-key . new-key) pairs."
+  (let ((rename-map (if (hash-table-p kmap)
+                        kmap
+                      ;; Convert alist to hash-table
+                      (let ((ht (make-hash-table :test 'equal)))
+                        (dolist (pair kmap)
+                          (puthash (car pair) (cdr pair) ht))
+                        ht)))
+        (result nil))
+    (cond
+     ((hash-table-p m)
+      (let ((new-ht (make-hash-table :test 'equal)))
+        (maphash (lambda (k v)
+                   (let ((new-key (or (gethash k rename-map) k)))
+                     (puthash new-key v new-ht)))
+                 m)
+        new-ht))
+     ((listp m)
+      (dolist (pair m)
+        (let ((new-key (or (gethash (car pair) rename-map) (car pair))))
+          (push (cons new-key (cdr pair)) result)))
+      (nreverse result))
+     (t m))))
+
+(defun clel-set-join (xrel yrel &optional km)
+  "Natural join of relations XREL and YREL.
+If KM is provided, it maps keys from XREL to keys in YREL."
+  (let ((result (make-hash-table :test 'equal))
+        (x-list (if (hash-table-p xrel)
+                    (let (items) (maphash (lambda (k v) (push k items)) xrel) items)
+                  (clel-seq-force xrel)))
+        (y-list (if (hash-table-p yrel)
+                    (let (items) (maphash (lambda (k v) (push k items)) yrel) items)
+                  (clel-seq-force yrel))))
+    (dolist (xm x-list)
+      (dolist (ym y-list)
+        ;; Find common keys and check if values match
+        (let ((xm-keys (clel-keys xm))
+              (ym-keys (clel-keys ym))
+              (match t))
+          ;; Apply key mapping if provided
+          (let ((common-keys (if km
+                                 ;; Get keys from xm that have mappings to ym
+                                 (let ((mapped nil))
+                                   (dolist (k xm-keys)
+                                     (let ((yk (clel-get km k)))
+                                       (when (and yk (member yk ym-keys))
+                                         (push k mapped))))
+                                   mapped)
+                               ;; Find keys in both maps
+                               (cl-remove-if-not (lambda (k) (member k ym-keys)) xm-keys))))
+            ;; Check if values match for common keys
+            (dolist (xk common-keys)
+              (let ((yk (if km (clel-get km xk) xk)))
+                (unless (equal (clel-get xm xk) (clel-get ym yk))
+                  (setq match nil))))
+            ;; If match, merge the maps
+            (when match
+              (let ((merged (clel-merge xm ym)))
+                (puthash merged t result)))))))
+    result))
+
+(defun clel-set-index (xrel ks)
+  "Index relation XREL on keys KS.
+Returns a map from key-values to sets of matching maps."
+  (let ((result nil)
+        (key-list (clel-seq-force ks))
+        (x-list (if (hash-table-p xrel)
+                    (let (items) (maphash (lambda (k v) (push k items)) xrel) items)
+                  (clel-seq-force xrel))))
+    (dolist (m x-list)
+      (let ((key-vals nil))
+        ;; Build the key from selected keys
+        (dolist (k key-list)
+          (push (cons k (clel-get m k)) key-vals))
+        (setq key-vals (nreverse key-vals))
+        ;; Add to index
+        (let ((existing (clel-get result key-vals)))
+          (if existing
+              ;; Add to existing set
+              (puthash m t existing)
+            ;; Create new set
+            (let ((new-set (make-hash-table :test 'equal)))
+              (puthash m t new-set)
+              (setq result (clel-assoc result key-vals new-set)))))))
+    result))
+
+(defun clel-map-invert (m)
+  "Invert map M, swapping keys and values.
+Values must be unique, or later entries will overwrite earlier ones."
+  (cond
+   ((hash-table-p m)
+    (let ((result (make-hash-table :test 'equal)))
+      (maphash (lambda (k v) (puthash v k result)) m)
+      result))
+   ((listp m)
+    (let ((result nil))
+      (dolist (pair m)
+        (push (cons (cdr pair) (car pair)) result))
+      (nreverse result)))
+   (t nil)))
+
+;;; Transducers (clel-043)
+;; Transducers are reducing function transformers.
+;; A transducer takes a reducing function and returns a new reducing function.
+;; Pattern: (xf rf) -> (lambda (result input) ...)
+;;
+;; Reducing functions have arity:
+;; - 0-arity: () -> init value (identity returns nil)
+;; - 1-arity: (result) -> completion (identity)
+;; - 2-arity: (result input) -> accumulation
+
+(defun clel--reducing-fn-init (rf)
+  "Call RF with 0 arguments for init value."
+  (condition-case nil
+      (funcall rf)
+    (error nil)))
+
+(defun clel--reducing-fn-complete (rf result)
+  "Call RF with 1 argument for completion."
+  (condition-case nil
+      (funcall rf result)
+    (error result)))
+
+;; Special reduced wrapper for early termination
+(defun clel-reduced (val)
+  "Wrap VAL to signal early termination in reduce."
+  (list 'clel-reduced val))
+
+(defun clel-reduced-p (x)
+  "Return t if X is a reduced value."
+  (and (consp x) (eq (car x) 'clel-reduced)))
+
+(defun clel-deref-reduced (x)
+  "Unwrap a reduced value, or return X if not reduced."
+  (if (clel-reduced-p x) (cadr x) x))
+
+(defun clel-ensure-reduced (x)
+  "Ensure X is reduced. If already reduced, return as-is."
+  (if (clel-reduced-p x) x (clel-reduced x)))
+
+(defun clel-unreduced (x)
+  "Unwrap reduced value if reduced, else return X."
+  (if (clel-reduced-p x) (cadr x) x))
+
+;; Core transducer: transduce
+(defun clel-transduce (xform f &rest args)
+  "Transduce COLL with transducer XFORM and reducing function F.
+Usage: (clel-transduce xform f coll) or (clel-transduce xform f init coll)"
+  (let (init coll)
+    (if (= 1 (length args))
+        ;; (transduce xform f coll) - no init
+        (progn
+          (setq coll (clel-seq-force (car args)))
+          (setq init (clel--reducing-fn-init f)))
+      ;; (transduce xform f init coll)
+      (setq init (car args))
+      (setq coll (clel-seq-force (cadr args))))
+    (let* ((xf (funcall xform f))
+           (result init)
+           (cur coll))
+      ;; Reduce over collection
+      (while (and cur (not (clel-reduced-p result)))
+        (setq result (funcall xf result (clel-first cur)))
+        (setq cur (clel-rest cur)))
+      ;; Complete
+      (clel--reducing-fn-complete xf (clel-unreduced result)))))
+
+;; into with transducer (3-arity)
+(defun clel-into-xform (to xform from)
+  "Add all items FROM into TO, transformed by XFORM."
+  (let ((rf (cond
+             ((vectorp to)
+              (lambda (&rest args)
+                (pcase (length args)
+                  (0 (vector))
+                  (1 (car args))
+                  (2 (vconcat (car args) (vector (cadr args)))))))
+             ((listp to)
+              (lambda (&rest args)
+                (pcase (length args)
+                  (0 nil)
+                  (1 (nreverse (car args)))
+                  (2 (cons (cadr args) (car args))))))
+             ((hash-table-p to)
+              (lambda (&rest args)
+                (pcase (length args)
+                  (0 (make-hash-table :test 'equal))
+                  (1 (car args))
+                  (2 (let ((ht (car args))
+                           (pair (cadr args)))
+                       (puthash (car pair) (cdr pair) ht)
+                       ht))))))))
+    (let ((result (clel-transduce xform rf to from)))
+      (cond
+       ((vectorp to) result)
+       ((listp to) result)
+       ((hash-table-p to) result)
+       (t result)))))
+
+;; sequence with transducer
+(defun clel-sequence-xform (xform coll)
+  "Apply transducer XFORM to COLL, returning a lazy sequence."
+  ;; For simplicity, we eagerly realize here (true lazy would need more infrastructure)
+  (clel-transduce xform
+                  (lambda (&rest args)
+                    (pcase (length args)
+                      (0 nil)
+                      (1 (nreverse (car args)))
+                      (2 (cons (cadr args) (car args)))))
+                  nil
+                  coll))
+
+;; eduction - returns a reducible collection
+(defun clel-eduction (xform coll)
+  "Return a reducible/iterable application of XFORM to COLL."
+  (list 'clel-eduction xform coll))
+
+(defun clel-eduction-p (x)
+  "Return t if X is an eduction."
+  (and (consp x) (eq (car x) 'clel-eduction)))
+
+;;; Transducer Factories
+
+(defun clel-map-xf (f)
+  "Return a mapping transducer that applies F to each element."
+  (lambda (rf)
+    (lambda (&rest args)
+      (pcase (length args)
+        (0 (funcall rf))
+        (1 (funcall rf (car args)))
+        (2 (funcall rf (car args) (funcall f (cadr args))))))))
+
+(defun clel-filter-xf (pred)
+  "Return a filtering transducer that keeps elements where PRED is true."
+  (lambda (rf)
+    (lambda (&rest args)
+      (pcase (length args)
+        (0 (funcall rf))
+        (1 (funcall rf (car args)))
+        (2 (if (funcall pred (cadr args))
+               (funcall rf (car args) (cadr args))
+             (car args)))))))
+
+(defun clel-remove-xf (pred)
+  "Return a transducer that removes elements where PRED is true."
+  (clel-filter-xf (lambda (x) (not (funcall pred x)))))
+
+(defun clel-keep-xf (f)
+  "Return a transducer that keeps non-nil results of (F item)."
+  (lambda (rf)
+    (lambda (&rest args)
+      (pcase (length args)
+        (0 (funcall rf))
+        (1 (funcall rf (car args)))
+        (2 (let ((v (funcall f (cadr args))))
+             (if v
+                 (funcall rf (car args) v)
+               (car args))))))))
+
+(defun clel-keep-indexed-xf (f)
+  "Return a transducer that keeps non-nil results of (F index item)."
+  (lambda (rf)
+    (let ((idx -1))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (setq idx (1+ idx))
+             (let ((v (funcall f idx (cadr args))))
+               (if v
+                   (funcall rf (car args) v)
+                 (car args)))))))))
+
+(defun clel-take-xf (n)
+  "Return a transducer that takes first N elements."
+  (lambda (rf)
+    (let ((remaining n))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (if (> remaining 0)
+                 (progn
+                   (setq remaining (1- remaining))
+                   (if (= remaining 0)
+                       (clel-ensure-reduced (funcall rf (car args) (cadr args)))
+                     (funcall rf (car args) (cadr args))))
+               (car args))))))))
+
+(defun clel-drop-xf (n)
+  "Return a transducer that drops first N elements."
+  (lambda (rf)
+    (let ((remaining n))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (if (> remaining 0)
+                 (progn
+                   (setq remaining (1- remaining))
+                   (car args))
+               (funcall rf (car args) (cadr args)))))))))
+
+(defun clel-take-while-xf (pred)
+  "Return a transducer that takes elements while PRED is true."
+  (lambda (rf)
+    (let ((taking t))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (if taking
+                 (if (funcall pred (cadr args))
+                     (funcall rf (car args) (cadr args))
+                   (progn
+                     (setq taking nil)
+                     (clel-reduced (car args))))
+               (car args))))))))
+
+(defun clel-drop-while-xf (pred)
+  "Return a transducer that drops elements while PRED is true."
+  (lambda (rf)
+    (let ((dropping t))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (if dropping
+                 (if (funcall pred (cadr args))
+                     (car args)
+                   (progn
+                     (setq dropping nil)
+                     (funcall rf (car args) (cadr args))))
+               (funcall rf (car args) (cadr args)))))))))
+
+(defun clel-partition-all-xf (n)
+  "Return a transducer that partitions into groups of N elements.
+Unlike partition, includes the final partial group."
+  (lambda (rf)
+    (let ((buffer nil))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 ;; Completion - flush any remaining items
+           (let ((result (car args)))
+             (when buffer
+               (setq result (funcall rf result (nreverse buffer))))
+             (funcall rf (clel-unreduced result))))
+          (2 (push (cadr args) buffer)
+             (if (= (length buffer) n)
+                 (let ((group (nreverse buffer)))
+                   (setq buffer nil)
+                   (funcall rf (car args) group))
+               (car args))))))))
+
+(defun clel-partition-by-xf (f)
+  "Return a transducer that partitions by changes in (F item)."
+  (lambda (rf)
+    (let ((buffer nil)
+          (prev-val 'clel--none))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 ;; Completion - flush remaining
+           (let ((result (car args)))
+             (when buffer
+               (setq result (funcall rf result (nreverse buffer))))
+             (funcall rf (clel-unreduced result))))
+          (2 (let ((val (funcall f (cadr args))))
+               (if (or (eq prev-val 'clel--none)
+                       (equal val prev-val))
+                   (progn
+                     (push (cadr args) buffer)
+                     (setq prev-val val)
+                     (car args))
+                 ;; Value changed - emit current group
+                 (let ((group (nreverse buffer)))
+                   (setq buffer (list (cadr args)))
+                   (setq prev-val val)
+                   (funcall rf (car args) group))))))))))
+
+(defun clel-dedupe-xf ()
+  "Return a transducer that removes consecutive duplicates."
+  (lambda (rf)
+    (let ((prev 'clel--none))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (let ((item (cadr args)))
+               (if (equal item prev)
+                   (car args)
+                 (setq prev item)
+                 (funcall rf (car args) item)))))))))
+
+(defun clel-distinct-xf ()
+  "Return a transducer that removes all duplicates (not just consecutive)."
+  (lambda (rf)
+    (let ((seen (make-hash-table :test 'equal)))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (let ((item (cadr args)))
+               (if (gethash item seen)
+                   (car args)
+                 (puthash item t seen)
+                 (funcall rf (car args) item)))))))))
+
+(defun clel-interpose-xf (sep)
+  "Return a transducer that interposes SEP between elements."
+  (lambda (rf)
+    (let ((started nil))
+      (lambda (&rest args)
+        (pcase (length args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (if started
+                 (let ((result (funcall rf (car args) sep)))
+                   (if (clel-reduced-p result)
+                       result
+                     (funcall rf result (cadr args))))
+               (setq started t)
+               (funcall rf (car args) (cadr args)))))))))
+
+(defun clel-cat-xf ()
+  "Return a transducer that concatenates nested collections."
+  (lambda (rf)
+    (lambda (&rest args)
+      (pcase (length args)
+        (0 (funcall rf))
+        (1 (funcall rf (car args)))
+        (2 (let ((result (car args))
+                 (coll (clel-seq-force (cadr args))))
+             (while (and coll (not (clel-reduced-p result)))
+               (setq result (funcall rf result (clel-first coll)))
+               (setq coll (clel-rest coll)))
+             result))))))
+
+(defun clel-mapcat-xf (f)
+  "Return a transducer that maps F then concatenates results."
+  (clel-comp (clel-map-xf f) (clel-cat-xf)))
+
+;;; Additional Lazy Sequence Functions (clel-043)
+
+(defun clel-partition-all (n &optional step coll)
+  "Partition COLL into groups of N elements, including final partial group.
+With STEP, each group starts STEP elements apart.
+With one arg, returns a transducer."
+  (let ((actual-step n)
+        (actual-coll nil))
+    ;; Handle arities
+    (cond
+     ((null step)
+      ;; 1-arity: returns a transducer
+      (clel-partition-all-xf n))
+     ((null coll)
+      ;; 2-arity: (partition-all n coll)
+      (setq actual-coll step)
+      (setq actual-step n))
+     (t
+      ;; 3-arity: (partition-all n step coll)
+      (setq actual-step step)
+      (setq actual-coll coll)))
+    (when actual-coll
+      (clel-lazy-seq-create
+       (lambda ()
+         (let ((forced (clel-seq-force actual-coll)))
+           (when forced
+             (let ((group nil)
+                   (cur forced)
+                   (count 0))
+               (while (and cur (< count n))
+                 (push (clel-first cur) group)
+                 (setq cur (clel-rest cur))
+                 (setq count (1+ count)))
+               (cons (nreverse group)
+                     (clel-partition-all n actual-step (nthcdr actual-step forced)))))))))))
+
+(defun clel-keep (f &optional coll)
+  "Return lazy seq of non-nil results of (F item) for items in COLL.
+With one argument, returns a transducer."
+  (if (null coll)
+      ;; 1-arity: returns transducer
+      (clel-keep-xf f)
+    ;; 2-arity: lazy sequence
+    (clel-lazy-seq-create
+     (lambda ()
+       (let ((cur (clel-seq-force coll))
+             (result nil))
+         (while (and cur (not result))
+           (setq result (funcall f (clel-first cur)))
+           (unless result
+             (setq cur (clel-rest cur))))
+         (when result
+           (cons result (clel-keep f (clel-rest cur)))))))))
+
+(defun clel-keep-indexed (f &optional coll)
+  "Return lazy seq of non-nil results of (F index item) for items in COLL.
+With one argument, returns a transducer."
+  (if (null coll)
+      ;; 1-arity: returns transducer
+      (clel-keep-indexed-xf f)
+    ;; 2-arity: lazy sequence
+    (let ((idx -1))
+      (clel-keep (lambda (item)
+                   (setq idx (1+ idx))
+                   (funcall f idx item))
+                 coll))))
+
+(defun clel-dedupe (&optional coll)
+  "Remove consecutive duplicates from COLL.
+With no arguments, returns a transducer."
+  (if (null coll)
+      ;; 0-arity: returns transducer
+      (clel-dedupe-xf)
+    ;; 1-arity: lazy sequence
+    (clel-lazy-seq-create
+     (lambda ()
+       (let ((forced (clel-seq-force coll)))
+         (when forced
+           (let ((first-item (clel-first forced))
+                 (rest-items (clel-rest forced)))
+             ;; Skip consecutive duplicates
+             (while (and rest-items (equal (clel-first rest-items) first-item))
+               (setq rest-items (clel-rest rest-items)))
+             (cons first-item (clel-dedupe rest-items)))))))))
+
+(defun clel-distinct (&optional coll)
+  "Remove all duplicates from COLL (not just consecutive).
+With no arguments, returns a transducer."
+  (if (null coll)
+      ;; 0-arity: returns transducer
+      (clel-distinct-xf)
+    ;; 1-arity: lazy sequence
+    (let ((seen (make-hash-table :test 'equal)))
+      (clel-lazy-seq-create
+       (lambda ()
+         (let ((cur (clel-seq-force coll))
+               (item nil))
+           (while (and cur (not item))
+             (let ((candidate (clel-first cur)))
+               (if (gethash candidate seen)
+                   (setq cur (clel-rest cur))
+                 (puthash candidate t seen)
+                 (setq item candidate))))
+           (when item
+             (cons item (clel-distinct (clel-rest cur))))))))))
+
+(defun clel-interpose (sep &optional coll)
+  "Interpose SEP between elements of COLL.
+With one argument, returns a transducer."
+  (if (null coll)
+      ;; 1-arity: returns transducer
+      (clel-interpose-xf sep)
+    ;; 2-arity: lazy sequence
+    (clel-lazy-seq-create
+     (lambda ()
+       (let ((forced (clel-seq-force coll)))
+         (when forced
+           (let ((first-item (clel-first forced))
+                 (rest-items (clel-rest forced)))
+             (if rest-items
+                 (cons first-item
+                       (cons sep (clel-interpose sep rest-items)))
+               (list first-item)))))))))
 
 ;;; Protocol Support
 

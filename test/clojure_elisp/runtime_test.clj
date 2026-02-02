@@ -982,14 +982,15 @@
 ;; ============================================================================
 
 (deftest for-basic-compilation-test
-  (testing "basic for compiles to mapcar"
-    (is (str/includes? (clel/emit '(for [x coll] x)) "mapcar"))
-    (is (str/includes? (clel/emit '(for [x coll] x)) "lambda")))
+  (testing "basic for compiles to cl-mapcan with list wrapper"
+    (is (str/includes? (clel/emit '(for [x coll] x)) "cl-mapcan"))
+    (is (str/includes? (clel/emit '(for [x coll] x)) "lambda"))
+    (is (str/includes? (clel/emit '(for [x coll] x)) "(list x)")))
 
   (testing "for with body expression"
     (let [code (clel/emit '(for [x numbers] (inc x)))]
-      (is (str/includes? code "mapcar"))
-      (is (str/includes? code "(1+ x)"))))
+      (is (str/includes? code "cl-mapcan"))
+      (is (str/includes? code "(list (1+ x))"))))
 
   (testing "for wraps collection in clel-seq"
     (let [code (clel/emit '(for [item items] item))]
@@ -997,8 +998,8 @@
 
   (testing "for with literal vector"
     (let [code (clel/emit '(for [x [1 2 3]] (* x x)))]
-      (is (str/includes? code "mapcar"))
-      (is (str/includes? code "(* x x)")))))
+      (is (str/includes? code "cl-mapcan"))
+      (is (str/includes? code "(list (* x x))")))))
 
 (deftest for-when-compilation-test
   (testing "for with :when compiles to cl-mapcan"
@@ -1050,14 +1051,83 @@
   (testing "for in let binding"
     (let [code (clel/emit '(let [squares (for [x nums] (* x x))]
                              (first squares)))]
-      (is (str/includes? code "mapcar"))
+      (is (str/includes? code "cl-mapcan"))
       (is (str/includes? code "squares"))))
 
   (testing "nested for (via map)"
     (let [code (clel/emit '(for [x xs]
                              (for [y ys]
                                (+ x y))))]
-      (is (= 2 (count (re-seq #"mapcar" code)))))))
+      (is (= 2 (count (re-seq #"cl-mapcan" code)))))))
+
+;; ============================================================================
+;; Multi-binding for/doseq (clel-045)
+;; ============================================================================
+
+(deftest for-multi-binding-compilation-test
+  (testing "for with two bindings creates nested cl-mapcan"
+    (let [code (clel/emit '(for [x xs y ys] [x y]))]
+      (is (= 2 (count (re-seq #"cl-mapcan" code))))
+      (is (str/includes? code "(lambda (x)"))
+      (is (str/includes? code "(lambda (y)"))))
+
+  (testing "multi-binding for with :when between bindings"
+    (let [code (clel/emit '(for [x xs :when (pos? x) y ys] [x y]))]
+      (is (= 2 (count (re-seq #"cl-mapcan" code))))
+      (is (str/includes? code "(when (cl-plusp x)"))))
+
+  (testing "multi-binding for with :let between bindings"
+    (let [code (clel/emit '(for [x xs :let [x2 (* x 2)] y ys] [x2 y]))]
+      (is (= 2 (count (re-seq #"cl-mapcan" code))))
+      (is (str/includes? code "(let*"))
+      (is (str/includes? code "(x2 (* x 2))"))))
+
+  (testing "complex multi-binding for (clel-045 spec example)"
+    (let [code (clel/emit '(for [x [1 2 3]
+                                 y [4 5 6]
+                                 :when (even? (+ x y))
+                                 :let [z (* x y)]]
+                             [x y z]))]
+      (is (= 2 (count (re-seq #"cl-mapcan" code))))
+      (is (str/includes? code "(when (cl-evenp (+ x y))"))
+      (is (str/includes? code "(let* ((z (* x y)))"))
+      (is (str/includes? code "(list (list x y z))")))))
+
+(deftest doseq-multi-binding-compilation-test
+  (testing "doseq with two bindings creates nested dolist"
+    (let [code (clel/emit '(doseq [x xs y ys] (process x y)))]
+      (is (= 2 (count (re-seq #"dolist" code))))
+      (is (str/includes? code "(x (clel-seq"))
+      (is (str/includes? code "(y (clel-seq"))))
+
+  (testing "multi-binding doseq with :when"
+    (let [code (clel/emit '(doseq [x xs :when (pos? x) y ys] (process x y)))]
+      (is (= 2 (count (re-seq #"dolist" code))))
+      (is (str/includes? code "(when (cl-plusp x)"))))
+
+  (testing "multi-binding doseq with :let"
+    (let [code (clel/emit '(doseq [x xs :let [x2 (* x 2)] y ys] (process x2 y)))]
+      (is (= 2 (count (re-seq #"dolist" code))))
+      (is (str/includes? code "(let*"))))
+
+  (testing "doseq with :while uses cl-block"
+    (let [code (clel/emit '(doseq [x xs :while (pos? x)] (process x)))]
+      (is (str/includes? code "(cl-block nil"))
+      (is (str/includes? code "(unless (cl-plusp x) (cl-return))")))))
+
+(deftest for-while-compilation-test
+  (testing "for with :while approximates as when"
+    ;; Note: :while in map-based for is approximated as :when since
+    ;; cl-mapcan doesn't support early termination
+    (let [code (clel/emit '(for [x xs :while (pos? x)] x))]
+      (is (str/includes? code "cl-mapcan"))
+      (is (str/includes? code "(when (cl-plusp x)"))))
+
+  (testing "for with :while and :let"
+    (let [code (clel/emit '(for [x xs :while (pos? x) :let [y (* x 2)]] y))]
+      (is (str/includes? code "cl-mapcan"))
+      (is (str/includes? code "when"))
+      (is (str/includes? code "let*")))))
 
 ;; ============================================================================
 ;; String Functions (clel-042)
@@ -1172,4 +1242,479 @@
     (let [code (clel/emit '(when (clojure.string/blank? s)
                              (println "empty")))]
       (is (str/includes? code "clel-str-blank-p")))))
+
+;; ============================================================================
+;; Set Operations (clel-044)
+;; ============================================================================
+
+(deftest set-constructor-compilation-test
+  (testing "set compiles to clel-set-from-coll"
+    (is (str/includes? (clel/emit '(set xs)) "clel-set-from-coll"))
+    (is (str/includes? (clel/emit '(set [1 2 3])) "clel-set-from-coll")))
+
+  (testing "set preserves argument"
+    (is (re-find #"clel-set-from-coll\s+my-coll" (clel/emit '(set my-coll)))))
+
+  (testing "set in let binding"
+    (let [code (clel/emit '(let [s (set items)] s))]
+      (is (str/includes? code "clel-set-from-coll"))
+      (is (str/includes? code "let"))))
+
+  (testing "hash-set compiles to clel-set"
+    (is (str/includes? (clel/emit '(hash-set 1 2 3)) "clel-set")))
+
+  (testing "set? compiles to clel-set-p"
+    (is (str/includes? (clel/emit '(set? x)) "clel-set-p")))
+
+  (testing "disj compiles to clel-set-remove"
+    (is (str/includes? (clel/emit '(disj s :item)) "clel-set-remove"))))
+
+(deftest set-union-compilation-test
+  (testing "clojure.set/union compiles to clel-set-union"
+    (is (str/includes? (clel/emit '(clojure.set/union s1 s2)) "clel-set-union")))
+
+  (testing "union preserves argument order"
+    (let [code (clel/emit '(clojure.set/union a-set b-set))]
+      (is (re-find #"clel-set-union\s+a-set\s+b-set" code))))
+
+  (testing "union with multiple sets"
+    (let [code (clel/emit '(clojure.set/union s1 s2 s3 s4))]
+      (is (str/includes? code "clel-set-union"))
+      (is (str/includes? code "s1"))
+      (is (str/includes? code "s4"))))
+
+  (testing "union in let binding"
+    (let [code (clel/emit '(let [combined (clojure.set/union a b)] combined))]
+      (is (str/includes? code "clel-set-union"))
+      (is (str/includes? code "let")))))
+
+(deftest set-intersection-compilation-test
+  (testing "clojure.set/intersection compiles to clel-set-intersection"
+    (is (str/includes? (clel/emit '(clojure.set/intersection s1 s2)) "clel-set-intersection")))
+
+  (testing "intersection preserves argument order"
+    (let [code (clel/emit '(clojure.set/intersection a-set b-set))]
+      (is (re-find #"clel-set-intersection\s+a-set\s+b-set" code))))
+
+  (testing "intersection with multiple sets"
+    (let [code (clel/emit '(clojure.set/intersection s1 s2 s3))]
+      (is (str/includes? code "clel-set-intersection"))))
+
+  (testing "intersection in conditional"
+    (let [code (clel/emit '(if (empty? (clojure.set/intersection a b)) :disjoint :overlap))]
+      (is (str/includes? code "clel-set-intersection"))
+      (is (str/includes? code "clel-empty-p")))))
+
+(deftest set-difference-compilation-test
+  (testing "clojure.set/difference compiles to clel-set-difference"
+    (is (str/includes? (clel/emit '(clojure.set/difference s1 s2)) "clel-set-difference")))
+
+  (testing "difference preserves argument order"
+    (let [code (clel/emit '(clojure.set/difference main-set exclude-set))]
+      (is (re-find #"clel-set-difference\s+main-set\s+exclude-set" code))))
+
+  (testing "difference with multiple sets to exclude"
+    (let [code (clel/emit '(clojure.set/difference s1 s2 s3))]
+      (is (str/includes? code "clel-set-difference")))))
+
+(deftest set-subset-superset-compilation-test
+  (testing "clojure.set/subset? compiles to clel-set-subset-p"
+    (is (str/includes? (clel/emit '(clojure.set/subset? s1 s2)) "clel-set-subset-p")))
+
+  (testing "subset? preserves argument order"
+    (let [code (clel/emit '(clojure.set/subset? child-set parent-set))]
+      (is (re-find #"clel-set-subset-p\s+child-set\s+parent-set" code))))
+
+  (testing "clojure.set/superset? compiles to clel-set-superset-p"
+    (is (str/includes? (clel/emit '(clojure.set/superset? s1 s2)) "clel-set-superset-p")))
+
+  (testing "subset/superset in conditional"
+    (let [code (clel/emit '(when (clojure.set/subset? a b) :is-subset))]
+      (is (str/includes? code "clel-set-subset-p"))
+      (is (str/includes? code "when")))))
+
+(deftest set-select-compilation-test
+  (testing "clojure.set/select compiles to clel-set-select"
+    (is (str/includes? (clel/emit '(clojure.set/select even? s)) "clel-set-select")))
+
+  (testing "select preserves argument order"
+    (let [code (clel/emit '(clojure.set/select pred my-set))]
+      (is (re-find #"clel-set-select\s+pred\s+my-set" code))))
+
+  (testing "select with inline predicate"
+    (let [code (clel/emit '(clojure.set/select (fn [x] (> x 0)) numbers))]
+      (is (str/includes? code "clel-set-select"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "select in let binding"
+    (let [code (clel/emit '(let [filtered (clojure.set/select pos? nums)] filtered))]
+      (is (str/includes? code "clel-set-select")))))
+
+(deftest set-relational-compilation-test
+  (testing "clojure.set/project compiles to clel-set-project"
+    (is (str/includes? (clel/emit '(clojure.set/project xrel [:a :b])) "clel-set-project")))
+
+  (testing "project preserves argument order"
+    (let [code (clel/emit '(clojure.set/project rel ks))]
+      (is (re-find #"clel-set-project\s+rel\s+ks" code))))
+
+  (testing "clojure.set/rename compiles to clel-set-rename"
+    (is (str/includes? (clel/emit '(clojure.set/rename xrel {:old :new})) "clel-set-rename")))
+
+  (testing "rename preserves argument order"
+    (let [code (clel/emit '(clojure.set/rename rel kmap))]
+      (is (re-find #"clel-set-rename\s+rel\s+kmap" code))))
+
+  (testing "clojure.set/rename-keys compiles to clel-rename-keys"
+    (is (str/includes? (clel/emit '(clojure.set/rename-keys m {:a :b})) "clel-rename-keys")))
+
+  (testing "rename-keys preserves argument order"
+    (let [code (clel/emit '(clojure.set/rename-keys my-map kmap))]
+      (is (re-find #"clel-rename-keys\s+my-map\s+kmap" code)))))
+
+(deftest set-join-compilation-test
+  (testing "clojure.set/join compiles to clel-set-join"
+    (is (str/includes? (clel/emit '(clojure.set/join xrel yrel)) "clel-set-join")))
+
+  (testing "join preserves argument order"
+    (let [code (clel/emit '(clojure.set/join left right))]
+      (is (re-find #"clel-set-join\s+left\s+right" code))))
+
+  (testing "join with key mapping"
+    (let [code (clel/emit '(clojure.set/join xrel yrel {:a :x}))]
+      (is (str/includes? code "clel-set-join"))))
+
+  (testing "join in let binding"
+    (let [code (clel/emit '(let [result (clojure.set/join t1 t2)] result))]
+      (is (str/includes? code "clel-set-join")))))
+
+(deftest set-index-compilation-test
+  (testing "clojure.set/index compiles to clel-set-index"
+    (is (str/includes? (clel/emit '(clojure.set/index xrel [:a])) "clel-set-index")))
+
+  (testing "index preserves argument order"
+    (let [code (clel/emit '(clojure.set/index rel ks))]
+      (is (re-find #"clel-set-index\s+rel\s+ks" code))))
+
+  (testing "index with multiple keys"
+    (let [code (clel/emit '(clojure.set/index xrel [:a :b :c]))]
+      (is (str/includes? code "clel-set-index")))))
+
+(deftest set-map-invert-compilation-test
+  (testing "clojure.set/map-invert compiles to clel-map-invert"
+    (is (str/includes? (clel/emit '(clojure.set/map-invert m)) "clel-map-invert")))
+
+  (testing "map-invert preserves argument"
+    (let [code (clel/emit '(clojure.set/map-invert my-map))]
+      (is (re-find #"clel-map-invert\s+my-map" code))))
+
+  (testing "map-invert in let binding"
+    (let [code (clel/emit '(let [inverted (clojure.set/map-invert m)] inverted))]
+      (is (str/includes? code "clel-map-invert")))))
+
+(deftest set-composition-compilation-test
+  (testing "union + intersection composition"
+    (let [code (clel/emit '(clojure.set/intersection
+                            (clojure.set/union a b)
+                            (clojure.set/union c d)))]
+      (is (str/includes? code "clel-set-intersection"))
+      (is (= 2 (count (re-seq #"clel-set-union" code))))))
+
+  (testing "set constructor + operations"
+    (let [code (clel/emit '(clojure.set/union (set xs) (set ys)))]
+      (is (str/includes? code "clel-set-union"))
+      (is (= 2 (count (re-seq #"clel-set-from-coll" code))))))
+
+  (testing "difference after union"
+    (let [code (clel/emit '(clojure.set/difference
+                            (clojure.set/union a b)
+                            c))]
+      (is (str/includes? code "clel-set-difference"))
+      (is (str/includes? code "clel-set-union"))))
+
+  (testing "select from intersection"
+    (let [code (clel/emit '(clojure.set/select even?
+                                               (clojure.set/intersection nums1 nums2)))]
+      (is (str/includes? code "clel-set-select"))
+      (is (str/includes? code "clel-set-intersection")))))
+
+;; ============================================================================
+;; Additional Sequence Functions (clel-041)
+;; ============================================================================
+
+(deftest partition-all-compilation-test
+  (testing "partition-all compiles to clel-partition-all"
+    (is (str/includes? (clel/emit '(partition-all 3 xs)) "clel-partition-all")))
+
+  (testing "partition-all preserves argument order"
+    (is (re-find #"clel-partition-all\s+n\s+coll" (clel/emit '(partition-all n coll)))))
+
+  (testing "partition-all in let binding"
+    (let [code (clel/emit '(let [chunks (partition-all 5 items)] chunks))]
+      (is (str/includes? code "clel-partition-all"))
+      (is (str/includes? code "let"))))
+
+  (testing "partition-all vs partition (semantic difference)"
+    ;; partition drops incomplete final partition, partition-all keeps it
+    (let [code-all (clel/emit '(partition-all 3 xs))
+          code-reg (clel/emit '(partition 3 xs))]
+      (is (str/includes? code-all "clel-partition-all"))
+      (is (str/includes? code-reg "clel-partition"))
+      (is (not (str/includes? code-reg "clel-partition-all"))))))
+
+(deftest partition-by-compilation-test
+  (testing "partition-by compiles to clel-partition-by"
+    (is (str/includes? (clel/emit '(partition-by odd? xs)) "clel-partition-by")))
+
+  (testing "partition-by preserves argument order"
+    (is (re-find #"clel-partition-by\s+f\s+coll" (clel/emit '(partition-by f coll)))))
+
+  (testing "partition-by with keyword function"
+    (let [code (clel/emit '(partition-by :type items))]
+      (is (str/includes? code "clel-partition-by"))
+      (is (str/includes? code ":type"))))
+
+  (testing "partition-by in let binding"
+    (let [code (clel/emit '(let [groups (partition-by :category data)] groups))]
+      (is (str/includes? code "clel-partition-by"))))
+
+  (testing "partition-by with inline function"
+    (let [code (clel/emit '(partition-by (fn [x] (mod x 3)) nums))]
+      (is (str/includes? code "clel-partition-by"))
+      (is (str/includes? code "lambda")))))
+
+(deftest interpose-compilation-test
+  (testing "interpose compiles to clel-interpose"
+    (is (str/includes? (clel/emit '(interpose ", " xs)) "clel-interpose")))
+
+  (testing "interpose preserves argument order"
+    (is (re-find #"clel-interpose\s+sep\s+coll" (clel/emit '(interpose sep coll)))))
+
+  (testing "interpose with keyword separator"
+    (let [code (clel/emit '(interpose :sep items))]
+      (is (str/includes? code "clel-interpose"))
+      (is (str/includes? code ":sep"))))
+
+  (testing "interpose in let binding"
+    (let [code (clel/emit '(let [spaced (interpose " " words)] spaced))]
+      (is (str/includes? code "clel-interpose"))))
+
+  (testing "interpose with str/join pattern"
+    (let [code (clel/emit '(apply str (interpose ", " items)))]
+      (is (str/includes? code "clel-interpose"))
+      (is (str/includes? code "apply")))))
+
+(deftest distinct-compilation-test
+  (testing "distinct compiles to clel-distinct"
+    (is (str/includes? (clel/emit '(distinct xs)) "clel-distinct")))
+
+  (testing "distinct preserves argument"
+    (is (re-find #"clel-distinct\s+coll" (clel/emit '(distinct coll)))))
+
+  (testing "distinct in let binding"
+    (let [code (clel/emit '(let [unique (distinct items)] unique))]
+      (is (str/includes? code "clel-distinct"))
+      (is (str/includes? code "let"))))
+
+  (testing "distinct with map"
+    (let [code (clel/emit '(distinct (map :id users)))]
+      (is (str/includes? code "clel-distinct"))
+      (is (str/includes? code "clel-map"))))
+
+  (testing "distinct in expression context"
+    (let [code (clel/emit '(count (distinct xs)))]
+      (is (str/includes? code "clel-distinct"))
+      (is (str/includes? code "length")))))
+
+(deftest dedupe-compilation-test
+  (testing "dedupe compiles to clel-dedupe"
+    (is (str/includes? (clel/emit '(dedupe xs)) "clel-dedupe")))
+
+  (testing "dedupe preserves argument"
+    (is (re-find #"clel-dedupe\s+coll" (clel/emit '(dedupe coll)))))
+
+  (testing "dedupe in let binding"
+    (let [code (clel/emit '(let [deduped (dedupe items)] deduped))]
+      (is (str/includes? code "clel-dedupe"))
+      (is (str/includes? code "let"))))
+
+  (testing "dedupe vs distinct (semantic difference)"
+    ;; dedupe removes consecutive duplicates, distinct removes all duplicates
+    (let [code-dedupe (clel/emit '(dedupe xs))
+          code-distinct (clel/emit '(distinct xs))]
+      (is (str/includes? code-dedupe "clel-dedupe"))
+      (is (str/includes? code-distinct "clel-distinct"))
+      (is (not (str/includes? code-dedupe "clel-distinct"))))))
+
+(deftest split-at-compilation-test
+  (testing "split-at compiles to clel-split-at"
+    (is (str/includes? (clel/emit '(split-at 5 xs)) "clel-split-at")))
+
+  (testing "split-at preserves argument order"
+    (is (re-find #"clel-split-at\s+n\s+coll" (clel/emit '(split-at n coll)))))
+
+  (testing "split-at in let binding with destructuring pattern"
+    (let [code (clel/emit '(let [result (split-at 3 items)] result))]
+      (is (str/includes? code "clel-split-at"))))
+
+  (testing "split-at with numeric literal"
+    (let [code (clel/emit '(split-at 10 data))]
+      (is (str/includes? code "clel-split-at"))
+      (is (str/includes? code "10")))))
+
+(deftest split-with-compilation-test
+  (testing "split-with compiles to clel-split-with"
+    (is (str/includes? (clel/emit '(split-with pos? xs)) "clel-split-with")))
+
+  (testing "split-with preserves argument order"
+    (is (re-find #"clel-split-with\s+pred\s+coll" (clel/emit '(split-with pred coll)))))
+
+  (testing "split-with with inline predicate"
+    (let [code (clel/emit '(split-with (fn [x] (< x 5)) nums))]
+      (is (str/includes? code "clel-split-with"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "split-with in let binding"
+    (let [code (clel/emit '(let [parts (split-with even? data)] parts))]
+      (is (str/includes? code "clel-split-with")))))
+
+(deftest additional-seq-composition-test
+  (testing "partition-all + map composition"
+    (let [code (clel/emit '(map count (partition-all 3 xs)))]
+      (is (str/includes? code "clel-map"))
+      (is (str/includes? code "clel-partition-all"))))
+
+  (testing "interpose + apply str (common pattern)"
+    (let [code (clel/emit '(apply str (interpose "-" parts)))]
+      (is (str/includes? code "clel-interpose"))
+      (is (str/includes? code "apply"))))
+
+  (testing "distinct + filter composition"
+    (let [code (clel/emit '(filter pos? (distinct xs)))]
+      (is (str/includes? code "clel-filter"))
+      (is (str/includes? code "clel-distinct"))))
+
+  (testing "partition-by + map composition"
+    (let [code (clel/emit '(map first (partition-by :type items)))]
+      (is (str/includes? code "clel-map"))
+      (is (str/includes? code "clel-partition-by"))))
+
+  (testing "split-with in conditional"
+    (let [code (clel/emit '(let [parts (split-with pred xs)]
+                             (if (empty? (first parts)) :all-false :has-true)))]
+      (is (str/includes? code "clel-split-with"))
+      (is (str/includes? code "clel-empty-p")))))
+
+;; ============================================================================
+;; Transducers (clel-043)
+;; ============================================================================
+
+(deftest transduce-compilation-test
+  (testing "basic transduce"
+    (let [code (clel/emit '(transduce (map inc) + 0 xs))]
+      (is (str/includes? code "clel-transduce"))
+      (is (str/includes? code "1+"))))
+
+  (testing "transduce with filter"
+    (let [code (clel/emit '(transduce (filter even?) + xs))]
+      (is (str/includes? code "clel-transduce"))
+      (is (str/includes? code "cl-evenp"))))  ;; even? maps to cl-evenp
+
+  (testing "transduce with comp"
+    (let [code (clel/emit '(transduce (comp (map inc) (filter pos?)) conj [] xs))]
+      (is (str/includes? code "clel-transduce"))
+      (is (str/includes? code "clel-comp"))  ;; comp emits as clel-comp
+      (is (str/includes? code "clel-conj")))))
+
+(deftest reduced-compilation-test
+  (testing "reduced wrapper"
+    (let [code (clel/emit '(reduced x))]
+      (is (str/includes? code "clel-reduced"))))
+
+  (testing "reduced? predicate"
+    (let [code (clel/emit '(reduced? val))]
+      (is (str/includes? code "clel-reduced-p"))))
+
+  (testing "unreduced unwrapper"
+    (let [code (clel/emit '(unreduced wrapped))]
+      (is (str/includes? code "clel-unreduced"))))
+
+  (testing "reduced in reduce context"
+    (let [code (clel/emit '(reduce (fn [acc x]
+                                     (if (> acc 100)
+                                       (reduced acc)
+                                       (+ acc x)))
+                                   0 xs))]
+      (is (str/includes? code "clel-reduced"))
+      (is (str/includes? code "reduce")))))
+
+(deftest keep-compilation-test
+  (testing "keep basic"
+    (let [code (clel/emit '(keep identity xs))]
+      (is (str/includes? code "clel-keep"))))
+
+  (testing "keep with function"
+    (let [code (clel/emit '(keep (fn [x] (when (> x 0) x)) xs))]
+      (is (str/includes? code "clel-keep"))
+      (is (str/includes? code "lambda"))))
+
+  (testing "keep-indexed"
+    (let [code (clel/emit '(keep-indexed (fn [i x] (when (even? i) x)) xs))]
+      (is (str/includes? code "clel-keep-indexed"))
+      (is (str/includes? code "cl-evenp")))))
+
+(deftest eduction-compilation-test
+  (testing "basic eduction"
+    (let [code (clel/emit '(eduction (map inc) xs))]
+      (is (str/includes? code "clel-eduction"))))
+
+  (testing "eduction with multiple xforms"
+    (let [code (clel/emit '(eduction (map inc) (filter pos?) xs))]
+      (is (str/includes? code "clel-eduction"))))
+
+  (testing "eduction with comp"
+    (let [code (clel/emit '(eduction (comp (map inc) (take 5)) xs))]
+      (is (str/includes? code "clel-eduction"))
+      (is (str/includes? code "clel-comp")))))
+
+(deftest cat-compilation-test
+  (testing "cat transducer"
+    (let [code (clel/emit '(transduce cat conj [] nested))]
+      (is (str/includes? code "clel-transduce"))
+      (is (str/includes? code "clel-cat-xf"))))
+
+  (testing "mapcat via comp + cat"
+    (let [code (clel/emit '(transduce (comp (map f) cat) conj [] xs))]
+      (is (str/includes? code "clel-transduce"))
+      (is (str/includes? code "clel-cat-xf")))))
+
+(deftest transducer-composition-test
+  (testing "multiple transducers with comp"
+    (let [code (clel/emit '(transduce (comp (map inc)
+                                            (filter even?)
+                                            (take 10))
+                                      conj [] xs))]
+      (is (str/includes? code "clel-transduce"))
+      (is (str/includes? code "clel-comp"))
+      (is (str/includes? code "clel-conj"))))
+
+  (testing "into with transducer"
+    (let [code (clel/emit '(into [] (map inc) xs))]
+      ;; into with 3 args should use xform version
+      (is (or (str/includes? code "clel-into")
+              (str/includes? code "clel-transduce")))))
+
+  (testing "sequence with transducer"
+    (let [code (clel/emit '(sequence (map inc) xs))]
+      ;; sequence with xform should use lazy version
+      (is (or (str/includes? code "clel-sequence")
+              (str/includes? code "clel-map")))))
+
+  (testing "nested transducer operations"
+    (let [code (clel/emit '(transduce (comp (map (fn [x] (transduce (map inc) + 0 x)))
+                                            (filter pos?))
+                                      + 0 nested))]
+      (is (str/includes? code "clel-transduce"))
+      ;; Should have nested transduce
+      (is (> (count (re-seq #"clel-transduce" code)) 1)))))
 

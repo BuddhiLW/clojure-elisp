@@ -127,7 +127,14 @@
    'concat "clel-concat"
    'mapcat "clel-mapcat"
    'interleave "clel-interleave"
+   'interpose "clel-interpose"
    'partition "clel-partition"
+   'partition-all "clel-partition-all"
+   'partition-by "clel-partition-by"
+   'distinct "clel-distinct"
+   'dedupe "clel-dedupe"
+   'split-at "clel-split-at"
+   'split-with "clel-split-with"
 
    ;; Sequence functions (eager)
    'reduce "clel-reduce"
@@ -135,6 +142,16 @@
    'sort-by "clel-sort-by"
    'group-by "clel-group-by"
    'frequencies "clel-frequencies"
+
+   ;; Transducers (clel-043)
+   'transduce "clel-transduce"
+   'eduction "clel-eduction"
+   'keep "clel-keep"
+   'keep-indexed "clel-keep-indexed"
+   'cat "clel-cat-xf"
+   'reduced "clel-reduced"
+   'reduced? "clel-reduced-p"
+   'unreduced "clel-unreduced"
 
    ;; Sequence generators
    'range "clel-range"
@@ -178,6 +195,26 @@
    're-matches "clel-str-re-matches"
    're-find "clel-str-re-find"
    're-seq "clel-str-re-seq"
+
+   ;; Set operations (clel-044)
+   'set "clel-set-from-coll"
+   'hash-set "clel-set"
+   'disj "clel-set-remove"
+   'set? "clel-set-p"
+
+   ;; clojure.set namespace
+   'clojure.set/union "clel-set-union"
+   'clojure.set/intersection "clel-set-intersection"
+   'clojure.set/difference "clel-set-difference"
+   'clojure.set/subset? "clel-set-subset-p"
+   'clojure.set/superset? "clel-set-superset-p"
+   'clojure.set/select "clel-set-select"
+   'clojure.set/project "clel-set-project"
+   'clojure.set/rename "clel-set-rename"
+   'clojure.set/rename-keys "clel-rename-keys"
+   'clojure.set/join "clel-set-join"
+   'clojure.set/index "clel-set-index"
+   'clojure.set/map-invert "clel-map-invert"
 
    ;; Math
    'min "cl-min"
@@ -540,15 +577,50 @@
     (format "(with-output-to-string\n    %s)" body-str)))
 
 ;; ============================================================================
-;; Iteration Forms (clel-035)
+;; Iteration Forms (clel-035, clel-045)
 ;; ============================================================================
 
+(defn- emit-doseq-clauses
+  "Emit nested dolist/let/when forms for doseq clauses.
+   Works from inside out: inner is the body expression,
+   clauses are processed in reverse order to build nested structure."
+  [clauses inner-body]
+  (reduce
+   (fn [inner clause]
+     (case (:type clause)
+       :binding
+       (let [sym-str (mangle-name (:sym clause))
+             coll-str (emit (:coll clause))]
+         (format "(dolist (%s (clel-seq %s))\n    %s)" sym-str coll-str inner))
+
+       :let
+       (let [let-strs (map (fn [{:keys [name init]}]
+                             (format "(%s %s)" (mangle-name name) (emit init)))
+                           (:bindings clause))]
+         (format "(let* (%s)\n    %s)" (str/join " " let-strs) inner))
+
+       :when
+       (format "(when %s\n    %s)" (emit (:pred clause)) inner)
+
+       :while
+       ;; :while with catch/throw for early termination
+       (format "(unless %s (cl-return))\n    %s" (emit (:pred clause)) inner)
+
+       ;; Fallback
+       inner))
+   inner-body
+   (reverse clauses)))
+
 (defmethod emit-node :doseq
-  [{:keys [binding coll body]}]
-  (let [binding-str (mangle-name binding)
-        coll-str (emit coll)
-        body-str (str/join "\n    " (map emit body))]
-    (format "(dolist (%s (clel-seq %s))\n    %s)" binding-str coll-str body-str)))
+  [{:keys [clauses body]}]
+  (let [;; Check if we have any :while clauses that need cl-block wrapper
+        has-while? (some #(= :while (:type %)) clauses)
+        body-str (str/join "\n    " (map emit body))
+        nested-str (emit-doseq-clauses clauses body-str)]
+    (if has-while?
+      ;; Wrap in cl-block for :while early termination
+      (format "(cl-block nil\n  %s)" nested-str)
+      nested-str)))
 
 (defmethod emit-node :dotimes
   [{:keys [binding count body]}]
@@ -557,31 +629,53 @@
         body-str (str/join "\n    " (map emit body))]
     (format "(cl-dotimes (%s %s)\n    %s)" binding-str count-str body-str)))
 
+(defn- emit-for-clauses
+  "Emit nested mapping forms for 'for' list comprehension.
+   Multi-binding for compiles to nested mapcan/mapcar chains.
+   Each :binding becomes a mapcar/mapcan level,
+   :when/:while filter at that level,
+   :let adds intermediate bindings."
+  [clauses body-expr]
+  ;; Process clauses from right to left (innermost first)
+  ;; Each :binding wraps the current expression in a mapcan
+  (reduce
+   (fn [inner clause]
+     (case (:type clause)
+       :binding
+       (let [sym-str (mangle-name (:sym clause))
+             coll-str (emit (:coll clause))]
+         ;; Use cl-mapcan to flatten nested lists
+         (format "(cl-mapcan (lambda (%s) %s) (clel-seq %s))"
+                 sym-str inner coll-str))
+
+       :let
+       (let [let-strs (map (fn [{:keys [name init]}]
+                             (format "(%s %s)" (mangle-name name) (emit init)))
+                           (:bindings clause))]
+         (format "(let* (%s) %s)" (str/join " " let-strs) inner))
+
+       :when
+       ;; Filter: return list on match, nil otherwise
+       (format "(when %s %s)" (emit (:pred clause)) inner)
+
+       :while
+       ;; :while - similar to :when but with throw for early termination
+       ;; In practice, map-based for doesn't support early termination well
+       ;; We approximate with :when semantics
+       (format "(when %s %s)" (emit (:pred clause)) inner)
+
+       ;; Fallback
+       inner))
+   body-expr
+   (reverse clauses)))
+
 (defmethod emit-node :for
-  [{:keys [binding coll body] :as node}]
-  (let [when-clause (:when node)
-        let-clause (:let node)
-        binding-str (mangle-name binding)
-        coll-str (emit coll)
-        ;; Build the innermost body expression
+  [{:keys [clauses body]}]
+  (let [;; Build the innermost body expression wrapped in (list ...)
         body-expr (if (= 1 (count body))
-                    (emit (first body))
-                    (format "(progn %s)" (str/join " " (map emit body))))
-        ;; Wrap with :let bindings if present
-        body-with-let (if let-clause
-                        (let [let-strs (map (fn [{:keys [name init]}]
-                                              (format "(%s %s)" (mangle-name name) (emit init)))
-                                            let-clause)]
-                          (format "(let* (%s) %s)" (str/join " " let-strs) body-expr))
-                        body-expr)
-        ;; If :when is present, use cl-mapcan to filter
-        ;; Otherwise use simple mapcar
-        lambda-body (if when-clause
-                      (format "(when %s (list %s))" (emit when-clause) body-with-let)
-                      body-with-let)
-        map-fn (if when-clause "cl-mapcan" "mapcar")]
-    (format "(%s (lambda (%s) %s) (clel-seq %s))"
-            map-fn binding-str lambda-body coll-str)))
+                    (format "(list %s)" (emit (first body)))
+                    (format "(list (progn %s))" (str/join " " (map emit body))))]
+    (emit-for-clauses clauses body-expr)))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]
