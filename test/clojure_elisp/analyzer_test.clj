@@ -452,14 +452,14 @@
                           (a 1)))]
       ;; In 'a's body, 'b' should be resolved as a local
       (let [a-body (get-in ast [:fns 0 :body 0])
-            b-ref (get-in a-body [:fn])]
+            b-ref  (get-in a-body [:fn])]
         (is (= :local (:op b-ref)))
         (is (= 'b (:name b-ref))))))
 
   (testing "letfn function names are in scope in main body"
     (let [ast (analyze '(letfn [(foo [x] x)] (foo 5)))]
       (let [body-invoke (first (:body ast))
-            foo-ref (:fn body-invoke)]
+            foo-ref     (:fn body-invoke)]
         (is (= :local (:op foo-ref)))
         (is (= 'foo (:name foo-ref)))))))
 
@@ -643,7 +643,7 @@
 (deftest analyze-source-location-from-metadata-test
   (testing "AST nodes carry :line/:column from form metadata"
     (let [form (with-meta '(+ 1 2) {:line 10 :column 5})
-          ast (analyze form)]
+          ast  (analyze form)]
       (is (= 10 (:line ast)))
       (is (= 5 (:column ast)))))
 
@@ -654,13 +654,13 @@
 
   (testing "defn form preserves source location"
     (let [form (with-meta '(defn foo [x] x) {:line 3 :column 1})
-          ast (analyze form)]
+          ast  (analyze form)]
       (is (= 3 (:line ast)))
       (is (= 1 (:column ast)))))
 
   (testing "let form preserves source location"
     (let [form (with-meta '(let [a 1] a) {:line 7 :column 0})
-          ast (analyze form)]
+          ast  (analyze form)]
       (is (= 7 (:line ast)))
       (is (= 0 (:column ast))))))
 
@@ -668,7 +668,7 @@
   (testing "nested forms get their own source locations"
     (let [inner (with-meta '(+ 1 2) {:line 5 :column 10})
           outer (with-meta (list 'let ['x inner] 'x) {:line 4 :column 0})
-          ast (analyze outer)]
+          ast   (analyze outer)]
       ;; Outer let gets line 4
       (is (= 4 (:line ast)))
       ;; Inner (+ 1 2) in the binding init gets line 5
@@ -680,7 +680,7 @@
     ;; A symbol like 'x inside a let won't have its own metadata,
     ;; but it should inherit from the enclosing form's context
     (let [form (with-meta '(let [x 1] x) {:line 10 :column 2})
-          ast (analyze form)]
+          ast  (analyze form)]
       ;; The body node (x as local) should have inherited context
       (let [body-node (first (:body ast))]
         (is (= 10 (:line body-node)))
@@ -688,20 +688,20 @@
 
 (deftest analyze-source-location-line-numbering-reader-test
   (testing "forms from LineNumberingPushbackReader carry reader-attached metadata"
-    (let [rdr (clojure.lang.LineNumberingPushbackReader.
-               (java.io.StringReader. "(defn greet [name] (str \"Hello \" name))"))
+    (let [rdr  (clojure.lang.LineNumberingPushbackReader.
+                (java.io.StringReader. "(defn greet [name] (str \"Hello \" name))"))
           form (read rdr)
-          ast (analyze form)]
+          ast  (analyze form)]
       (is (number? (:line ast)))
       (is (= 1 (:line ast)))))
 
   (testing "multiple forms from LineNumberingPushbackReader carry line info"
-    (let [rdr (clojure.lang.LineNumberingPushbackReader.
-               (java.io.StringReader. "(+ 1 2)\n(defn foo [x] x)"))
+    (let [rdr   (clojure.lang.LineNumberingPushbackReader.
+                 (java.io.StringReader. "(+ 1 2)\n(defn foo [x] x)"))
           form1 (read rdr)
           form2 (read rdr)
-          ast1 (analyze form1)
-          ast2 (analyze form2)]
+          ast1  (analyze form1)
+          ast2  (analyze form2)]
       (is (= 1 (:line ast1)))
       (is (= 2 (:line ast2))))))
 
@@ -986,7 +986,7 @@
 
   (testing "macroexpand-1 returns form unchanged if not a macro"
     (ana/clear-macros!)
-    (let [form '(+ 1 2)
+    (let [form   '(+ 1 2)
           result (ana/macroexpand-1-clel form)]
       (is (= form result)))))
 
@@ -1097,7 +1097,7 @@
     (let [forms '[(ns my.app
                     (:require [clojure.string :as str]))
                   (defn greet [name] (str/join ", " name))]
-          asts (ana/analyze-file-forms forms)]
+          asts  (ana/analyze-file-forms forms)]
       ;; First AST is the ns node
       (is (= :ns (:op (first asts))))
       (is (= 'my.app (:name (first asts))))
@@ -1107,13 +1107,13 @@
 
   (testing "file without ns form works normally"
     (let [forms '[(def x 1) (def y 2)]
-          asts (ana/analyze-file-forms forms)]
+          asts  (ana/analyze-file-forms forms)]
       (is (= 2 (count asts)))
       (is (every? #(= :def (:op %)) asts))))
 
   (testing "ns establishes current namespace in env"
     (let [forms '[(ns my.app) (def x 42)]
-          asts (ana/analyze-file-forms forms)]
+          asts  (ana/analyze-file-forms forms)]
       ;; The def node's env should have :ns set to my.app
       (is (= 'my.app (get-in (second asts) [:env :ns])))))
 
@@ -1121,9 +1121,9 @@
     (let [forms '[(ns my.app
                     (:require [utils.helpers :refer [helper]]))
                   (helper 42)]
-          asts (ana/analyze-file-forms forms)]
+          asts  (ana/analyze-file-forms forms)]
       (let [invoke-ast (second asts)
-            fn-node (:fn invoke-ast)]
+            fn-node    (:fn invoke-ast)]
         (is (= :var (:op fn-node)))
         (is (= 'helper (:name fn-node)))
         (is (= 'utils.helpers (:ns fn-node)))))))
@@ -1564,8 +1564,8 @@
       (is (= [:binding :when :binding :when] (mapv :type (:clauses ast))))))
 
   (testing "for with multiple bindings and :let (clel-045)"
-    (let [ast (analyze '(for [x xs
-                              y ys
+    (let [ast (analyze '(for [x    xs
+                              y    ys
                               :let [sum (+ x y)]]
                           sum))]
       (is (= :for (:op ast)))
@@ -1573,9 +1573,9 @@
       (is (= [:binding :binding :let] (mapv :type (:clauses ast))))))
 
   (testing "for with complex multi-binding (clel-045)"
-    (let [ast (analyze '(for [x [1 2 3]
-                              :let [x2 (* x 2)]
-                              y [4 5 6]
+    (let [ast (analyze '(for [x     [1 2 3]
+                              :let  [x2 (* x 2)]
+                              y     [4 5 6]
                               :when (even? (+ x y))]
                           [x y x2]))]
       (is (= :for (:op ast)))

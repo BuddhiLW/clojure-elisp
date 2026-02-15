@@ -543,7 +543,7 @@
                  '(fn [x] (+ x 1))]]
       (doseq [form forms]
         (let [result (analyze-and-emit form)
-              opens (count (filter #(= % \() result))
+              opens  (count (filter #(= % \() result))
               closes (count (filter #(= % \)) result))]
           (is (= opens closes)
               (str "Unbalanced parens in: " result))))))
@@ -649,18 +649,18 @@
 
 (deftest emit-source-comments-test
   (testing "source comments disabled by default"
-    (let [form (with-meta '(defn foo [x] x) {:line 10 :column 1})
+    (let [form   (with-meta '(defn foo [x] x) {:line 10 :column 1})
           result (-> form ana/analyze emit/emit)]
       (is (not (clojure.string/includes? result ";;; L10")))))
 
   (testing "source comments emitted when *emit-source-comments* is true"
-    (let [form (with-meta '(defn foo [x] x) {:line 10 :column 1})
+    (let [form   (with-meta '(defn foo [x] x) {:line 10 :column 1})
           result (binding [emit/*emit-source-comments* true]
                    (-> form ana/analyze emit/emit))]
       (is (clojure.string/includes? result ";;; L10:C1"))))
 
   (testing "source comments for def forms"
-    (let [form (with-meta '(def bar 42) {:line 5 :column 0})
+    (let [form   (with-meta '(def bar 42) {:line 5 :column 0})
           result (binding [emit/*emit-source-comments* true]
                    (-> form ana/analyze emit/emit))]
       (is (clojure.string/includes? result ";;; L5:C0"))))
@@ -671,7 +671,7 @@
       (is (not (clojure.string/includes? result ";;;")))))
 
   (testing "source comments for fn (lambda) forms"
-    (let [form (with-meta '(fn [x] x) {:line 20 :column 3})
+    (let [form   (with-meta '(fn [x] x) {:line 20 :column 3})
           result (binding [emit/*emit-source-comments* true]
                    (-> form ana/analyze emit/emit))]
       (is (clojure.string/includes? result ";;; L20:C3")))))
@@ -912,15 +912,15 @@
 
 (deftest emit-ns-definition-prefixing-test
   (testing "defn in namespace emits prefixed name"
-    (let [forms '[(ns my.app) (defn greet [name] name)]
-          asts (ana/analyze-file-forms forms)
+    (let [forms     '[(ns my.app) (defn greet [name] name)]
+          asts      (ana/analyze-file-forms forms)
           defn-code (emit/emit (second asts))]
       (is (clojure.string/includes? defn-code "defun"))
       (is (clojure.string/includes? defn-code "my-app-greet"))))
 
   (testing "def in namespace emits prefixed name"
-    (let [forms '[(ns my.app) (def pi 3.14)]
-          asts (ana/analyze-file-forms forms)
+    (let [forms    '[(ns my.app) (def pi 3.14)]
+          asts     (ana/analyze-file-forms forms)
           def-code (emit/emit (second asts))]
       (is (clojure.string/includes? def-code "defvar"))
       (is (clojure.string/includes? def-code "my-app-pi"))))
@@ -932,8 +932,8 @@
 (deftest emit-ns-provide-test
   (testing "ns emission includes provide at end"
     (let [forms '[(ns my.app)]
-          asts (ana/analyze-file-forms forms)
-          code (emit/emit-file asts)]
+          asts  (ana/analyze-file-forms forms)
+          code  (emit/emit-file asts)]
       (is (clojure.string/includes? code "(provide 'my-app)"))
       ;; provide should be after the header
       (is (> (.indexOf code "(provide 'my-app)")
@@ -941,19 +941,19 @@
 
 (deftest emit-alias-resolution-full-pipeline-test
   (testing "aliased call emits fully qualified name"
-    (let [forms '[(ns my.app
-                    (:require [clojure.string :as str]))
-                  (str/join ", " items)]
-          asts (ana/analyze-file-forms forms)
+    (let [forms     '[(ns my.app
+                        (:require [clojure.string :as str]))
+                      (str/join ", " items)]
+          asts      (ana/analyze-file-forms forms)
           call-code (emit/emit (second asts))]
       ;; clojure.string/join is mapped to clel-str-join
       (is (clojure.string/includes? call-code "clel-str-join"))))
 
   (testing "referred symbol emits fully qualified name"
-    (let [forms '[(ns my.app
-                    (:require [my.utils :refer [helper]]))
-                  (helper 42)]
-          asts (ana/analyze-file-forms forms)
+    (let [forms     '[(ns my.app
+                        (:require [my.utils :refer [helper]]))
+                      (helper 42)]
+          asts      (ana/analyze-file-forms forms)
           call-code (emit/emit (second asts))]
       (is (clojure.string/includes? call-code "my-utils-helper")))))
 
@@ -1715,10 +1715,10 @@
       (is (clojure.string/includes? code "(x2 (* x 2))"))))
 
   (testing "complex multi-binding for with :when and :let"
-    (let [code (analyze-and-emit '(for [x [1 2 3]
-                                        y [4 5 6]
+    (let [code (analyze-and-emit '(for [x     [1 2 3]
+                                        y     [4 5 6]
                                         :when (even? (+ x y))
-                                        :let [z (* x y)]]
+                                        :let  [z (* x y)]]
                                     [x y z]))]
       (is (clojure.string/includes? code "(cl-mapcan"))
       (is (clojure.string/includes? code "(lambda (x)"))
@@ -1753,10 +1753,10 @@
       (is (clojure.string/includes? code "(x2 (* x 2))"))))
 
   (testing "complex multi-binding doseq"
-    (let [code (analyze-and-emit '(doseq [x items
+    (let [code (analyze-and-emit '(doseq [x     items
                                           :when (valid? x)
-                                          y (children x)
-                                          :let [name (get-name y)]]
+                                          y     (children x)
+                                          :let  [name (get-name y)]]
                                     (println name)))]
       (is (clojure.string/includes? code "(dolist"))
       (is (clojure.string/includes? code "(when (valid-p x)"))

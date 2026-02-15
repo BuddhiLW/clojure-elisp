@@ -14,11 +14,16 @@
      (clel/compile-file \"src/my_package.cljel\" \"out/my-package.el\")
 
      ;; Compile a namespace
-     (clel/compile-ns 'my.package)"
+     (clel/compile-ns 'my.package)
+
+   Result-returning variants:
+     (clel/emit-result '(+ 1 2))           ;; => {:ok \"(+ 1 2)\"}
+     (clel/compile-file-result in out)      ;; => {:ok {...}} or {:error ...}"
   (:require [clojure-elisp.analyzer :as ana]
             [clojure-elisp.emitter :as emit]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [hive-dsl.result :as r]))
 
 ;; ============================================================================
 ;; Single-Form Compilation
@@ -37,6 +42,28 @@
   (->> forms
        (map emit)
        (str/join "\n\n")))
+
+;; ============================================================================
+;; Result-Returning API Variants
+;; ============================================================================
+
+(defn emit-result
+  "Compile a Clojure form to Elisp, returning a Result.
+   On success: {:ok \"elisp-string\"}
+   On error:   {:error :compile/analysis-error :message \"...\" ...}"
+  [form]
+  (r/try-effect* :compile/analysis-error
+                 (-> form ana/analyze emit/emit)))
+
+(defn emit-forms-result
+  "Compile multiple forms to Elisp, returning a Result.
+   On success: {:ok \"elisp-string\"}
+   On error:   {:error :compile/analysis-error :message \"...\" ...}"
+  [forms]
+  (r/try-effect* :compile/analysis-error
+                 (->> forms
+                      (map (fn [f] (-> f ana/analyze emit/emit)))
+                      (str/join "\n\n"))))
 
 ;; ============================================================================
 ;; File-Aware Compilation (with namespace context)
@@ -60,7 +87,7 @@
    Uses analyze-file-forms so (ns ...) establishes aliases/refers
    for subsequent forms. Appends (provide ...) when ns is present."
   [s]
-  (let [forms (read-all-forms s)
+  (let [forms     (read-all-forms s)
         ast-nodes (ana/analyze-file-forms forms)]
     (emit/emit-file ast-nodes)))
 
@@ -80,20 +107,39 @@
    Uses file-level analysis for namespace context."
   [input-path output-path]
   (let [source (slurp input-path)
-        elisp (compile-file-string source)]
+        elisp  (compile-file-string source)]
     (spit output-path elisp)
     {:input input-path
      :output output-path
      :size (count elisp)}))
 
+(defn compile-file-string-result
+  "Compile a string of Clojure code as a file, returning a Result.
+   On success: {:ok \"elisp-string\"}
+   On error:   {:error :compile/analysis-error :message \"...\" ...}"
+  [s]
+  (r/try-effect* :compile/analysis-error
+                 (compile-file-string s)))
+
+(defn compile-file-result
+  "Compile a .cljel file to a .el file, returning a Result.
+   On success: {:ok {:input path :output path :size n}}
+   On error:   {:error :compile/file-error :message \"...\" ...}"
+  [input-path output-path]
+  (r/let-ok [source (r/try-effect* :compile/file-error (slurp input-path))
+             elisp  (r/try-effect* :compile/analysis-error (compile-file-string source))]
+            (r/try-effect* :compile/file-error
+                           (spit output-path elisp)
+                           {:input input-path :output output-path :size (count elisp)})))
+
 (defn compile-ns
   "Compile a namespace to Elisp.
    Looks for the source file in the classpath."
   [ns-sym]
-  (let [path (-> (str ns-sym)
-                 (str/replace "." "/")
-                 (str/replace "-" "_")
-                 (str ".cljel"))
+  (let [path     (-> (str ns-sym)
+                     (str/replace "." "/")
+                     (str/replace "-" "_")
+                     (str ".cljel"))
         resource (io/resource path)]
     (when resource
       (compile-file-string (slurp resource)))))
@@ -134,9 +180,9 @@
                                (assoc m node (count deps)))
                              {}
                              graph)]
-    (loop [queue (into clojure.lang.PersistentQueue/EMPTY
-                       (filter #(zero? (get in-degree %)) all-nodes))
-           result []
+    (loop [queue            (into clojure.lang.PersistentQueue/EMPTY
+                                  (filter #(zero? (get in-degree %)) all-nodes))
+           result           []
            remaining-degree in-degree]
       (if (empty? queue)
         ;; Check if all nodes are processed
@@ -144,16 +190,16 @@
           result
           (throw (ex-info "Circular dependency detected"
                           {:unresolved (remove (set result) all-nodes)})))
-        (let [node (peek queue)
-              queue (pop queue)
+        (let [node        (peek queue)
+              queue       (pop queue)
               ;; Find nodes that depend on this one and decrement their in-degree
-              dependents (for [[n deps] graph
-                               :when (contains? deps node)]
-                           n)
-              new-degree (reduce (fn [d dep]
-                                   (update d dep dec))
-                                 remaining-degree
-                                 dependents)
+              dependents  (for [[n deps] graph
+                                :when    (contains? deps node)]
+                            n)
+              new-degree  (reduce (fn [d dep]
+                                    (update d dep dec))
+                                  remaining-degree
+                                  dependents)
               newly-ready (filter #(zero? (get new-degree %)) dependents)]
           (recur (into queue newly-ready)
                  (conj result node)
@@ -172,10 +218,10 @@
    Returns {ns-sym -> #{dep-ns-syms}}."
   [file-paths]
   (into {}
-        (for [path file-paths
-              :let [source (slurp path)
-                    ns-name (extract-ns-name source)
-                    deps (extract-ns-deps source)]
+        (for [path  file-paths
+              :let  [source (slurp path)
+                     ns-name (extract-ns-name source)
+                     deps (extract-ns-deps source)]
               :when ns-name]
           [ns-name (set (or deps []))])))
 
@@ -185,16 +231,16 @@
    output-dir: directory for .el output files.
    Returns a vector of compilation results."
   [source-paths output-dir]
-  (let [files (discover-cljel-files source-paths)
+  (let [files    (discover-cljel-files source-paths)
         ;; Map ns-name -> file-path
         ns->file (into {}
-                       (for [path files
-                             :let [source (slurp path)
-                                   ns-name (extract-ns-name source)]
+                       (for [path  files
+                             :let  [source (slurp path)
+                                    ns-name (extract-ns-name source)]
                              :when ns-name]
                          [ns-name path]))
-        graph (build-dependency-graph files)
-        order (topological-sort graph)]
+        graph    (build-dependency-graph files)
+        order    (topological-sort graph)]
     ;; Ensure output directory exists
     (.mkdirs (io/file output-dir))
     ;; Compile in dependency order

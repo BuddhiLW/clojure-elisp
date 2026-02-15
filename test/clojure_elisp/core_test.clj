@@ -75,7 +75,7 @@
                  "(do (println \"hi\") (+ 1 2))"]]
       (doseq [form forms]
         (let [result (clel/compile-string form)
-              opens (count (filter #(= % \() result))
+              opens  (count (filter #(= % \() result))
               closes (count (filter #(= % \)) result))]
           (is (= opens closes)
               (str "Unbalanced parens for: " form))))))
@@ -214,7 +214,7 @@
 
 (deftest compile-file-test
   (testing "compile-file creates output file"
-    (let [input-file (java.io.File/createTempFile "test" ".cljel")
+    (let [input-file  (java.io.File/createTempFile "test" ".cljel")
           output-file (java.io.File/createTempFile "test" ".el")]
       (try
         ;; Write test input
@@ -445,7 +445,7 @@
 
 (deftest compile-file-source-location-test
   (testing "compile-file preserves source locations"
-    (let [input-file (java.io.File/createTempFile "test-src" ".cljel")
+    (let [input-file  (java.io.File/createTempFile "test-src" ".cljel")
           output-file (java.io.File/createTempFile "test-out" ".el")]
       (try
         ;; Write multiline source
@@ -468,10 +468,10 @@
 (deftest source-location-propagation-test
   (testing "nested forms preserve their own locations in AST"
     (let [source "(let [x (+ 1 2)] x)"
-          rdr (clojure.lang.LineNumberingPushbackReader.
-               (java.io.StringReader. source))
-          form (read rdr)
-          ast (ana/analyze form)]
+          rdr    (clojure.lang.LineNumberingPushbackReader.
+                  (java.io.StringReader. source))
+          form   (read rdr)
+          ast    (ana/analyze form)]
       ;; Top-level let should have line 1
       (is (= 1 (:line ast)))
       ;; The init expression (+ 1 2) inherits context since symbols don't have metadata

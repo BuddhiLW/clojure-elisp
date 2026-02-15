@@ -970,9 +970,9 @@
       (is (str/includes? code "clel-merge"))))
 
   (testing "nested operations in let"
-    (let [code (clel/emit '(let [data {:a {:b 1}}
+    (let [code (clel/emit '(let [data    {:a {:b 1}}
                                  updated (update-in data [:a :b] inc)
-                                 value (get-in updated [:a :b])]
+                                 value   (get-in updated [:a :b])]
                              value))]
       (is (str/includes? code "clel-update-in"))
       (is (str/includes? code "clel-get-in")))))
@@ -1083,10 +1083,10 @@
       (is (str/includes? code "(x2 (* x 2))"))))
 
   (testing "complex multi-binding for (clel-045 spec example)"
-    (let [code (clel/emit '(for [x [1 2 3]
-                                 y [4 5 6]
+    (let [code (clel/emit '(for [x     [1 2 3]
+                                 y     [4 5 6]
                                  :when (even? (+ x y))
-                                 :let [z (* x y)]]
+                                 :let  [z (* x y)]]
                              [x y z]))]
       (is (= 2 (count (re-seq #"cl-mapcan" code))))
       (is (str/includes? code "(when (cl-evenp (+ x y))"))
@@ -1233,7 +1233,7 @@
 
   (testing "string functions in let"
     (let [code (clel/emit '(let [trimmed (clojure.string/trim s)
-                                 upper (clojure.string/upper-case trimmed)]
+                                 upper   (clojure.string/upper-case trimmed)]
                              upper))]
       (is (str/includes? code "clel-str-trim"))
       (is (str/includes? code "clel-str-upper"))))
@@ -1540,7 +1540,7 @@
 
   (testing "dedupe vs distinct (semantic difference)"
     ;; dedupe removes consecutive duplicates, distinct removes all duplicates
-    (let [code-dedupe (clel/emit '(dedupe xs))
+    (let [code-dedupe   (clel/emit '(dedupe xs))
           code-distinct (clel/emit '(distinct xs))]
       (is (str/includes? code-dedupe "clel-dedupe"))
       (is (str/includes? code-distinct "clel-distinct"))

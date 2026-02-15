@@ -127,9 +127,9 @@
       (is (clojure.string/includes? output "CLJEL-OK:\"hello\""))))
 
   (testing "defn output is a single CLJEL-OK: line"
-    (let [output (with-out-str
-                   (with-in-str "(defn foo [x] (+ x 1))\n"
-                     (repl/-main)))
+    (let [output   (with-out-str
+                     (with-in-str "(defn foo [x] (+ x 1))\n"
+                       (repl/-main)))
           ok-lines (->> (clojure.string/split-lines output)
                         (filter #(clojure.string/starts-with? % "CLJEL-OK:")))]
       ;; Exactly one CLJEL-OK: line (not split across multiple lines)

@@ -16,7 +16,7 @@
   "Compile a string input to Elisp. Returns {:ok elisp} or {:err message}."
   [input]
   (try
-    (let [form (read-string input)
+    (let [form  (read-string input)
           elisp (one-line (core/emit form))]
       {:ok elisp})
     (catch Exception e

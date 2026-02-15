@@ -52,7 +52,84 @@
 
   (testing "parentheses are balanced"
     (let [result (clel/compile-file-string (slurp "examples/hive-mcp-eca.cljel"))
-          opens (count (filter #(= % \() result))
+          opens  (count (filter #(= % \() result))
           closes (count (filter #(= % \)) result))]
       (is (= opens closes)
           "Should have balanced parentheses"))))
+
+;; ============================================================================
+;; olympus-ui.cljel - Compilation Tests
+;; ============================================================================
+
+(deftest olympus-ui-compiles-test
+  (testing "olympus-ui.cljel compiles without errors"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (string? result) "Should produce string output")
+      (is (> (count result) 5000) "Should produce substantial output")))
+
+  (testing "defgroup is emitted correctly"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (str/includes? result "defgroup olympus-ui")
+          "Should contain defgroup declaration")))
+
+  (testing "defcustom settings are emitted"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (str/includes? result "defcustom olympus-ui-refresh-interval")
+          "Should contain refresh-interval defcustom")
+      (is (str/includes? result "defcustom olympus-ui-cell-width")
+          "Should contain cell-width defcustom")))
+
+  (testing "defface declarations are emitted"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (str/includes? result "defface olympus-ui-status-idle")
+          "Should contain status-idle defface")
+      (is (str/includes? result "defface olympus-ui-status-working")
+          "Should contain status-working defface")
+      (is (str/includes? result "defface olympus-ui-status-blocked")
+          "Should contain status-blocked defface")
+      (is (str/includes? result "defface olympus-ui-status-error")
+          "Should contain status-error defface")))
+
+  (testing "defvar internal state is emitted"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (str/includes? result "defvar olympus-ui--buffer-name")
+          "Should contain buffer-name defvar")
+      (is (str/includes? result "defvar olympus-ui--current-state")
+          "Should contain current-state defvar")))
+
+  (testing "internal functions reference correct namespace prefix"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (str/includes? result "(olympus-ui--ensure-api)")
+          "Should call olympus-ui--ensure-api with correct prefix")
+      (is (str/includes? result "(olympus-ui--fetch-status)")
+          "Should call olympus-ui--fetch-status with correct prefix")
+      (is (str/includes? result "(olympus-ui--render-cell")
+          "Should call olympus-ui--render-cell with correct prefix")))
+
+  (testing "core rendering functions are emitted"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (str/includes? result "defun olympus-ui--render-cell")
+          "Should contain -render-cell function")
+      (is (str/includes? result "defun olympus-ui--render-empty-cell")
+          "Should contain -render-empty-cell function")
+      (is (str/includes? result "defun olympus-ui--status--gtface")
+          "Should contain -status->face function (mangled to --gtface)")
+      (is (str/includes? result "defun olympus-ui--status--gticon")
+          "Should contain -status->icon function (mangled to --gticon)")))
+
+  (testing "provide form is at the end"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))]
+      (is (str/includes? result "(provide 'olympus-ui)")
+          "Should provide the feature")))
+
+  (testing "parentheses are balanced"
+    (let [result (clel/compile-file-string (slurp "examples/olympus-ui.cljel"))
+          opens  (count (filter #(= % \() result))
+          closes (count (filter #(= % \)) result))]
+      (is (= opens closes)
+          "Should have balanced parentheses"))))
+
+;; NOTE: olympus-ui.cljel uses cl-loop forms that may not be fully supported
+;; in ClojureElisp yet. Some functions after -render-grid may not compile.
+;; This is tracked as a known limitation. The core status display and cell
+;; rendering compiles correctly.

@@ -4,6 +4,7 @@
 .nrepl.edn
 target/
 *.jar
+deps.local.edn
 
 # MCP
 .clojure-mcp/
