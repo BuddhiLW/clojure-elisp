@@ -2,7 +2,9 @@
   "Emitter for ClojureElisp.
 
    Transforms AST nodes into Elisp source code strings."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clojure-elisp.ast :as ast]
+            [clojure-elisp.mappings :as mappings]))
 
 ;; ============================================================================
 ;; Elisp Name Mangling
@@ -35,142 +37,9 @@
 ;; ============================================================================
 
 (def core-fn-mapping
-  "Map Clojure core functions to Elisp equivalents."
-  {;; Arithmetic
-   '+ "+"
-   '- "-"
-   '* "*"
-   '/ "/"
-   'mod "mod"
-   'rem "%"
-   'inc "1+"
-   'dec "1-"
-
-   ;; Comparison
-   '= "equal"
-   '== "="
-   'not= "/="
-   '< "<"
-   '> ">"
-   '<= "<="
-   '>= ">="
-
-   ;; Logic
-   'not "not"
-   ;; NOTE: 'and and 'or are special forms (for short-circuit evaluation),
-   ;; handled in analyzer.clj and emitted via emit-node :and/:or
-
-   ;; Type predicates
-   'nil? "null"
-   'string? "stringp"
-   'number? "numberp"
-   'symbol? "symbolp"
-   'list? "listp"
-   'vector? "vectorp"
-   'map? "hash-table-p"
-   'fn? "functionp"
-   'keyword? "keywordp"
-
-   ;; Numeric predicates
-   'zero? "zerop"
-   'pos? "cl-plusp"
-   'neg? "cl-minusp"
-   'even? "cl-evenp"
-   'odd? "cl-oddp"
-
-;; Collection predicates
-   'coll? "clel-coll-p"
-   'sequential? "clel-sequential-p"
-   'associative? "clel-associative-p"
-
-   ;; Boolean/nil predicates
-   'some? "clel-some-p"
-   'true? "clel-true-p"
-   'false? "clel-false-p"
-
-   ;; Collections
-   'first "clel-first"
-   'rest "clel-rest"
-   'next "clel-next"
-   'cons "cons"
-   'conj "clel-conj"
-   'count "length"
-   'nth "nth"
-   'get "clel-get"
-   'assoc "clel-assoc"
-   'dissoc "clel-dissoc"
-   'keys "clel-keys"
-   'vals "clel-vals"
-   'seq "clel-seq"
-   'empty? "clel-empty-p"
-   'into "clel-into"
-   'reverse "reverse"
-   'flatten "flatten-tree"
-
-   ;; Sequence functions (lazy)
-   'map "clel-map"
-   'filter "clel-filter"
-   'remove "cl-remove-if"
-   'take "clel-take"
-   'drop "clel-drop"
-   'take-while "clel-take-while"
-   'drop-while "clel-drop-while"
-   'concat "clel-concat"
-   'mapcat "clel-mapcat"
-   'interleave "clel-interleave"
-   'partition "clel-partition"
-
-   ;; Sequence functions (eager)
-   'reduce "clel-reduce"
-   'sort "clel-sort"
-   'sort-by "clel-sort-by"
-   'group-by "clel-group-by"
-   'frequencies "clel-frequencies"
-
-   ;; Sequence predicates
-   'every? "clel-every-p"
-   'some "clel-some"
-   'not-every? "clel-not-every-p"
-   'not-any? "clel-not-any-p"
-
-   ;; Strings
-   'str "clel-str"
-   'subs "substring"
-   'format "format"
-   'pr-str "prin1-to-string"
-   'println "message"
-   'print "princ"
-
-   ;; Functions
-   'apply "apply"
-   'identity "identity"
-   'constantly "clel-constantly"
-   'partial "apply-partially"
-   'comp "clel-comp"
-
-   ;; Lazy sequences
-   'realized? "clel-realized-p"
-   'doall "clel-doall"
-   'dorun "clel-dorun"
-
-   ;; Atoms
-   'atom "clel-atom"
-   'deref "clel-deref"
-   'clojure.core/deref "clel-deref"  ; @a reader macro expands to clojure.core/deref
-   'reset! "clel-reset!"
-   'swap! "clel-swap!"
-   'add-watch "clel-add-watch"
-   'remove-watch "clel-remove-watch"
-
-   ;; Emacs-specific
-   'message "message"
-   'buffer-string "buffer-string"
-   'point "point"
-   'goto-char "goto-char"
-   'insert "insert"
-   'delete-char "delete-char"
-   'buffer-name "buffer-name"
-   'current-buffer "current-buffer"})
+  "Map Clojure core functions to Elisp equivalents.
+   See clojure-elisp.mappings for categorized sub-maps."
+  mappings/core-fn-mapping)
 
 ;; ============================================================================
 ;; Emission Helpers
@@ -245,9 +114,11 @@
     (or (get core-fn-mapping name)
         (str "clojure-core-" (mangle-name name)))
 
-    ;; Other namespace - fully qualified mangled name
+    ;; Other namespace - check fully-qualified symbol in mapping first
     :else
-    (str (mangle-name ns) "-" (mangle-name name))))
+    (let [qualified-sym (symbol (str ns) (str name))]
+      (or (get core-fn-mapping qualified-sym)
+          (str (mangle-name ns) "-" (mangle-name name))))))
 
 (defmethod emit-node :vector
   [{:keys [items]}]
@@ -280,99 +151,98 @@
                  (when docstring (pr-str docstring)))
       (emit-sexp "defvar" elisp-name "nil"))))
 
+(defn- nth-accessor
+  "Emit an efficient nth accessor for an args list.
+   Uses car/cadr/caddr for small indices, falls back to nth."
+  [n]
+  (case n
+    0 "(car args)"
+    1 "(cadr args)"
+    2 "(caddr args)"
+    3 "(cadddr args)"
+    (format "(nth %d args)" n)))
+
+(defn- emit-arity-param-bindings
+  "Emit let-binding string for an arity's params from an args list."
+  [{:keys [params fixed-params rest-param variadic?]}]
+  (if variadic?
+    (let [fixed-bindings (map-indexed
+                          (fn [i p]
+                            (format "(%s %s)" (mangle-name p) (nth-accessor i)))
+                          fixed-params)
+          rest-binding   (format "(%s (nthcdr %d args))"
+                                 (mangle-name rest-param)
+                                 (count fixed-params))]
+      (str/join " " (concat fixed-bindings [rest-binding])))
+    (str/join " " (map-indexed
+                   (fn [i p]
+                     (format "(%s %s)" (mangle-name p) (nth-accessor i)))
+                   params))))
+
+(defn- emit-multi-arity-defn
+  "Emit a multi-arity defun with cl-case dispatch on arg count."
+  [elisp-name docstring arities]
+  (let [fixed-arities      (filter #(not= :variadic (:arity %)) arities)
+        variadic-arity     (first (filter #(= :variadic (:arity %)) arities))
+
+        emit-arity-case    (fn [{:keys [arity body] :as arity-node}]
+                             (let [bindings (emit-arity-param-bindings arity-node)
+                                   body-str (str/join " " (map emit body))]
+                               (format "(%d (let (%s) %s))" arity bindings body-str)))
+
+        emit-variadic-case (fn [arity-node]
+                             (let [bindings (emit-arity-param-bindings arity-node)
+                                   body-str (str/join " " (map emit (:body arity-node)))]
+                               (format "(t (let (%s) %s))" bindings body-str)))
+
+        case-clauses       (concat
+                            (map emit-arity-case fixed-arities)
+                            (when variadic-arity
+                              [(emit-variadic-case variadic-arity)]))
+        case-body          (str/join "\n    " case-clauses)]
+    (if docstring
+      (format "(defun %s (&rest args)\n  %s\n  (cl-case (length args)\n    %s))"
+              elisp-name (pr-str docstring) case-body)
+      (format "(defun %s (&rest args)\n  (cl-case (length args)\n    %s))"
+              elisp-name case-body))))
+
+(defn- emit-single-arity-defn
+  "Emit a single-arity defun (variadic or simple)."
+  [elisp-name docstring params body variadic? fixed-params rest-param]
+  (if variadic?
+    (let [elisp-body     (str/join "\n  " (map emit body))
+          fixed-bindings (map-indexed
+                          (fn [i p]
+                            (format "(%s (nth %d args))" (mangle-name p) i))
+                          fixed-params)
+          rest-binding   (format "(%s (nthcdr %d args))"
+                                 (mangle-name rest-param)
+                                 (count fixed-params))
+          all-bindings   (str/join " " (concat fixed-bindings [rest-binding]))]
+      (if docstring
+        (format "(defun %s (&rest args)\n  %s\n  (let (%s)\n    %s))"
+                elisp-name (pr-str docstring) all-bindings elisp-body)
+        (format "(defun %s (&rest args)\n  (let (%s)\n    %s))"
+                elisp-name all-bindings elisp-body)))
+    (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
+          elisp-body   (str/join "\n  " (map emit body))]
+      (if docstring
+        (format "(defun %s %s\n  %s\n  %s)"
+                elisp-name elisp-params (pr-str docstring) elisp-body)
+        (format "(defun %s %s\n  %s)"
+                elisp-name elisp-params elisp-body)))))
+
 (defmethod emit-node :defn
   [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param env]}]
   (let [elisp-name (ns-qualify-name name env)]
-    (cond
-      ;; Multi-arity: emit cl-case dispatch
-      multi-arity?
-      (let [;; Separate fixed and variadic arities
-            fixed-arities (filter #(not= :variadic (:arity %)) arities)
-            variadic-arity (first (filter #(= :variadic (:arity %)) arities))
-
-            ;; Helper to emit nth accessor for args list
-            nth-accessor (fn [n]
-                           (case n
-                             0 "(car args)"
-                             1 "(cadr args)"
-                             2 "(caddr args)"
-                             3 "(cadddr args)"
-                             (format "(nth %d args)" n)))
-
-            ;; Emit bindings for an arity's params
-            emit-param-bindings (fn [{:keys [params fixed-params rest-param variadic?] :as arity}]
-                                  (if variadic?
-                                    ;; Variadic: bind fixed params and rest
-                                    (let [fixed-bindings (map-indexed
-                                                          (fn [i p]
-                                                            (format "(%s %s)" (mangle-name p) (nth-accessor i)))
-                                                          fixed-params)
-                                          rest-binding (format "(%s (nthcdr %d args))"
-                                                               (mangle-name rest-param)
-                                                               (count fixed-params))]
-                                      (str/join " " (concat fixed-bindings [rest-binding])))
-                                    ;; Fixed arity: bind all params by position
-                                    (str/join " " (map-indexed
-                                                   (fn [i p]
-                                                     (format "(%s %s)" (mangle-name p) (nth-accessor i)))
-                                                   params))))
-
-            ;; Emit a single arity case clause
-            emit-arity-case (fn [{:keys [arity body] :as arity-node}]
-                              (let [bindings (emit-param-bindings arity-node)
-                                    body-str (str/join " " (map emit body))]
-                                (format "(%d (let (%s) %s))" arity bindings body-str)))
-
-            ;; Emit variadic clause (uses 't' as catch-all)
-            emit-variadic-case (fn [{:keys [fixed-params body] :as arity-node}]
-                                 (let [bindings (emit-param-bindings arity-node)
-                                       body-str (str/join " " (map emit body))]
-                                   (format "(t (let (%s) %s))" bindings body-str)))
-
-            ;; Build case clauses
-            case-clauses (concat
-                          (map emit-arity-case fixed-arities)
-                          (when variadic-arity
-                            [(emit-variadic-case variadic-arity)]))
-
-            case-body (str/join "\n    " case-clauses)]
-        (if docstring
-          (format "(defun %s (&rest args)\n  %s\n  (cl-case (length args)\n    %s))"
-                  elisp-name (pr-str docstring) case-body)
-          (format "(defun %s (&rest args)\n  (cl-case (length args)\n    %s))"
-                  elisp-name case-body)))
-
-      ;; Single-arity variadic: use &rest and let to destructure
-      variadic?
-      (let [elisp-body (str/join "\n  " (map emit body))
-            fixed-bindings (map-indexed
-                            (fn [i p]
-                              (format "(%s (nth %d args))" (mangle-name p) i))
-                            fixed-params)
-            rest-binding (format "(%s (nthcdr %d args))"
-                                 (mangle-name rest-param)
-                                 (count fixed-params))
-            all-bindings (str/join " " (concat fixed-bindings [rest-binding]))]
-        (if docstring
-          (format "(defun %s (&rest args)\n  %s\n  (let (%s)\n    %s))"
-                  elisp-name (pr-str docstring) all-bindings elisp-body)
-          (format "(defun %s (&rest args)\n  (let (%s)\n    %s))"
-                  elisp-name all-bindings elisp-body)))
-
-      ;; Single-arity non-variadic: simple defun
-      :else
-      (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
-            elisp-body (str/join "\n  " (map emit body))]
-        (if docstring
-          (format "(defun %s %s\n  %s\n  %s)"
-                  elisp-name elisp-params (pr-str docstring) elisp-body)
-          (format "(defun %s %s\n  %s)"
-                  elisp-name elisp-params elisp-body))))))
+    (if multi-arity?
+      (emit-multi-arity-defn elisp-name docstring arities)
+      (emit-single-arity-defn elisp-name docstring params body variadic? fixed-params rest-param))))
 
 (defmethod emit-node :fn
   [{:keys [params body]}]
   (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
-        elisp-body (str/join "\n    " (map emit body))]
+        elisp-body   (str/join "\n    " (map emit body))]
     (format "(lambda %s\n    %s)" elisp-params elisp-body)))
 
 (defmethod emit-node :lazy-seq
@@ -383,28 +253,164 @@
 (defmethod emit-node :with-eval-after-load
   [{:keys [feature body]}]
   (let [feature-str (emit feature)
-        body-str (str/join "\n  " (map emit body))]
+        body-str    (str/join "\n  " (map emit body))]
     (format "(with-eval-after-load %s\n  %s)" feature-str body-str)))
+
+;; ============================================================================
+;; Emacs Buffer/Process Interop (clel-031)
+;; ============================================================================
+
+(defmethod emit-node :save-excursion
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(save-excursion\n    %s)" body-str)))
+
+(defmethod emit-node :save-restriction
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(save-restriction\n    %s)" body-str)))
+
+(defmethod emit-node :with-current-buffer
+  [{:keys [buffer body]}]
+  (let [buffer-str (emit buffer)
+        body-str   (str/join "\n    " (map emit body))]
+    (format "(with-current-buffer %s\n    %s)" buffer-str body-str)))
+
+(defmethod emit-node :with-temp-buffer
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(with-temp-buffer\n    %s)" body-str)))
+
+(defmethod emit-node :save-current-buffer
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(save-current-buffer\n    %s)" body-str)))
+
+(defmethod emit-node :with-output-to-string
+  [{:keys [body]}]
+  (let [body-str (str/join "\n    " (map emit body))]
+    (format "(with-output-to-string\n    %s)" body-str)))
+
+;; ============================================================================
+;; Iteration Forms (clel-035, clel-045)
+;; ============================================================================
+
+(defn- emit-doseq-clauses
+  "Emit nested dolist/let/when forms for doseq clauses.
+   Works from inside out: inner is the body expression,
+   clauses are processed in reverse order to build nested structure."
+  [clauses inner-body]
+  (reduce
+   (fn [inner clause]
+     (case (:type clause)
+       :binding
+       (let [sym-str  (mangle-name (:sym clause))
+             coll-str (emit (:coll clause))]
+         (format "(dolist (%s (clel-seq %s))\n    %s)" sym-str coll-str inner))
+
+       :let
+       (let [let-strs (map (fn [{:keys [name init]}]
+                             (format "(%s %s)" (mangle-name name) (emit init)))
+                           (:bindings clause))]
+         (format "(let* (%s)\n    %s)" (str/join " " let-strs) inner))
+
+       :when
+       (format "(when %s\n    %s)" (emit (:pred clause)) inner)
+
+       :while
+       ;; :while with catch/throw for early termination
+       (format "(unless %s (cl-return))\n    %s" (emit (:pred clause)) inner)
+
+       ;; Fallback
+       inner))
+   inner-body
+   (reverse clauses)))
+
+(defmethod emit-node :doseq
+  [{:keys [clauses body]}]
+  (let [;; Check if we have any :while clauses that need cl-block wrapper
+        has-while? (some #(= :while (:type %)) clauses)
+        body-str   (str/join "\n    " (map emit body))
+        nested-str (emit-doseq-clauses clauses body-str)]
+    (if has-while?
+      ;; Wrap in cl-block for :while early termination
+      (format "(cl-block nil\n  %s)" nested-str)
+      nested-str)))
+
+(defmethod emit-node :dotimes
+  [{:keys [binding count body]}]
+  (let [binding-str (mangle-name binding)
+        count-str   (emit count)
+        body-str    (str/join "\n    " (map emit body))]
+    (format "(cl-dotimes (%s %s)\n    %s)" binding-str count-str body-str)))
+
+(defn- emit-for-clauses
+  "Emit nested mapping forms for 'for' list comprehension.
+   Multi-binding for compiles to nested mapcan/mapcar chains.
+   Each :binding becomes a mapcar/mapcan level,
+   :when/:while filter at that level,
+   :let adds intermediate bindings."
+  [clauses body-expr]
+  ;; Process clauses from right to left (innermost first)
+  ;; Each :binding wraps the current expression in a mapcan
+  (reduce
+   (fn [inner clause]
+     (case (:type clause)
+       :binding
+       (let [sym-str  (mangle-name (:sym clause))
+             coll-str (emit (:coll clause))]
+         ;; Use cl-mapcan to flatten nested lists
+         (format "(cl-mapcan (lambda (%s) %s) (clel-seq %s))"
+                 sym-str inner coll-str))
+
+       :let
+       (let [let-strs (map (fn [{:keys [name init]}]
+                             (format "(%s %s)" (mangle-name name) (emit init)))
+                           (:bindings clause))]
+         (format "(let* (%s) %s)" (str/join " " let-strs) inner))
+
+       :when
+       ;; Filter: return list on match, nil otherwise
+       (format "(when %s %s)" (emit (:pred clause)) inner)
+
+       :while
+       ;; :while - similar to :when but with throw for early termination
+       ;; In practice, map-based for doesn't support early termination well
+       ;; We approximate with :when semantics
+       (format "(when %s %s)" (emit (:pred clause)) inner)
+
+       ;; Fallback
+       inner))
+   body-expr
+   (reverse clauses)))
+
+(defmethod emit-node :for
+  [{:keys [clauses body]}]
+  (let [;; Build the innermost body expression wrapped in (list ...)
+        body-expr (if (= 1 (count body))
+                    (format "(list %s)" (emit (first body)))
+                    (format "(list (progn %s))" (str/join " " (map emit body))))]
+    (emit-for-clauses clauses body-expr)))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]
-  (let [binding-strs (map (fn [{:keys [name init]}]
-                            (format "(%s %s)" (mangle-name name) (emit init)))
-                          bindings)
+  (let [binding-strs   (map (fn [{:keys [name init]}]
+                              (format "(%s %s)" (mangle-name name) (emit init)))
+                            bindings)
         bindings-block (str "(" (str/join "\n        " binding-strs) ")")
-        body-str (str/join "\n    " (map emit body))]
+        body-str       (str/join "\n    " (map emit body))]
     (format "(let* %s\n    %s)" bindings-block body-str)))
 
 (defmethod emit-node :letfn
   [{:keys [fns body]}]
-  (let [fn-strs (map (fn [{:keys [name params body]}]
-                       (let [param-str (str/join " " (map mangle-name params))
-                             body-str (str/join "\n      " (map emit body))]
-                         (format "(%s (%s)\n      %s)"
-                                 (mangle-name name)
-                                 param-str
-                                 body-str)))
-                     fns)
+  (let [fn-strs  (map (fn [{:keys [name params body]}]
+                        (let [param-str (str/join " " (map mangle-name params))
+                              body-str  (str/join "\n      " (map emit body))]
+                          (format "(%s (%s)\n      %s)"
+                                  (mangle-name name)
+                                  param-str
+                                  body-str)))
+                      fns)
         body-str (str/join "\n  " (map emit body))]
     (format "(cl-labels (%s)\n  %s)"
             (str/join "\n            " fn-strs)
@@ -412,7 +418,7 @@
 
 (defmethod emit-node :defmulti
   [{:keys [name dispatch-fn]}]
-  (let [elisp-name (mangle-name name)
+  (let [elisp-name   (mangle-name name)
         ;; cl-defgeneric defines a generic function
         ;; The dispatch-fn is stored as documentation for now
         ;; Actual dispatch happens via cl-defmethod type specializers
@@ -424,9 +430,9 @@
   [{:keys [name dispatch-val params body destructure-bindings]}]
   (let [elisp-name (mangle-name name)
         ;; Handle :default as 't' (catch-all in cl-defmethod)
-        type-spec (if (= :default dispatch-val)
-                    "t"
-                    (format "(eql %s)" (emit {:op :const :val dispatch-val :type (type dispatch-val)})))
+        type-spec  (if (= :default dispatch-val)
+                     "t"
+                     (format "(eql %s)" (emit {:op :const :val dispatch-val :type (type dispatch-val)})))
         ;; Emit params - first param gets the type specializer
         params-str (if (= 1 (count params))
                      (format "((%s %s))" (mangle-name (first params)) type-spec)
@@ -435,23 +441,23 @@
                              type-spec
                              (str/join " " (map mangle-name (rest params)))))
         ;; Emit body with potential destructuring
-        body-str (if destructure-bindings
+        body-str   (if destructure-bindings
                    ;; Wrap body in let* for destructuring (bindings are already analyzed)
-                   (let [binding-strs (map (fn [{:keys [name init]}]
-                                             (format "(%s %s)" (mangle-name name) (emit init)))
-                                           destructure-bindings)]
-                     (format "(let* (%s)\n      %s)"
-                             (str/join "\n             " binding-strs)
-                             (str/join "\n      " (map emit body))))
-                   (str/join "\n    " (map emit body)))]
+                     (let [binding-strs (map (fn [{:keys [name init]}]
+                                               (format "(%s %s)" (mangle-name name) (emit init)))
+                                             destructure-bindings)]
+                       (format "(let* (%s)\n      %s)"
+                               (str/join "\n             " binding-strs)
+                               (str/join "\n      " (map emit body))))
+                     (str/join "\n    " (map emit body)))]
     (format "(cl-defmethod %s %s\n  %s)"
             elisp-name params-str body-str)))
 
 (defmethod emit-node :defprotocol
-  [{:keys [name methods]}]
+  [{:keys [_name methods]}]
   (let [generics (map (fn [{:keys [name params]}]
                         (let [method-name (mangle-name name)
-                              params-str (str/join " " (map mangle-name params))]
+                              params-str  (str/join " " (map mangle-name params))]
                           (format "(cl-defgeneric %s (%s))" method-name params-str)))
                       methods)]
     (str/join "\n\n" generics)))
@@ -467,11 +473,11 @@
 (defn- emit-positional-ctor
   "Emit positional constructor ->Name."
   [elisp-name fields]
-  (let [field-strs (map mangle-name fields)
+  (let [field-strs  (map mangle-name fields)
         ctor-params (str/join " " field-strs)
-        ctor-args (str/join " " (map (fn [f]
-                                       (format ":%s %s" (mangle-name f) (mangle-name f)))
-                                     fields))]
+        ctor-args   (str/join " " (map (fn [f]
+                                         (format ":%s %s" (mangle-name f) (mangle-name f)))
+                                       fields))]
     (format "(defun ->%s (%s)\n  (%s--create %s))"
             elisp-name ctor-params elisp-name ctor-args)))
 
@@ -489,24 +495,24 @@
   "Emit cl-defmethod for a defrecord protocol method.
    Wraps body in let* for field access, excluding fields shadowed by params."
   [elisp-name fields {:keys [name params body]}]
-  (let [method-name (mangle-name name)
-        this-param (first params)
-        other-params (rest params)
-        params-str (if (seq other-params)
-                     (format "((%s %s) %s)"
-                             (mangle-name this-param) elisp-name
-                             (str/join " " (map mangle-name other-params)))
-                     (format "((%s %s))"
-                             (mangle-name this-param) elisp-name))
+  (let [method-name       (mangle-name name)
+        this-param        (first params)
+        other-params      (rest params)
+        params-str        (if (seq other-params)
+                            (format "((%s %s) %s)"
+                                    (mangle-name this-param) elisp-name
+                                    (str/join " " (map mangle-name other-params)))
+                            (format "((%s %s))"
+                                    (mangle-name this-param) elisp-name))
         ;; Only bind fields not shadowed by method params
-        param-set (set params)
+        param-set         (set params)
         accessible-fields (remove param-set fields)
-        field-bindings (map (fn [f]
-                              (format "(%s (%s-%s %s))"
-                                      (mangle-name f) elisp-name
-                                      (mangle-name f) (mangle-name this-param)))
-                            accessible-fields)
-        body-str (str/join "\n    " (map emit body))]
+        field-bindings    (map (fn [f]
+                                 (format "(%s (%s-%s %s))"
+                                         (mangle-name f) elisp-name
+                                         (mangle-name f) (mangle-name this-param)))
+                               accessible-fields)
+        body-str          (str/join "\n    " (map emit body))]
     (if (seq accessible-fields)
       (format "(cl-defmethod %s %s\n  (let* (%s)\n    %s))"
               method-name params-str
@@ -517,13 +523,13 @@
 
 (defmethod emit-node :defrecord
   [{:keys [name fields protocols]}]
-  (let [elisp-name (mangle-name name)
-        struct-def (emit-struct-def elisp-name fields)
-        ctor-def (emit-positional-ctor elisp-name fields)
+  (let [elisp-name   (mangle-name name)
+        struct-def   (emit-struct-def elisp-name fields)
+        ctor-def     (emit-positional-ctor elisp-name fields)
         map-ctor-def (emit-map-ctor elisp-name fields)
-        method-defs (for [{:keys [methods]} protocols
-                          method methods]
-                      (emit-record-method elisp-name fields method))]
+        method-defs  (for [{:keys [methods]} protocols
+                           method            methods]
+                       (emit-record-method elisp-name fields method))]
     (str/join "\n\n" (concat [struct-def ctor-def map-ctor-def] method-defs))))
 
 (defn- emit-type-method
@@ -531,23 +537,23 @@
    Wraps body in cl-symbol-macrolet for field access (supports setf on mutable fields).
    Excludes fields shadowed by method params."
   [elisp-name fields {:keys [name params body]}]
-  (let [method-name (mangle-name name)
-        this-param (first params)
-        other-params (rest params)
-        params-str (if (seq other-params)
-                     (format "((%s %s) %s)"
-                             (mangle-name this-param) elisp-name
-                             (str/join " " (map mangle-name other-params)))
-                     (format "((%s %s))"
-                             (mangle-name this-param) elisp-name))
-        param-set (set params)
+  (let [method-name       (mangle-name name)
+        this-param        (first params)
+        other-params      (rest params)
+        params-str        (if (seq other-params)
+                            (format "((%s %s) %s)"
+                                    (mangle-name this-param) elisp-name
+                                    (str/join " " (map mangle-name other-params)))
+                            (format "((%s %s))"
+                                    (mangle-name this-param) elisp-name))
+        param-set         (set params)
         accessible-fields (remove param-set fields)
-        field-macrolets (map (fn [f]
-                               (format "(%s (%s-%s %s))"
-                                       (mangle-name f) elisp-name
-                                       (mangle-name f) (mangle-name this-param)))
-                             accessible-fields)
-        body-str (str/join "\n    " (map emit body))]
+        field-macrolets   (map (fn [f]
+                                 (format "(%s (%s-%s %s))"
+                                         (mangle-name f) elisp-name
+                                         (mangle-name f) (mangle-name this-param)))
+                               accessible-fields)
+        body-str          (str/join "\n    " (map emit body))]
     (if (seq accessible-fields)
       (format "(cl-defmethod %s %s\n  (cl-symbol-macrolet (%s)\n    %s))"
               method-name params-str
@@ -558,11 +564,11 @@
 
 (defmethod emit-node :deftype
   [{:keys [name fields protocols]}]
-  (let [elisp-name (mangle-name name)
-        struct-def (emit-struct-def elisp-name fields)
-        ctor-def (emit-positional-ctor elisp-name fields)
+  (let [elisp-name  (mangle-name name)
+        struct-def  (emit-struct-def elisp-name fields)
+        ctor-def    (emit-positional-ctor elisp-name fields)
         method-defs (for [{:keys [methods]} protocols
-                          method methods]
+                          method            methods]
                       (emit-type-method elisp-name fields method))]
     (str/join "\n\n" (concat [struct-def ctor-def] method-defs))))
 
@@ -599,31 +605,31 @@
 (defn- emit-extend-method
   "Emit cl-defmethod for extend-type/extend-protocol method."
   [type-sym {:keys [name params body]}]
-  (let [method-name (mangle-name name)
-        elisp-type (elisp-type-specializer type-sym)
-        this-param (first params)
+  (let [method-name  (mangle-name name)
+        elisp-type   (elisp-type-specializer type-sym)
+        this-param   (first params)
         other-params (rest params)
-        params-str (if (seq other-params)
-                     (format "((%s %s) %s)"
-                             (mangle-name this-param) elisp-type
-                             (str/join " " (map mangle-name other-params)))
-                     (format "((%s %s))"
-                             (mangle-name this-param) elisp-type))
-        body-str (str/join "\n  " (map emit body))]
+        params-str   (if (seq other-params)
+                       (format "((%s %s) %s)"
+                               (mangle-name this-param) elisp-type
+                               (str/join " " (map mangle-name other-params)))
+                       (format "((%s %s))"
+                               (mangle-name this-param) elisp-type))
+        body-str     (str/join "\n  " (map emit body))]
     (format "(cl-defmethod %s %s\n  %s)"
             method-name params-str body-str)))
 
 (defmethod emit-node :extend-type
   [{:keys [type protocols]}]
   (let [method-defs (for [{:keys [methods]} protocols
-                          method methods]
+                          method            methods]
                       (emit-extend-method type method))]
     (str/join "\n\n" method-defs)))
 
 (defmethod emit-node :extend-protocol
-  [{:keys [name extensions]}]
+  [{:keys [_name extensions]}]
   (let [method-defs (for [{:keys [type methods]} extensions
-                          method methods]
+                          method                 methods]
                       (emit-extend-method type method))]
     (str/join "\n\n" method-defs)))
 
@@ -639,33 +645,33 @@
 
 (defmethod emit-node :reify
   [{:keys [protocols closed-over]}]
-  (let [reify-name (generate-reify-name)
+  (let [reify-name  (generate-reify-name)
         ;; Emit struct definition with closed-over slots
-        struct-def (if (seq closed-over)
-                     (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil))\n  %s)"
-                             reify-name reify-name
-                             (str/join "\n  " (map mangle-name closed-over)))
-                     (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil)))"
-                             reify-name reify-name))
+        struct-def  (if (seq closed-over)
+                      (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil))\n  %s)"
+                              reify-name reify-name
+                              (str/join "\n  " (map mangle-name closed-over)))
+                      (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil)))"
+                              reify-name reify-name))
         ;; Emit methods with closure access
-        method-defs (for [{:keys [methods]} protocols
+        method-defs (for [{:keys [methods]}          protocols
                           {:keys [name params body]} methods]
-                      (let [method-name (mangle-name name)
-                            this-param (first params)
-                            other-params (rest params)
-                            params-str (if (seq other-params)
-                                         (format "((%s %s) %s)"
-                                                 (mangle-name this-param) reify-name
-                                                 (str/join " " (map mangle-name other-params)))
-                                         (format "((%s %s))"
-                                                 (mangle-name this-param) reify-name))
+                      (let [method-name    (mangle-name name)
+                            this-param     (first params)
+                            other-params   (rest params)
+                            params-str     (if (seq other-params)
+                                             (format "((%s %s) %s)"
+                                                     (mangle-name this-param) reify-name
+                                                     (str/join " " (map mangle-name other-params)))
+                                             (format "((%s %s))"
+                                                     (mangle-name this-param) reify-name))
                             ;; Bind closed-over locals from struct fields
                             field-bindings (map (fn [f]
                                                   (format "(%s (%s-%s %s))"
                                                           (mangle-name f) reify-name
                                                           (mangle-name f) (mangle-name this-param)))
                                                 closed-over)
-                            body-str (str/join "\n    " (map emit body))]
+                            body-str       (str/join "\n    " (map emit body))]
                         (if (seq closed-over)
                           (format "(cl-defmethod %s %s\n  (let* (%s)\n    %s))"
                                   method-name params-str
@@ -674,13 +680,13 @@
                           (format "(cl-defmethod %s %s\n  %s)"
                                   method-name params-str body-str))))
         ;; Constructor call with closed-over values
-        ctor-args (if (seq closed-over)
-                    (str/join " " (map (fn [f] (format ":%s %s" (mangle-name f) (mangle-name f)))
-                                       closed-over))
-                    "")
-        ctor-call (if (seq closed-over)
-                    (format "(%s--create %s)" reify-name ctor-args)
-                    (format "(%s--create)" reify-name))]
+        ctor-args   (if (seq closed-over)
+                      (str/join " " (map (fn [f] (format ":%s %s" (mangle-name f) (mangle-name f)))
+                                         closed-over))
+                      "")
+        ctor-call   (if (seq closed-over)
+                      (format "(%s--create %s)" reify-name ctor-args)
+                      (format "(%s--create)" reify-name))]
     ;; Emit struct and methods, then return constructor call
     ;; Note: In real use, struct/methods should be hoisted to top-level
     (str struct-def "\n\n" (str/join "\n\n" method-defs) "\n\n" ctor-call)))
@@ -736,11 +742,11 @@
 
 (defmethod emit-node :ns
   [{:keys [name requires]}]
-  (let [elisp-name (mangle-name name)
+  (let [elisp-name    (mangle-name name)
         require-stmts (->> requires
                            (map (fn [{:keys [ns]}]
                                   (format "(require '%s)" (mangle-name ns)))))
-        provides (format "(provide '%s)" elisp-name)]
+        _provides     (format "(provide '%s)" elisp-name)]
     (str ";;; " elisp-name ".el --- -*- lexical-binding: t; -*-\n"
          ";; Generated by ClojureElisp\n\n"
          "(require 'clojure-elisp-runtime)\n"
@@ -751,12 +757,12 @@
 
 (defmethod emit-node :loop
   [{:keys [bindings body]}]
-  (let [names (map :name bindings)
-        inits (map (comp emit :init) bindings)
-        let-bindings (str/join " "
-                               (map (fn [n i] (format "(%s %s)" (mangle-name n) i))
-                                    names inits))
-        body-str (str/join "\n      " (map emit body))]
+  (let [names         (map :name bindings)
+        inits         (map (comp emit :init) bindings)
+        _let-bindings (str/join " "
+                                (map (fn [n i] (format "(%s %s)" (mangle-name n) i))
+                                     names inits))
+        body-str      (str/join "\n      " (map emit body))]
     (format "(cl-labels ((recur (%s)\n      %s))\n    (recur %s))"
             (emit-list (map mangle-name names))
             body-str
@@ -769,29 +775,29 @@
 (defmethod emit-node :try
   [{:keys [body catches finally]}]
   (let [;; Emit body expressions wrapped in progn if multiple
-        body-str (if (= 1 (count body))
-                   (emit (first body))
-                   (format "(progn\n    %s)" (str/join "\n    " (map emit body))))
+        body-str       (if (= 1 (count body))
+                         (emit (first body))
+                         (format "(progn\n    %s)" (str/join "\n    " (map emit body))))
 
         ;; Emit finally as unwind-protect cleanup if present
-        with-finally (if finally
-                       (format "(unwind-protect\n    %s\n  %s)"
-                               body-str
-                               (str/join "\n  " (map emit finally)))
-                       body-str)
+        with-finally   (if finally
+                         (format "(unwind-protect\n    %s\n  %s)"
+                                 body-str
+                                 (str/join "\n  " (map emit finally)))
+                         body-str)
 
         ;; Emit catch clauses - map all exception types to Elisp 'error'
         ;; Use first catch's binding name for the error variable
-        catch-binding (when (seq catches)
-                        (mangle-name (:name (first catches))))
+        catch-binding  (when (seq catches)
+                         (mangle-name (:name (first catches))))
         catch-handlers (when (seq catches)
                          ;; Combine all catch handlers into one error handler
                          ;; In Elisp, we use a single 'error' condition type
                          (let [handler-bodies (mapcat :body catches)
-                               handler-str (if (= 1 (count handler-bodies))
-                                             (emit (first handler-bodies))
-                                             (format "(progn\n      %s)"
-                                                     (str/join "\n      " (map emit handler-bodies))))]
+                               handler-str    (if (= 1 (count handler-bodies))
+                                                (emit (first handler-bodies))
+                                                (format "(progn\n      %s)"
+                                                        (str/join "\n      " (map emit handler-bodies))))]
                            (format "(error %s)" handler-str)))]
 
     (cond
@@ -851,13 +857,13 @@
 
 (defmethod emit-node :invoke
   [{:keys [fn args]}]
-  (let [fn-str (emit fn)
+  (let [fn-str   (emit fn)
         args-str (map emit args)]
     (apply emit-sexp fn-str args-str)))
 
 (defmethod emit-node :define-minor-mode
   [{:keys [name docstring options body]}]
-  (let [mode-name (mangle-name name)
+  (let [mode-name       (mangle-name name)
         ;; Helper to emit option values (handles quoted forms, etc.)
         emit-option-val (fn [v]
                           (cond
@@ -870,23 +876,23 @@
                             (str "'" (second v))
                             :else (str v)))
         ;; Emit options as keyword-value pairs
-        options-str (->> options
-                         (map (fn [[k v]]
-                                (str (str k) " " (emit-option-val v))))
-                         (str/join "\n  "))
+        options-str     (->> options
+                             (map (fn [[k v]]
+                                    (str k " " (emit-option-val v))))
+                             (str/join "\n  "))
         ;; Emit body forms
-        body-str (when (seq body)
-                   (str/join "\n  " (map emit body)))
+        body-str        (when (seq body)
+                          (str/join "\n  " (map emit body)))
         ;; Build the full form
-        parts (cond-> [(str "(define-minor-mode " mode-name)]
-                docstring (conj (str "  " (pr-str docstring)))
-                (seq options-str) (conj (str "  " options-str))
-                (seq body-str) (conj (str "  " body-str)))]
+        parts           (cond-> [(str "(define-minor-mode " mode-name)]
+                          docstring (conj (str "  " (pr-str docstring)))
+                          (seq options-str) (conj (str "  " options-str))
+                          (seq body-str) (conj (str "  " body-str)))]
     (str (str/join "\n" parts) ")")))
 
 (defmethod emit-node :defgroup
   [{:keys [name value docstring options]}]
-  (let [group-name (mangle-name name)
+  (let [group-name      (mangle-name name)
         ;; Helper to emit option values (handles quoted forms, etc.)
         emit-option-val (fn [v]
                           (cond
@@ -899,21 +905,21 @@
                             (str "'" (second v))
                             :else (str v)))
         ;; Emit value (typically nil)
-        value-str (emit-option-val value)
+        value-str       (emit-option-val value)
         ;; Emit options as keyword-value pairs
-        options-str (->> options
-                         (map (fn [[k v]]
-                                (str (str k) " " (emit-option-val v))))
-                         (str/join "\n  "))
+        options-str     (->> options
+                             (map (fn [[k v]]
+                                    (str k " " (emit-option-val v))))
+                             (str/join "\n  "))
         ;; Build the full form
-        parts (cond-> [(str "(defgroup " group-name " " value-str)]
-                docstring (conj (str "  " (pr-str docstring)))
-                (seq options-str) (conj (str "  " options-str)))]
+        parts           (cond-> [(str "(defgroup " group-name " " value-str)]
+                          docstring (conj (str "  " (pr-str docstring)))
+                          (seq options-str) (conj (str "  " options-str)))]
     (str (str/join "\n" parts) ")")))
 
 (defmethod emit-node :defcustom
   [{:keys [name default docstring options]}]
-  (let [var-name (mangle-name name)
+  (let [var-name        (mangle-name name)
         ;; Helper to emit option values (handles quoted forms, etc.)
         emit-option-val (fn [v]
                           (cond
@@ -926,16 +932,16 @@
                             (str "'" (second v))
                             :else (str v)))
         ;; Emit default value
-        default-str (emit-option-val default)
+        default-str     (emit-option-val default)
         ;; Emit options as keyword-value pairs
-        options-str (->> options
-                         (map (fn [[k v]]
-                                (str (str k) " " (emit-option-val v))))
-                         (str/join "\n  "))
+        options-str     (->> options
+                             (map (fn [[k v]]
+                                    (str k " " (emit-option-val v))))
+                             (str/join "\n  "))
         ;; Build the full form
-        parts (cond-> [(str "(defcustom " var-name " " default-str)]
-                docstring (conj (str "  " (pr-str docstring)))
-                (seq options-str) (conj (str "  " options-str)))]
+        parts           (cond-> [(str "(defcustom " var-name " " default-str)]
+                          docstring (conj (str "  " (pr-str docstring)))
+                          (seq options-str) (conj (str "  " options-str)))]
     (str (str/join "\n" parts) ")")))
 
 (defmethod emit-node :default
@@ -950,6 +956,12 @@
   "When true, emit ;;; L<line>:C<col> comments before top-level forms."
   false)
 
+(def ^:dynamic *validate-ast*
+  "When true, validate AST nodes against ast-schemas before emission.
+   Useful for development and testing to catch malformed AST nodes early.
+   Default false for production performance."
+  false)
+
 (defn- source-comment
   "Generate a source location comment string for an AST node, or nil."
   [{:keys [line column]}]
@@ -962,9 +974,12 @@
 
 (defn emit
   "Emit an AST node to Elisp source code.
-   When *emit-source-comments* is true, prepends ;;; L<line>:C<col> comments."
+   When *emit-source-comments* is true, prepends ;;; L<line>:C<col> comments.
+   When *validate-ast* is true, validates node structure before emission."
   [node]
-  (let [code (emit-node node)
+  (when *validate-ast*
+    (ast/validate-ast-node node))
+  (let [code    (emit-node node)
         comment (source-comment node)]
     (if comment
       (str comment "\n" code)
@@ -978,8 +993,8 @@
   "Emit a sequence of AST nodes as a complete Elisp file.
    If the first node is :ns, appends (provide 'ns-name) at the end."
   [ast-nodes]
-  (let [ns-node (when (= :ns (:op (first ast-nodes))) (first ast-nodes))
-        code (str/join "\n\n" (map emit ast-nodes))
+  (let [ns-node  (when (= :ns (:op (first ast-nodes))) (first ast-nodes))
+        code     (str/join "\n\n" (map emit ast-nodes))
         elisp-ns (when ns-node (mangle-name (:name ns-node)))]
     (if elisp-ns
       (str code "\n\n(provide '" elisp-ns ")\n"

@@ -1,13 +1,29 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}
         org.clojure/tools.analyzer {:mvn/version "1.2.0"}
-        org.clojure/tools.reader {:mvn/version "1.4.2"}}
+        org.clojure/tools.reader {:mvn/version "1.4.2"}
+        ;; hive-dsl — Result ADT for railway-oriented error handling
+        io.github.hive-agi/hive-dsl
+        {:git/tag "v0.2.0" :git/sha "6ba484f"}}
  :aliases
  {:dev {:extra-paths ["dev" "test"]
         :extra-deps {nrepl/nrepl {:mvn/version "1.3.0"}
-                     cider/cider-nrepl {:mvn/version "0.50.2"}}}
+                     cider/cider-nrepl {:mvn/version "0.50.2"}
+                     org.clojure/test.check {:mvn/version "1.1.1"}
+                     io.github.hive-agi/hive-test
+                     {:git/tag "v0.1.1" :git/sha "99a66ad"}}}
   :test {:extra-paths ["test"]
-         :extra-deps {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
+         :extra-deps {lambdaisland/kaocha {:mvn/version "1.91.1392"}
+                      org.clojure/test.check {:mvn/version "1.1.1"}
+                      io.github.hive-agi/hive-test
+                      {:git/tag "v0.1.1" :git/sha "99a66ad"}}
          :main-opts ["-m" "kaocha.runner"]}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
-          :ns-default build}}}
+          :ns-default build}
+
+ ;; Local dev overrides: create deps.local.edn (gitignored) with :deps key.
+ ;; Use -Sdeps "$(cat deps.local.edn)" to merge, or tooling auto-merges.
+ ;; Example deps.local.edn:
+ ;;   {:deps {io.github.hive-agi/hive-dsl  {:local/root "../hive/hive-dsl"}
+ ;;           io.github.hive-agi/hive-test {:local/root "../hive/hive-test"}}}
+  }}

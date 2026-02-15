@@ -1,0 +1,398 @@
+(ns hive-mcp-log
+  "Structured logging infrastructure for hive-mcp.
+
+   This module implements CLARITY-T (Telemetry first) patterns:
+   - Structured log entries with levels: debug, info, warn, error
+   - Component-based filtering (swarm, memory, channel, api, etc.)
+   - Timing instrumentation for MCP calls
+   - Ring buffer for log history with optional persistence
+
+   Ported from hive-mcp-log.el to ClojureElisp as a dogfooding exercise.")
+
+;; ============================================================================
+;; Required Libraries
+;; ============================================================================
+
+;; Note: These use Elisp's require, handled via interop
+;; (require 'cl-lib) - provided by Emacs
+;; (require 'ring)   - provided by Emacs
+
+;; ============================================================================
+;; Customization Group
+;; ============================================================================
+
+(defgroup hive-mcp-log nil
+  "Structured logging settings for hive-mcp."
+  :group 'hive-mcp
+  :prefix "hive-mcp-log-")
+
+;; ============================================================================
+;; User Settings
+;; ============================================================================
+
+(defcustom hive-mcp-log-level 'info
+  "Minimum log level to emit.
+Levels in order: debug < info < warn < error.
+Set to 'debug for verbose output, 'error for minimal."
+  :type '(choice (const :tag "Debug (all messages)" debug)
+                 (const :tag "Info (normal operation)" info)
+                 (const :tag "Warn (potential issues)" warn)
+                 (const :tag "Error (failures only)" error))
+  :group 'hive-mcp-log)
+
+(defcustom hive-mcp-log-components nil
+  "List of components to log, or nil to log all.
+Valid components: swarm, memory, channel, api, context, workflow,
+kanban, hivemind, graceful, etc.
+When nil, all components are logged."
+  :type '(choice (const :tag "All components" nil)
+                 (repeat :tag "Specific components" symbol))
+  :group 'hive-mcp-log)
+
+(defcustom hive-mcp-log-to-messages true
+  "If non-nil, emit log entries to *Messages* buffer."
+  :type 'boolean
+  :group 'hive-mcp-log)
+
+(defcustom hive-mcp-log-to-buffer nil
+  "If non-nil, emit log entries to dedicated *hive-mcp-log* buffer."
+  :type 'boolean
+  :group 'hive-mcp-log)
+
+(defcustom hive-mcp-log-history-size 500
+  "Number of log entries to keep in ring buffer history."
+  :type 'integer
+  :group 'hive-mcp-log)
+
+(defcustom hive-mcp-log-include-timestamp true
+  "If non-nil, include timestamps in log output."
+  :type 'boolean
+  :group 'hive-mcp-log)
+
+(defcustom hive-mcp-log-timing-threshold-ms 100
+  "Log timing warnings when operations exceed this threshold (milliseconds).
+Set to 0 to always log timing, or a large value to only log slow operations."
+  :type 'integer
+  :group 'hive-mcp-log)
+
+;; ============================================================================
+;; Internal State
+;; ============================================================================
+
+(defvar hive-mcp-log--history nil
+  "Ring buffer storing recent log entries.")
+
+(defvar hive-mcp-log--level-priority
+  '((debug . 0) (info . 1) (warn . 2) (error . 3))
+  "Priority mapping for log levels.")
+
+(defvar hive-mcp-log--level-labels
+  '((debug . "DEBUG") (info . "INFO ") (warn . "WARN ") (error . "ERROR"))
+  "Display labels for log levels.")
+
+(defvar hive-mcp-log--buffer-name "*hive-mcp-log*"
+  "Name of the dedicated log buffer.")
+
+(defvar hive-mcp-log--mcp-call-stats nil
+  "Hash table tracking MCP call statistics.
+Keys are tool names, values are plists with :count, :total-ms, :max-ms.")
+
+;; ============================================================================
+;; Internal Functions
+;; ============================================================================
+
+(defn -ensure-history []
+  "Ensure the log history ring buffer exists."
+  (when-not hive-mcp-log--history
+    (setq hive-mcp-log--history (make-ring hive-mcp-log-history-size))))
+
+(defn -ensure-stats []
+  "Ensure the MCP stats hash table exists."
+  (when-not hive-mcp-log--mcp-call-stats
+    (setq hive-mcp-log--mcp-call-stats (make-hash-table :test 'equal))))
+
+(defn -level-enabled-p [level]
+  "Return non-nil if LEVEL is enabled based on current log level."
+  (let [level-pri (alist-get level hive-mcp-log--level-priority 1)
+        min-pri (alist-get hive-mcp-log-level hive-mcp-log--level-priority 1)]
+    (>= level-pri min-pri)))
+
+(defn -component-enabled-p [component]
+  "Return non-nil if COMPONENT should be logged."
+  (or (null hive-mcp-log-components)
+      (memq (if (stringp component) (intern component) component)
+            hive-mcp-log-components)))
+
+(defn -format-timestamp []
+  "Return formatted timestamp string."
+  (format-time-string "%H:%M:%S.%3N"))
+
+(defn -format-entry [level component message]
+  "Format a log entry with LEVEL, COMPONENT, and MESSAGE."
+  (let [level-label (alist-get level hive-mcp-log--level-labels "?????")
+        comp-str (if (stringp component) component (symbol-name component))]
+    (if hive-mcp-log-include-timestamp
+      (format "[%s] [%s] [%s] %s"
+              (hive-mcp-log/-format-timestamp)
+              level-label
+              comp-str
+              message)
+      (format "[%s] [%s] %s" level-label comp-str message))))
+
+(defn -level-face [level]
+  "Return face for LEVEL."
+  (pcase level
+    ('debug 'font-lock-comment-face)
+    ('info 'default)
+    ('warn 'warning)
+    ('error 'error)
+    (_ 'default)))
+
+(defn -write-to-buffer [formatted-msg level]
+  "Write FORMATTED-MSG with LEVEL to the dedicated log buffer."
+  (let [buf (get-buffer-create hive-mcp-log--buffer-name)]
+    (with-current-buffer buf
+      (goto-char (point-max))
+      (let [inhibit-read-only t]
+        (insert (propertize (str formatted-msg "\n")
+                            'face (hive-mcp-log/-level-face level)))))))
+
+(defn -emit [level component message]
+  "Emit a log entry with LEVEL, COMPONENT, and MESSAGE."
+  (let [entry (list :timestamp (current-time)
+                    :level level
+                    :component (if (stringp component)
+                                 (intern component)
+                                 component)
+                    :message message)]
+    ;; Store in history
+    (hive-mcp-log/-ensure-history)
+    (ring-insert hive-mcp-log--history entry)
+
+    ;; Format for output
+    (let [formatted (hive-mcp-log/-format-entry level component message)]
+      ;; Output to *Messages*
+      (when hive-mcp-log-to-messages
+        (message "%s" formatted))
+
+      ;; Output to dedicated buffer
+      (when hive-mcp-log-to-buffer
+        (hive-mcp-log/-write-to-buffer formatted level)))))
+
+;; ============================================================================
+;; Public Logging Functions
+;; ============================================================================
+
+(defn log [level component format-string & args]
+  "Log a message at LEVEL for COMPONENT using FORMAT-STRING and ARGS.
+
+LEVEL is one of: debug, info, warn, error.
+COMPONENT is a symbol or string identifying the subsystem.
+FORMAT-STRING and ARGS work like `format'."
+  (when (and (hive-mcp-log/-level-enabled-p level)
+             (hive-mcp-log/-component-enabled-p component))
+    (let [message (apply format format-string args)]
+      (hive-mcp-log/-emit level component message))))
+
+(defn log-debug [component format-string & args]
+  "Log a debug message for COMPONENT using FORMAT-STRING and ARGS."
+  (apply hive-mcp-log/log 'debug component format-string args))
+
+(defn log-info [component format-string & args]
+  "Log an info message for COMPONENT using FORMAT-STRING and ARGS."
+  (apply hive-mcp-log/log 'info component format-string args))
+
+(defn log-warn [component format-string & args]
+  "Log a warning message for COMPONENT using FORMAT-STRING and ARGS."
+  (apply hive-mcp-log/log 'warn component format-string args))
+
+(defn log-error [component format-string & args]
+  "Log an error message for COMPONENT using FORMAT-STRING and ARGS."
+  (apply hive-mcp-log/log 'error component format-string args))
+
+;; ============================================================================
+;; Log History Access
+;; ============================================================================
+
+(defn log-recent [&optional count]
+  "Return the COUNT most recent log entries (default: 10).
+Returns a list of plists with :timestamp, :level, :component, :message."
+  (hive-mcp-log/-ensure-history)
+  (let [n (or count 10)
+        len (ring-length hive-mcp-log--history)
+        limit (min n len)]
+    ;; Use cl-loop instead of dotimes (dotimes emits non-standard code)
+    (cl-loop for i from 0 below limit
+             collect (ring-ref hive-mcp-log--history i))))
+
+(defn log-filter-by-component [component]
+  "Return all log entries for COMPONENT from history."
+  (hive-mcp-log/-ensure-history)
+  (let [comp-sym (if (stringp component) (intern component) component)
+        len (ring-length hive-mcp-log--history)]
+    ;; Use seq-filter on collected entries (avoids cl-loop = issue)
+    (seq-filter
+     (lambda [entry]
+       (eq (plist-get entry :component) comp-sym))
+     (cl-loop for i from 0 below len
+              collect (ring-ref hive-mcp-log--history i)))))
+
+(defn log-filter-by-level [level]
+  "Return all log entries at or above LEVEL from history."
+  (hive-mcp-log/-ensure-history)
+  (let [min-pri (alist-get level hive-mcp-log--level-priority 1)
+        len (ring-length hive-mcp-log--history)]
+    ;; Use seq-filter on collected entries (avoids cl-loop = issue)
+    (seq-filter
+     (lambda [entry]
+       (let [entry-level (plist-get entry :level)
+             entry-pri (alist-get entry-level hive-mcp-log--level-priority 1)]
+         (>= entry-pri min-pri)))
+     (cl-loop for i from 0 below len
+              collect (ring-ref hive-mcp-log--history i)))))
+
+(defn log-clear-history []
+  "Clear the log history ring buffer."
+  (interactive)
+  (setq hive-mcp-log--history nil)
+  (hive-mcp-log/-ensure-history)
+  (message "Log history cleared"))
+
+;; ============================================================================
+;; Buffer Management
+;; ============================================================================
+
+(defn log-show-buffer []
+  "Show the dedicated log buffer."
+  (interactive)
+  (let [buf (get-buffer-create hive-mcp-log--buffer-name)]
+    (with-current-buffer buf
+      (unless (derived-mode-p 'hive-mcp-log-mode)
+        (hive-mcp-log-mode)))
+    (display-buffer buf)))
+
+;; Note: define-derived-mode is not yet supported in ClojureElisp
+;; Placeholder for mode definition
+(defvar hive-mcp-log-mode-map (make-sparse-keymap)
+  "Keymap for hive-mcp-log-mode.")
+
+;; ============================================================================
+;; MCP Call Instrumentation
+;; ============================================================================
+
+(defn mcp-call-start [tool-name]
+  "Record the start of an MCP call to TOOL-NAME.
+Returns a timing token to pass to `mcp-call-end'."
+  (hive-mcp-log/log-debug 'mcp "Starting MCP call: %s" tool-name)
+  (list :tool tool-name :start (current-time)))
+
+(defn mcp-call-end [timing-token &optional success]
+  "Record the end of an MCP call using TIMING-TOKEN.
+SUCCESS indicates whether the call succeeded."
+  (hive-mcp-log/-ensure-stats)
+  (let [tool-name (plist-get timing-token :tool)
+        start-time (plist-get timing-token :start)
+        elapsed-ms (* 1000.0 (float-time (time-subtract (current-time) start-time)))
+        stats (gethash tool-name hive-mcp-log--mcp-call-stats)]
+    ;; Update statistics
+    (if stats
+      (progn
+        (plist-put stats :count (1+ (plist-get stats :count)))
+        (plist-put stats :total-ms (+ (plist-get stats :total-ms) elapsed-ms))
+        (when (> elapsed-ms (plist-get stats :max-ms))
+          (plist-put stats :max-ms elapsed-ms)))
+      (puthash tool-name
+               (list :count 1 :total-ms elapsed-ms :max-ms elapsed-ms)
+               hive-mcp-log--mcp-call-stats))
+    ;; Log the call
+    (let [level (if (> elapsed-ms hive-mcp-log-timing-threshold-ms) 'warn 'debug)]
+      (hive-mcp-log/log level 'mcp "MCP call %s: %.1fms%s"
+                        tool-name elapsed-ms
+                        (if success "" " (FAILED)")))))
+
+(defn mcp-stats []
+  "Return MCP call statistics as an alist.
+Each entry is (TOOL-NAME . (:count N :total-ms M :max-ms X :avg-ms A))."
+  (hive-mcp-log/-ensure-stats)
+  (let [result nil]
+    (maphash
+     (lambda [tool stats]
+       (let [count (plist-get stats :count)
+             total (plist-get stats :total-ms)
+             avg (if (> count 0) (/ total count) 0)]
+         (push (cons tool
+                     (list :count count
+                           :total-ms total
+                           :max-ms (plist-get stats :max-ms)
+                           :avg-ms avg))
+               result)))
+     hive-mcp-log--mcp-call-stats)
+    (sort result (lambda [a b] (> (plist-get (cdr a) :total-ms)
+                                   (plist-get (cdr b) :total-ms))))))
+
+(defn mcp-stats-reset []
+  "Reset MCP call statistics."
+  (interactive)
+  (when hive-mcp-log--mcp-call-stats
+    (clrhash hive-mcp-log--mcp-call-stats))
+  (message "MCP statistics reset"))
+
+(defn mcp-stats-report []
+  "Display a report of MCP call statistics."
+  (interactive)
+  (let [stats (hive-mcp-log/mcp-stats)]
+    (if (null stats)
+      (message "No MCP call statistics recorded")
+      (with-output-to-temp-buffer "*hive-mcp-stats*"
+        (princ "MCP Call Statistics\n")
+        (princ "====================\n\n")
+        (princ (format "%-30s %8s %10s %10s %10s\n"
+                       "Tool" "Count" "Total(ms)" "Max(ms)" "Avg(ms)"))
+        (princ (make-string 70 ?-))
+        (princ "\n")
+        ;; Use mapc instead of dolist (dolist not yet supported)
+        (mapc (lambda [entry]
+                (let [tool (car entry)
+                      data (cdr entry)]
+                  (princ (format "%-30s %8d %10.1f %10.1f %10.1f\n"
+                                 tool
+                                 (plist-get data :count)
+                                 (plist-get data :total-ms)
+                                 (plist-get data :max-ms)
+                                 (plist-get data :avg-ms)))))
+              stats)))))
+
+;; ============================================================================
+;; Convenience Functions for Timed Operations
+;; ============================================================================
+
+(defn with-timing [component operation body-fn]
+  "Execute BODY-FN, logging timing for OPERATION under COMPONENT.
+Returns the result of BODY-FN.
+
+Note: This is a function version; see hive-mcp-log-with-timing macro for
+the macro version in the compiled Elisp."
+  (let [start (current-time)
+        result (funcall body-fn)
+        elapsed-ms (* 1000.0 (float-time (time-subtract (current-time) start)))]
+    (if (> elapsed-ms hive-mcp-log-timing-threshold-ms)
+      (hive-mcp-log/log-warn component "%s took %.1fms (threshold: %dms)"
+                             operation elapsed-ms hive-mcp-log-timing-threshold-ms)
+      (hive-mcp-log/log-debug component "%s completed in %.1fms"
+                              operation elapsed-ms))
+    result))
+
+(defn instrument-mcp [tool-name body-fn]
+  "Execute BODY-FN as an MCP call to TOOL-NAME with timing instrumentation.
+Returns the result of BODY-FN."
+  (let [token (hive-mcp-log/mcp-call-start tool-name)
+        success nil
+        result nil]
+    (unwind-protect
+        (progn
+          (setq result (funcall body-fn))
+          (setq success t)
+          result)
+      (hive-mcp-log/mcp-call-end token success))))
+
+(provide 'hive-mcp-log)

@@ -1,0 +1,272 @@
+(ns buffer-demo
+  "Demonstrates Emacs buffer and process interop in ClojureElisp.
+
+   This example shows how to manipulate buffers, move point,
+   insert text, and work with processes.")
+
+;; ============================================================================
+;; Buffer Content Operations
+;; ============================================================================
+
+(defn buffer-contents
+  "Return the full contents of the current buffer."
+  []
+  (buffer-string))
+
+(defn buffer-region
+  "Return the contents between START and END positions."
+  [start end]
+  (buffer-substring start end))
+
+(defn clear-buffer
+  "Erase all contents of the current buffer."
+  []
+  (erase-buffer))
+
+;; ============================================================================
+;; Point and Movement
+;; ============================================================================
+
+(defn current-position
+  "Return the current point position."
+  []
+  (point))
+
+(defn move-to
+  "Move point to position POS."
+  [pos]
+  (goto-char pos))
+
+(defn buffer-start
+  "Move to the beginning of the buffer."
+  []
+  (goto-char (point-min)))
+
+(defn buffer-end
+  "Move to the end of the buffer."
+  []
+  (goto-char (point-max)))
+
+(defn next-line
+  "Move to the next line."
+  []
+  (forward-line 1))
+
+;; ============================================================================
+;; Text Insertion/Deletion
+;; ============================================================================
+
+(defn insert-text
+  "Insert TEXT at point."
+  [text]
+  (insert text))
+
+(defn insert-line
+  "Insert TEXT followed by a newline."
+  [text]
+  (insert text "\n"))
+
+(defn delete-forward
+  "Delete N characters forward from point."
+  [n]
+  (delete-char n))
+
+(defn kill-region
+  "Delete the region between START and END."
+  [start end]
+  (delete-region start end))
+
+;; ============================================================================
+;; Buffer Manipulation with save-excursion
+;; ============================================================================
+
+(defn insert-at-start
+  "Insert TEXT at the beginning of the buffer, preserving point."
+  [text]
+  (save-excursion
+    (goto-char (point-min))
+    (insert text)))
+
+(defn insert-at-end
+  "Insert TEXT at the end of the buffer, preserving point."
+  [text]
+  (save-excursion
+    (goto-char (point-max))
+    (insert text)))
+
+(defn get-line-at
+  "Return the contents of the line at position POS."
+  [pos]
+  (save-excursion
+    (goto-char pos)
+    (beginning-of-line)
+    (let [start (point)]
+      (end-of-line)
+      (buffer-substring start (point)))))
+
+;; ============================================================================
+;; Working with Other Buffers
+;; ============================================================================
+
+(defn get-buffer-content
+  "Return the contents of buffer named BUF-NAME."
+  [buf-name]
+  (with-current-buffer buf-name
+    (buffer-string)))
+
+(defn append-to-buffer
+  "Append TEXT to buffer named BUF-NAME."
+  [buf-name text]
+  (with-current-buffer (get-buffer-create buf-name)
+    (goto-char (point-max))
+    (insert text)))
+
+(defn clear-named-buffer
+  "Clear the contents of buffer named BUF-NAME."
+  [buf-name]
+  (when (get-buffer buf-name)
+    (with-current-buffer buf-name
+      (erase-buffer))))
+
+;; ============================================================================
+;; Temporary Buffer Operations
+;; ============================================================================
+
+(defn process-string
+  "Process TEXT in a temporary buffer, returning the result.
+   Takes a TRANSFORM-FN that manipulates the buffer."
+  [text transform-fn]
+  (with-temp-buffer
+    (insert text)
+    (goto-char (point-min))
+    (transform-fn)
+    (buffer-string)))
+
+(defn generate-output
+  "Generate output using BODY-FN, capturing all printed output as a string."
+  [body-fn]
+  (with-output-to-string
+    (body-fn)))
+
+;; ============================================================================
+;; Region Operations (when transient-mark-mode)
+;; ============================================================================
+
+(defn region-text
+  "Return the text in the current region, or nil if no region."
+  []
+  (when (use-region-p)
+    (buffer-substring (region-beginning) (region-end))))
+
+(defn process-region
+  "Apply TRANSFORM-FN to the text in the current region."
+  [transform-fn]
+  (when (use-region-p)
+    (let [start (region-beginning)
+          end (region-end)
+          text (buffer-substring start end)]
+      (delete-region start end)
+      (insert (transform-fn text)))))
+
+;; ============================================================================
+;; Narrowing Operations
+;; ============================================================================
+
+(defn with-narrowed-region
+  "Execute BODY with buffer narrowed to START..END, then restore."
+  [start end body-fn]
+  (save-restriction
+    (narrow-to-region start end)
+    (body-fn)))
+
+(defn search-in-region
+  "Search for PATTERN in region START..END, returning match position or nil."
+  [start end pattern]
+  (save-excursion
+    (save-restriction
+      (narrow-to-region start end)
+      (goto-char (point-min))
+      (when (search-forward pattern nil t)
+        (match-beginning 0)))))
+
+;; ============================================================================
+;; Process Operations
+;; ============================================================================
+
+(defn run-command
+  "Run shell COMMAND synchronously, returning (exit-code . output)."
+  [command]
+  (with-temp-buffer
+    (let [exit-code (call-process "sh" nil t nil "-c" command)]
+      [exit-code (buffer-string)])))
+
+(defn start-async-process
+  "Start COMMAND as an async process with name NAME.
+   Returns the process object."
+  [name command & args]
+  (apply start-process name nil command args))
+
+(defn send-to-process
+  "Send STRING to PROCESS."
+  [process string]
+  (process-send-string process string))
+
+(defn set-process-output-handler
+  "Set HANDLER function to receive output from PROCESS.
+   HANDLER receives (process output-string)."
+  [process handler]
+  (set-process-filter process handler))
+
+(defn process-running-p
+  "Return t if PROCESS is still running."
+  [process]
+  (process-live-p process))
+
+;; ============================================================================
+;; File Operations
+;; ============================================================================
+
+(defn visit-file
+  "Open FILE in a buffer and return the buffer."
+  [file]
+  (find-file-noselect file))
+
+(defn read-file-contents
+  "Read and return the contents of FILE."
+  [file]
+  (with-temp-buffer
+    (insert-file-contents file)
+    (buffer-string)))
+
+(defn write-to-file
+  "Write TEXT to FILE, creating or overwriting as needed."
+  [file text]
+  (with-temp-buffer
+    (insert text)
+    (write-region (point-min) (point-max) file)))
+
+;; ============================================================================
+;; Practical Example: Log Buffer
+;; ============================================================================
+
+(def log-buffer-name "*clel-log*")
+
+(defn log-message
+  "Append a timestamped message to the log buffer."
+  [msg]
+  (let [timestamp (format-time-string "[%Y-%m-%d %H:%M:%S] ")]
+    (with-current-buffer (get-buffer-create log-buffer-name)
+      (goto-char (point-max))
+      (insert timestamp msg "\n"))))
+
+(defn clear-log
+  "Clear the log buffer."
+  []
+  (when (get-buffer log-buffer-name)
+    (with-current-buffer log-buffer-name
+      (erase-buffer))))
+
+(defn show-log
+  "Display the log buffer in another window."
+  []
+  (display-buffer (get-buffer-create log-buffer-name)))

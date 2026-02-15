@@ -65,6 +65,46 @@ Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen) → Elisp (.el
 
 ## Progress Log
 
+### 2026-01-29: Emacs Buffer/Process Interop Layer (clel-031)
+
+**Added comprehensive Emacs buffer/process interop for writing Emacs extensions in ClojureElisp:**
+
+**Buffer operations (direct mappings):**
+- Content: `buffer-string`, `buffer-substring`, `buffer-substring-no-properties`, `erase-buffer`
+- Point/movement: `point`, `point-min`, `point-max`, `goto-char`, `forward-char`, `backward-char`, `forward-line`, `beginning-of-line`, `end-of-line`
+- Editing: `insert`, `insert-buffer-substring`, `delete-char`, `delete-region`
+- Buffer management: `current-buffer`, `set-buffer`, `get-buffer`, `get-buffer-create`, `kill-buffer`, `buffer-name`, `buffer-live-p`, `buffer-modified-p`
+- Region: `mark`, `set-mark`, `region-beginning`, `region-end`, `use-region-p`
+- Narrowing: `narrow-to-region`, `widen`, `buffer-narrowed-p`
+- Text properties: `put-text-property`, `get-text-property`, `remove-text-properties`, `propertize`
+
+**Process operations:**
+- `start-process`, `call-process`, `process-send-string`, `process-send-region`, `process-send-eof`
+- `set-process-filter`, `set-process-sentinel`, `process-buffer`, `process-status`, `process-live-p`, `delete-process`
+
+**File operations:**
+- `find-file`, `find-file-noselect`, `write-file`, `save-buffer`, `buffer-file-name`
+- `file-exists-p`, `file-readable-p`, `file-writable-p`, `file-directory-p`, `expand-file-name`
+
+**Window operations:**
+- `selected-window`, `select-window`, `window-buffer`, `set-window-buffer`, `split-window`, `delete-window`, `other-window`
+
+**Special forms (analyzer + emitter):**
+- `save-excursion` — Save point/mark, execute body, restore
+- `save-restriction` — Save narrowing state, execute body, restore
+- `with-current-buffer` — Execute body in specified buffer
+- `with-temp-buffer` — Execute body in temporary buffer
+- `save-current-buffer` — Save current buffer, execute body, restore
+- `with-output-to-string` — Capture output as string
+
+**Test stats:** 211 tests, 1278 assertions, 2 pre-existing failures
+
+**Files modified:**
+- `src/clojure_elisp/analyzer.clj` — Added 6 special form analyzers
+- `src/clojure_elisp/emitter.clj` — Added 60+ function mappings and 6 emit-node methods
+- `examples/buffer-demo.cljel` — New comprehensive example showing buffer/process interop
+- `test/clojure_elisp/emitter_test.clj` — Added 10 test functions (56 new assertions)
+
 ### 2026-01-28: Protocol Extensions (clel-025)
 
 **Added extend-type, extend-protocol, satisfies?, and reify:**

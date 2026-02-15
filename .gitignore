@@ -1,11 +1,14 @@
 # Clojure
 .cpcache/
 .nrepl-port
+.nrepl.edn
 target/
 *.jar
+deps.local.edn
 
 # MCP
 .clojure-mcp/
+.mcp.json
 
 # Editor
 .idea/

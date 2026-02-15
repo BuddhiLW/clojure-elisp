@@ -1,0 +1,162 @@
+(ns hive-mcp-eca
+  "Integration between hive-mcp and ECA (Editor Code Assistant)."
+  (:require [hive-mcp-api :as api]))
+
+;; ============================================================================
+;; Customization Group
+;; ============================================================================
+
+(defgroup hive-mcp-eca nil
+  "Integration between hive-mcp and ECA."
+  :group 'hive-mcp
+  :prefix "hive-mcp-eca-")
+
+;; ============================================================================
+;; User Settings
+;; ============================================================================
+
+(defcustom hive-mcp-eca-auto-context nil
+  "When non-nil, automatically include MCP context in ECA chats."
+  :type 'boolean
+  :group 'hive-mcp-eca)
+
+;; ============================================================================
+;; Internal State
+;; ============================================================================
+
+(defvar hive-mcp-eca--initialized nil
+  "Whether the addon has been initialized.")
+
+;; ============================================================================
+;; Core Functions
+;; ============================================================================
+
+(defn ensure-api []
+  "Ensure hive-mcp-api is available."
+  (when-not (featurep 'hive-mcp-api)
+    (require 'hive-mcp-api nil t))
+  (featurep 'hive-mcp-api))
+
+(defn get-context []
+  "Get MCP context for ECA."
+  (when (hive-mcp-eca/ensure-api)
+    (hive-mcp-api-get-context)))
+
+;; ============================================================================
+;; Session Management
+;; ============================================================================
+
+(defn start-eca []
+  "Start or switch to ECA session."
+  (interactive)
+  (eca))
+
+(defn stop-eca []
+  "Stop ECA session."
+  (interactive)
+  (eca-stop))
+
+(defn restart-eca []
+  "Restart ECA session."
+  (interactive)
+  (eca-restart))
+
+(defn chat-send [message]
+  "Send MESSAGE to current ECA chat."
+  (when-let [session (eca-session)]
+    (eca-chat-send session message)))
+
+(defn chat-open []
+  "Open ECA chat buffer."
+  (interactive)
+  (when-let [session (eca-session)]
+    (eca-chat-open session)))
+
+;; ============================================================================
+;; Memory Integration
+;; ============================================================================
+
+(defn save-to-memory [content type &optional tags]
+  "Save CONTENT to hive-mcp memory as TYPE with optional TAGS."
+  (interactive
+    (list (if (use-region-p)
+              (buffer-substring-no-properties (region-beginning) (region-end))
+            (read-string "Content: "))
+          (completing-read "Type: " '("note" "snippet" "decision") nil t)
+          (split-string (read-string "Tags (comma-separated): ") "," t " ")))
+  (when (ensure-api)
+    (hive-mcp-api-memory-add type content tags)
+    (message "Saved to memory as %s" type)))
+
+(defn query-memory [type &optional limit]
+  "Query hive-mcp memory for entries of TYPE."
+  (when (ensure-api)
+    (hive-mcp-api-memory-query type nil (or limit 10))))
+
+(defn inject-context []
+  "Inject MCP context into current ECA chat."
+  (interactive)
+  (when-let [ctx (get-context)]
+    (chat-send (format "Context:\n%s" ctx))))
+
+;; ============================================================================
+;; Minor Mode Lifecycle
+;; ============================================================================
+
+(defn -enable []
+  "Enable hive-mcp-eca integration."
+  (add-hook 'eca-after-initialize-hook #'hive-mcp-eca--on-eca-init)
+  (setq hive-mcp-eca--initialized t)
+  (message "hive-mcp-eca enabled"))
+
+(defn -disable []
+  "Disable hive-mcp-eca integration."
+  (remove-hook 'eca-after-initialize-hook #'hive-mcp-eca--on-eca-init)
+  (setq hive-mcp-eca--initialized nil)
+  (message "hive-mcp-eca disabled"))
+
+(defn -on-eca-init []
+  "Hook run after ECA initializes."
+  (when hive-mcp-eca-auto-context
+    (inject-context)))
+
+;; ============================================================================
+;; Minor Mode Definition
+;; ============================================================================
+
+(define-minor-mode hive-mcp-eca-mode
+  "Minor mode for hive-mcp integration with ECA."
+  :init-value nil
+  :lighter " MCP-ECA"
+  :global t
+  :group 'hive-mcp-eca
+  (if hive-mcp-eca-mode
+    (-enable)
+    (-disable)))
+
+;; ============================================================================
+;; Addon Registration
+;; ============================================================================
+
+(defn -addon-init []
+  "Initialize the hive-mcp-eca addon."
+  (require 'hive-mcp-api nil t)
+  (message "hive-mcp-eca: initialized"))
+
+(defn -addon-shutdown []
+  "Shutdown the hive-mcp-eca addon."
+  (when hive-mcp-eca-mode
+    (hive-mcp-eca-mode -1))
+  (message "hive-mcp-eca: shutdown"))
+
+(with-eval-after-load 'hive-mcp-addons
+  (hive-mcp-addon-register
+    'eca
+    :version "0.1.0"
+    :description "ECA integration"
+    :requires '(hive-mcp-api)
+    :provides '(hive-mcp-eca-mode)
+    :init #'-addon-init
+    :shutdown #'-addon-shutdown))
+
+(provide 'hive-mcp-eca)

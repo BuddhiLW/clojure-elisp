@@ -4,7 +4,8 @@
    Transforms Clojure forms into an AST suitable for Elisp emission.
    We use a simplified approach rather than tools.analyzer for now,
    keeping it pragmatic and easy to understand."
-  (:require [clojure.walk :as walk]))
+  (:require [clojure-elisp.macros :as macros]
+            [clojure-elisp.destructure :as destructure]))
 
 ;; ============================================================================
 ;; Environment
@@ -28,49 +29,15 @@
   (update env :locals into locals))
 
 ;; ============================================================================
-;; Macro Registry
+;; Macro Registry (delegated to clojure-elisp.macros)
 ;; ============================================================================
 
-(defonce ^{:doc "Compile-time macro registry. Maps symbol -> macro fn."}
-  macro-registry
-  (atom {}))
-
-(defn clear-macros!
-  "Clear all registered macros. Useful for tests."
-  []
-  (reset! macro-registry {}))
-
-(defn get-macro
-  "Look up a macro by name. Returns the macro fn or nil."
-  [sym]
-  (get @macro-registry sym))
-
-(defn register-macro!
-  "Register a macro fn under the given name."
-  [sym macro-fn]
-  (swap! macro-registry assoc sym macro-fn))
-
-(defn macroexpand-1-clel
-  "Expand a ClojureElisp macro form by one step.
-   If the form is a list whose first element is a registered macro,
-   applies the macro fn and returns the result. Otherwise returns
-   the form unchanged."
-  [form]
-  (if (and (seq? form)
-           (symbol? (first form)))
-    (if-let [macro-fn (get-macro (first form))]
-      (apply macro-fn (rest form))
-      form)
-    form))
-
-(defn macroexpand-clel
-  "Fully expand a ClojureElisp macro form.
-   Repeatedly applies macroexpand-1-clel until the form stops changing."
-  [form]
-  (let [expanded (macroexpand-1-clel form)]
-    (if (identical? expanded form)
-      form
-      (recur expanded))))
+(def macro-registry macros/macro-registry)
+(def clear-macros! macros/clear-macros!)
+(def get-macro macros/get-macro)
+(def register-macro! macros/register-macro!)
+(def macroexpand-1-clel macros/macroexpand-1-clel)
+(def macroexpand-clel macros/macroexpand-clel)
 
 ;; ============================================================================
 ;; Source Location
@@ -113,7 +80,7 @@
 ;; Special Form Analyzers
 ;; ============================================================================
 
-(declare analyze expand-destructuring process-fn-params)
+(declare analyze)
 
 (defn analyze-def
   "Analyze (def name expr) or (def name docstring expr)."
@@ -127,97 +94,94 @@
               :docstring docstring
               :init (when init (analyze init)))))
 
-(defn analyze-defn
-  "Analyze (defn name [args] body) and (defn name ([args1] body1) ([args2] body2)) forms.
+(defn- analyze-multi-arity-defn
+  "Analyze multi-arity defn: (defn foo ([x] x) ([x y] (+ x y)))."
+  [name docstring fdecl]
+  (let [arities (for [arity fdecl]
+                  (let [[params & body] arity
+                        variadic?       (some #{'&} params)
+                        fixed-params    (if variadic?
+                                          (vec (take-while #(not= '& %) params))
+                                          params)
+                        rest-param      (when variadic?
+                                          (last params))
+                        all-param-syms  (set (remove #{'&} params))]
+                    {:params params
+                     :fixed-params fixed-params
+                     :rest-param rest-param
+                     :variadic? (boolean variadic?)
+                     :arity (if variadic? :variadic (count params))
+                     :body (binding [*env* (with-locals *env* all-param-syms)]
+                             (mapv analyze body))}))]
+    (ast-node :defn
+              :name name
+              :docstring docstring
+              :multi-arity? true
+              :arities (vec arities))))
 
-   Multi-arity detection: if after name/docstring, the first form is a list
-   starting with a vector, we have multi-arity syntax."
+(defn- analyze-single-arity-defn
+  "Analyze single-arity defn: (defn foo [x] body)."
+  [name docstring fdecl]
+  (let [[params & body]                                                                      fdecl
+        params-vec                                                                           (if (vector? params) params (first params))
+        {:keys [simple-params rest-param destructure-bindings all-locals]}
+        (destructure/process-fn-params params-vec)
+
+        effective-params                                                                     (if rest-param
+                                                                                               (conj simple-params '& rest-param)
+                                                                                               simple-params)
+
+        effective-body
+        (if (seq destructure-bindings)
+          (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
+                                            (destructure/expand-destructuring pattern gsym))
+                                          destructure-bindings))]
+            [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
+                   (cons 'do body))])
+          body)]
+    (ast-node :defn
+              :name name
+              :docstring docstring
+              :params effective-params
+              :fixed-params simple-params
+              :rest-param rest-param
+              :variadic? (boolean rest-param)
+              :body (binding [*env* (with-locals *env* all-locals)]
+                      (mapv analyze effective-body)))))
+
+(defn analyze-defn
+  "Analyze (defn name [args] body) and (defn name ([args1] body1) ([args2] body2)) forms."
   [[_ name & fdecl]]
   (let [[docstring fdecl] (if (string? (first fdecl))
                             [(first fdecl) (rest fdecl)]
                             [nil fdecl])
-        ;; Detect multi-arity: first element is a list starting with a vector
-        multi-arity? (and (seq? (first fdecl))
-                          (vector? (ffirst fdecl)))]
+        multi-arity?      (and (seq? (first fdecl))
+                               (vector? (ffirst fdecl)))]
     (if multi-arity?
-      ;; Multi-arity form: (defn foo ([x] x) ([x y] (+ x y)))
-      (let [arities (for [arity fdecl]
-                      (let [[params & body] arity
-                            ;; Check for variadic: params contains &
-                            variadic? (some #{'&} params)
-                            ;; For variadic, get the fixed params and rest param
-                            fixed-params (if variadic?
-                                           (vec (take-while #(not= '& %) params))
-                                           params)
-                            rest-param (when variadic?
-                                         (last params))
-                            ;; All param symbols for locals (excluding &)
-                            all-param-syms (set (remove #{'&} params))]
-                        {:params params
-                         :fixed-params fixed-params
-                         :rest-param rest-param
-                         :variadic? (boolean variadic?)
-                         :arity (if variadic?
-                                  :variadic
-                                  (count params))
-                         :body (binding [*env* (with-locals *env* all-param-syms)]
-                                 (mapv analyze body))}))]
-        (ast-node :defn
-                  :name name
-                  :docstring docstring
-                  :multi-arity? true
-                  :arities (vec arities)))
-      ;; Single-arity form: (defn foo [x] body)
-      (let [[params & body] fdecl
-            params-vec (if (vector? params) params (first params))
-            {:keys [simple-params rest-param destructure-bindings all-locals]}
-            (process-fn-params params-vec)
-
-            ;; Build effective params for AST
-            effective-params (if rest-param
-                               (conj simple-params '& rest-param)
-                               simple-params)
-
-            ;; Wrap body in let if destructuring needed
-            effective-body
-            (if (seq destructure-bindings)
-              (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
-                                                (expand-destructuring pattern gsym))
-                                              destructure-bindings))]
-                [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
-                       (cons 'do body))])
-              body)]
-        (ast-node :defn
-                  :name name
-                  :docstring docstring
-                  :params effective-params
-                  :fixed-params simple-params
-                  :rest-param rest-param
-                  :variadic? (boolean rest-param)
-                  :body (binding [*env* (with-locals *env* all-locals)]
-                          (mapv analyze effective-body)))))))
+      (analyze-multi-arity-defn name docstring fdecl)
+      (analyze-single-arity-defn name docstring fdecl))))
 
 (defn analyze-fn
   "Analyze (fn [args] body) forms.
    Supports destructuring patterns and & rest args in parameters."
   [[_ & fdecl]]
-  (let [[params & body] (if (vector? (first fdecl))
-                          fdecl
-                          (first fdecl))
+  (let [[params & body]                                                                      (if (vector? (first fdecl))
+                                                                                               fdecl
+                                                                                               (first fdecl))
         {:keys [simple-params rest-param destructure-bindings all-locals]}
-        (process-fn-params params)
+        (destructure/process-fn-params params)
 
         ;; Build the effective params for the AST
-        effective-params (if rest-param
-                           (conj simple-params '& rest-param)
-                           simple-params)
+        effective-params                                                                     (if rest-param
+                                                                                               (conj simple-params '& rest-param)
+                                                                                               simple-params)
 
         ;; If there are destructuring bindings, wrap body in a let
         effective-body
         (if (seq destructure-bindings)
           ;; Create a let form with all the destructure bindings
           (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
-                                            (expand-destructuring pattern gsym))
+                                            (destructure/expand-destructuring pattern gsym))
                                           destructure-bindings))]
             [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
                    (cons 'do body))])
@@ -229,253 +193,29 @@
                       (mapv analyze effective-body)))))
 
 ;; ============================================================================
-;; Destructuring Support
+;; Destructuring Support (delegated to clojure-elisp.destructure)
 ;; ============================================================================
-
-(defn destructure-pattern?
-  "Returns true if pattern requires destructuring (is a vector or map)."
-  [pattern]
-  (or (vector? pattern) (map? pattern)))
-
-(defn- expand-vector-destructuring
-  "Expand vector destructuring pattern into simple bindings.
-   Returns a vector of [symbol init-form] pairs.
-   
-   Examples:
-   - [a b] with coll -> [[a (nth coll 0)] [b (nth coll 1)]]
-   - [a & rest] -> [[a (first coll)] [rest (rest coll)]]
-   - [_ x] -> [[x (nth coll 1)]]  (ignores _)
-   - [:as all] -> [[all coll]]"
-  [pattern coll-sym]
-  (loop [items (seq pattern)
-         idx 0
-         bindings []
-         as-binding nil]
-    (cond
-      ;; Done processing items
-      (empty? items)
-      (if as-binding
-        (conj bindings as-binding)
-        bindings)
-
-      ;; Handle :as keyword
-      (= :as (first items))
-      (let [as-sym (second items)]
-        (recur (drop 2 items) idx bindings [as-sym coll-sym]))
-
-      ;; Handle & rest
-      (= '& (first items))
-      (let [rest-sym (second items)
-            remaining (drop 2 items)
-            rest-binding (when (and rest-sym (not= rest-sym '_))
-                           [rest-sym (list 'nthrest coll-sym idx)])]
-        (recur remaining idx
-               (if rest-binding (conj bindings rest-binding) bindings)
-               as-binding))
-
-      ;; Handle _ (ignore binding)
-      (= '_ (first items))
-      (recur (rest items) (inc idx) bindings as-binding)
-
-      ;; Handle nested destructuring
-      (destructure-pattern? (first items))
-      (let [nested-pattern (first items)
-            temp-sym (gensym "vec__")
-            nested-bindings (expand-destructuring nested-pattern temp-sym)]
-        (recur (rest items)
-               (inc idx)
-               (into (conj bindings [temp-sym (list 'nth coll-sym idx)])
-                     nested-bindings)
-               as-binding))
-
-      ;; Simple symbol binding
-      :else
-      (let [sym (first items)]
-        (recur (rest items)
-               (inc idx)
-               (conj bindings [sym (list 'nth coll-sym idx)])
-               as-binding)))))
-
-(defn- expand-map-destructuring
-  "Expand map destructuring pattern into simple bindings.
-   Returns a vector of [symbol init-form] pairs.
-   
-   Examples:
-   - {:keys [x y]} with m -> [[x (get m :x)] [y (get m :y)]]
-   - {:strs [x y]} -> [[x (get m \"x\")] [y (get m \"y\")]]
-   - {a :a b :b} -> [[a (get m :a)] [b (get m :b)]]
-   - {:keys [x] :or {x 0}} -> [[x (or (get m :x) 0)]]
-   - {:keys [x] :as all} -> [[x (get m :x)] [all m]]"
-  [pattern map-sym]
-  (let [as-sym (:as pattern)
-        or-map (:or pattern)
-        keys-syms (:keys pattern)
-        strs-syms (:strs pattern)
-        syms-syms (:syms pattern)
-        ;; Remove special keys to get explicit bindings
-        explicit-bindings (dissoc pattern :as :or :keys :strs :syms)]
-    (cond-> []
-      ;; Handle :keys [x y] -> bind x to (get m :x)
-      keys-syms
-      (into (for [sym keys-syms
-                  :let [k (keyword (name sym))
-                        default (get or-map sym)]]
-              [sym (if default
-                     (list 'clojure.core/or (list 'get map-sym k) default)
-                     (list 'get map-sym k))]))
-
-      ;; Handle :strs [x y] -> bind x to (get m "x")
-      strs-syms
-      (into (for [sym strs-syms
-                  :let [k (name sym)
-                        default (get or-map sym)]]
-              [sym (if default
-                     (list 'clojure.core/or (list 'get map-sym k) default)
-                     (list 'get map-sym k))]))
-
-      ;; Handle :syms [x y] -> bind x to (get m 'x)
-      syms-syms
-      (into (for [sym syms-syms
-                  :let [default (get or-map sym)]]
-              [sym (if default
-                     (list 'clojure.core/or (list 'get map-sym (list 'quote sym)) default)
-                     (list 'get map-sym (list 'quote sym)))]))
-
-      ;; Handle explicit bindings {a :a b :b}
-      (seq explicit-bindings)
-      (into (for [[sym k] explicit-bindings
-                  :when (not= sym '_)
-                  :let [default (get or-map sym)]]
-              (if (destructure-pattern? sym)
-                ;; Nested destructuring
-                (let [temp-sym (gensym "map__")]
-                  [temp-sym (if default
-                              (list 'clojure.core/or (list 'get map-sym k) default)
-                              (list 'get map-sym k))])
-                ;; Simple binding
-                [sym (if default
-                       (list 'clojure.core/or (list 'get map-sym k) default)
-                       (list 'get map-sym k))])))
-
-      ;; Handle :as binding
-      as-sym
-      (conj [as-sym map-sym]))))
-
-(defn expand-destructuring
-  "Expand a destructuring pattern into simple bindings.
-   Takes a pattern and a value form, returns a vector of [symbol init-form] pairs.
-   
-   For simple symbols, returns [[sym value]].
-   For vectors/maps, returns the expanded bindings with gensyms for temp values."
-  [pattern value]
-  (cond
-    ;; Simple symbol - no destructuring needed
-    (symbol? pattern)
-    [[pattern value]]
-
-    ;; Vector destructuring
-    (vector? pattern)
-    (let [coll-sym (gensym "vec__")]
-      (into [[coll-sym value]]
-            (expand-vector-destructuring pattern coll-sym)))
-
-    ;; Map destructuring  
-    (map? pattern)
-    (let [map-sym (gensym "map__")]
-      (into [[map-sym value]]
-            (expand-map-destructuring pattern map-sym)))
-
-    :else
-    (throw (ex-info (str "Invalid binding pattern: " pattern)
-                    {:pattern pattern}))))
-
-(defn expand-bindings
-  "Expand a let binding vector, handling destructuring.
-   Returns a flat vector suitable for a simple let form."
-  [bindings]
-  (->> (partition 2 bindings)
-       (mapcat (fn [[pattern init]]
-                 (expand-destructuring pattern init)))
-       vec))
-(defn- extract-rest-param
-  "Extract rest parameter from params vector.
-   Returns [regular-params rest-sym] where rest-sym is nil if no & rest."
-  [params]
-  (let [amp-idx (.indexOf (vec params) '&)]
-    (if (neg? amp-idx)
-      [params nil]
-      [(subvec (vec params) 0 amp-idx)
-       (nth params (inc amp-idx))])))
-
-(defn process-fn-params
-  "Process function parameters, handling destructuring and rest args.
-   Returns a map with:
-   - :simple-params - vector of simple symbols for the Elisp function signature
-   - :rest-param - the rest parameter symbol (or nil)
-   - :destructure-bindings - vector of [pattern gensym] pairs needing expansion
-   - :all-locals - set of all local symbols that will be bound"
-  [params]
-  (let [[regular-params rest-sym] (extract-rest-param params)
-        ;; Process regular params
-        regular-result
-        (reduce (fn [acc param]
-                  (if (destructure-pattern? param)
-                    ;; Destructuring param - use gensym
-                    (let [gsym (gensym "p__")]
-                      (-> acc
-                          (update :simple-params conj gsym)
-                          (update :destructure-bindings conj [param gsym])))
-                    ;; Simple param
-                    (update acc :simple-params conj param)))
-                {:simple-params []
-                 :destructure-bindings []}
-                regular-params)
-
-        ;; Process rest param if present
-        rest-result
-        (if rest-sym
-          (if (destructure-pattern? rest-sym)
-            ;; Rest param with destructuring
-            (let [gsym (gensym "rest__")]
-              (-> regular-result
-                  (assoc :rest-param gsym)
-                  (update :destructure-bindings conj [rest-sym gsym])))
-            ;; Simple rest param
-            (assoc regular-result :rest-param rest-sym))
-          regular-result)
-
-        ;; Calculate all locals from destructure bindings
-        all-destructure-locals
-        (->> (:destructure-bindings rest-result)
-             (mapcat (fn [[pattern gsym]]
-                       (map first (expand-destructuring pattern gsym))))
-             set)]
-    (assoc rest-result
-           :all-locals (into (set (:simple-params rest-result))
-                             (if (:rest-param rest-result)
-                               (conj all-destructure-locals (:rest-param rest-result))
-                               all-destructure-locals)))))
 
 (defn analyze-let
   "Analyze (let [bindings] body) forms.
    Supports destructuring patterns in bindings."
   [[_ bindings & body]]
   (let [;; Expand destructuring into simple bindings
-        expanded-pairs (expand-bindings bindings)
+        expanded-pairs (destructure/expand-bindings bindings)
         ;; Analyze each binding sequentially, updating env
-        binding-nodes (loop [remaining expanded-pairs
-                             nodes []
-                             env *env*]
-                        (if (empty? remaining)
-                          nodes
-                          (let [[sym init] (first remaining)
-                                analyzed (binding [*env* env]
-                                           (analyze init))
-                                new-env (with-locals env #{sym})]
-                            (recur (rest remaining)
-                                   (conj nodes {:name sym :init analyzed})
-                                   new-env))))
-        all-locals (into (:locals *env*) (map first expanded-pairs))]
+        binding-nodes  (loop [remaining expanded-pairs
+                              nodes     []
+                              env       *env*]
+                         (if (empty? remaining)
+                           nodes
+                           (let [[sym init] (first remaining)
+                                 analyzed   (binding [*env* env]
+                                              (analyze init))
+                                 new-env    (with-locals env #{sym})]
+                             (recur (rest remaining)
+                                    (conj nodes {:name sym :init analyzed})
+                                    new-env))))
+        all-locals     (into (:locals *env*) (map first expanded-pairs))]
     (ast-node :let
               :bindings binding-nodes
               :body (binding [*env* (with-locals *env* all-locals)]
@@ -511,10 +251,10 @@
   [[_ expr & clauses]]
   (let [;; If odd number of clauses, last is default
         has-default? (odd? (count clauses))
-        pairs (if has-default?
-                (partition 2 (butlast clauses))
-                (partition 2 clauses))
-        default (when has-default? (last clauses))]
+        pairs        (if has-default?
+                       (partition 2 (butlast clauses))
+                       (partition 2 clauses))
+        default      (when has-default? (last clauses))]
     (ast-node :case
               :expr (analyze expr)
               :clauses (mapv (fn [[test-val result]]
@@ -551,7 +291,7 @@
   [spec]
   (if (vector? spec)
     (let [[ns-name & opts] spec
-          opts-map (apply hash-map opts)]
+          opts-map         (apply hash-map opts)]
       {:ns ns-name
        :as (:as opts-map)
        :refer (:refer opts-map)})
@@ -562,12 +302,12 @@
    Returns a map with :aliases and :refers suitable for merging into *env*."
   [requires]
   (let [aliases (into {} (for [{:keys [ns as]} requires
-                               :when as]
+                               :when           as]
                            [as ns]))
-        refers (into {} (for [{:keys [ns refer]} requires
-                              :when refer
-                              sym refer]
-                          [sym ns]))]
+        refers  (into {} (for [{:keys [ns refer]} requires
+                               :when              refer
+                               sym                refer]
+                           [sym ns]))]
     {:aliases aliases
      :refers refers}))
 
@@ -595,7 +335,7 @@
   "Analyze (loop [bindings] body) forms."
   [[_ bindings & body]]
   (let [pairs (partition 2 bindings)
-        syms (mapv first pairs)
+        syms  (mapv first pairs)
         inits (mapv (comp analyze second) pairs)]
     (ast-node :loop
               :bindings (mapv (fn [s i] {:name s :init i}) syms inits)
@@ -613,27 +353,27 @@
    Parses body expressions, catch clauses, and optional finally clause."
   [[_ & exprs]]
   (let [;; Separate body from catch/finally clauses
-        catch? #(and (seq? %) (= 'catch (first %)))
-        finally? #(and (seq? %) (= 'finally (first %)))
+        catch?          #(and (seq? %) (= 'catch (first %)))
+        finally?        #(and (seq? %) (= 'finally (first %)))
         special-clause? #(or (catch? %) (finally? %))
 
-        body-exprs (vec (take-while (complement special-clause?) exprs))
-        clauses (drop-while (complement special-clause?) exprs)
+        body-exprs      (vec (take-while (complement special-clause?) exprs))
+        clauses         (drop-while (complement special-clause?) exprs)
 
         ;; Parse catch clauses: (catch ExType e body...)
-        catch-clauses (filter catch? clauses)
-        catches (mapv (fn [[_ ex-type binding & handler]]
-                        (let [local-env (with-locals *env* #{binding})]
-                          {:type ex-type
-                           :name binding
-                           :body (binding [*env* local-env]
-                                   (mapv analyze handler))}))
-                      catch-clauses)
+        catch-clauses   (filter catch? clauses)
+        catches         (mapv (fn [[_ ex-type binding & handler]]
+                                (let [local-env (with-locals *env* #{binding})]
+                                  {:type ex-type
+                                   :name binding
+                                   :body (binding [*env* local-env]
+                                           (mapv analyze handler))}))
+                              catch-clauses)
 
         ;; Parse finally clause: (finally body...)
-        finally-clause (first (filter finally? clauses))
-        finally-body (when finally-clause
-                       (mapv analyze (rest finally-clause)))]
+        finally-clause  (first (filter finally? clauses))
+        finally-body    (when finally-clause
+                          (mapv analyze (rest finally-clause)))]
 
     (ast-node :try
               :body (mapv analyze body-exprs)
@@ -654,21 +394,21 @@
    - (throw e) - re-throw a caught exception"
   [[_ exception]]
   (let [analyzed-ex (analyze exception)
-        ex-type (cond
-                  (and (= :invoke (:op analyzed-ex))
-                       (= 'ex-info (get-in analyzed-ex [:fn :name])))
-                  :ex-info
+        ex-type     (cond
+                      (and (= :invoke (:op analyzed-ex))
+                           (= 'ex-info (get-in analyzed-ex [:fn :name])))
+                      :ex-info
 
-                  (and (= :invoke (:op analyzed-ex))
-                       (let [fn-name (get-in analyzed-ex [:fn :name])]
-                         (and fn-name (.endsWith (name fn-name) "."))))
-                  :constructor
+                      (and (= :invoke (:op analyzed-ex))
+                           (let [fn-name (get-in analyzed-ex [:fn :name])]
+                             (and fn-name (.endsWith (name fn-name) "."))))
+                      :constructor
 
-                  (#{:local :var} (:op analyzed-ex))
-                  :rethrow
+                      (#{:local :var} (:op analyzed-ex))
+                      :rethrow
 
-                  :else
-                  :expression)]
+                      :else
+                      :expression)]
     (ast-node :throw
               :exception analyzed-ex
               :exception-type ex-type)))
@@ -680,14 +420,14 @@
   (let [;; First pass: collect all function names for mutual recursion
         fn-names (mapv first fn-specs)
         ;; Add all fn names to environment before analyzing bodies
-        new-env (with-locals *env* (set fn-names))
+        new-env  (with-locals *env* (set fn-names))
         ;; Analyze each function spec
-        fns (binding [*env* new-env]
-              (mapv (fn [[fname params & fn-body]]
-                      {:name fname
-                       :params (vec params)
-                       :body (mapv analyze fn-body)})
-                    fn-specs))]
+        fns      (binding [*env* new-env]
+                   (mapv (fn [[fname params & fn-body]]
+                           {:name fname
+                            :params (vec params)
+                            :body (mapv analyze fn-body)})
+                         fn-specs))]
     (ast-node :letfn
               :fns fns
               :body (binding [*env* new-env]
@@ -708,47 +448,47 @@
   [[_ name dispatch-val params & body]]
   (let [;; Check if any param element needs destructuring
         ;; params is a vector like [shape] or [{:keys [w h]}]
-        has-destructure? (some destructure-pattern? params)
+        has-destructure? (some destructure/destructure-pattern? params)
         ;; For simple case, just use the params directly
         ;; For destructuring, we need to expand each param
-        expanded-pairs (when has-destructure?
+        expanded-pairs   (when has-destructure?
                          ;; Create bindings for each param
-                         (loop [idx 0
-                                remaining params
-                                bindings []]
-                           (if (empty? remaining)
-                             bindings
-                             (let [param (first remaining)
-                                   arg-sym (symbol (str "arg" idx))]
-                               (if (destructure-pattern? param)
-                                 (recur (inc idx)
-                                        (rest remaining)
-                                        (into bindings (expand-destructuring param arg-sym)))
-                                 (recur (inc idx)
-                                        (rest remaining)
-                                        (conj bindings [param arg-sym])))))))
+                           (loop [idx       0
+                                  remaining params
+                                  bindings  []]
+                             (if (empty? remaining)
+                               bindings
+                               (let [param   (first remaining)
+                                     arg-sym (symbol (str "arg" idx))]
+                                 (if (destructure/destructure-pattern? param)
+                                   (recur (inc idx)
+                                          (rest remaining)
+                                          (into bindings (destructure/expand-destructuring param arg-sym)))
+                                   (recur (inc idx)
+                                          (rest remaining)
+                                          (conj bindings [param arg-sym])))))))
         ;; Analyze bindings sequentially like let does
-        binding-nodes (when has-destructure?
-                        (loop [remaining expanded-pairs
-                               nodes []
-                               env (with-locals *env* (set (map #(symbol (str "arg" %)) (range (count params)))))]
-                          (if (empty? remaining)
-                            nodes
-                            (let [[sym init] (first remaining)
-                                  analyzed (binding [*env* env]
-                                             (analyze init))
-                                  new-env (with-locals env #{sym})]
-                              (recur (rest remaining)
-                                     (conj nodes {:name sym :init analyzed})
-                                     new-env)))))
+        binding-nodes    (when has-destructure?
+                           (loop [remaining expanded-pairs
+                                  nodes     []
+                                  env       (with-locals *env* (set (map #(symbol (str "arg" %)) (range (count params)))))]
+                             (if (empty? remaining)
+                               nodes
+                               (let [[sym init] (first remaining)
+                                     analyzed   (binding [*env* env]
+                                                  (analyze init))
+                                     new-env    (with-locals env #{sym})]
+                                 (recur (rest remaining)
+                                        (conj nodes {:name sym :init analyzed})
+                                        new-env)))))
         ;; Generate param names
         processed-params (if has-destructure?
                            (mapv #(symbol (str "arg" %)) (range (count params)))
                            params)
         ;; All locals for body analysis
-        all-locals (if has-destructure?
-                     (into (set processed-params) (map first expanded-pairs))
-                     (set params))]
+        all-locals       (if has-destructure?
+                           (into (set processed-params) (map first expanded-pairs))
+                           (set params))]
     (ast-node :defmethod
               :name name
               :dispatch-val dispatch-val
@@ -766,10 +506,10 @@
    Body alternates between protocol name symbols and method implementations.
    Returns a vector of {:protocol name :methods [{:name :params :body}]}."
   [body fields]
-  (loop [remaining (seq body)
+  (loop [remaining        (seq body)
          current-protocol nil
-         protocols []
-         current-methods []]
+         protocols        []
+         current-methods  []]
     (if (nil? remaining)
       (if current-protocol
         (conj protocols {:protocol current-protocol :methods current-methods})
@@ -783,7 +523,7 @@
             (recur (next remaining) item protocols []))
           ;; Method implementation: (method-name [this args...] body...)
           (let [[method-name params & method-body] item
-                all-locals (into (set fields) (set params))]
+                all-locals                         (into (set fields) (set params))]
             (recur (next remaining)
                    current-protocol
                    protocols
@@ -810,7 +550,7 @@
   "Analyze (defrecord Name [fields...] Protocol (method [this] body) ...) forms."
   [[_ record-name fields & body]]
   (let [field-syms (vec fields)
-        protocols (parse-protocol-impls body field-syms)]
+        protocols  (parse-protocol-impls body field-syms)]
     (ast-node :defrecord
               :name record-name
               :fields field-syms
@@ -820,11 +560,11 @@
   "Analyze (deftype Name [fields...] Protocol (method [this] body) ...) forms.
    Fields may have ^:mutable metadata."
   [[_ type-name fields & body]]
-  (let [field-syms (vec fields)
+  (let [field-syms     (vec fields)
         mutable-fields (set (filter #(:mutable (meta %)) field-syms))
         ;; Strip metadata for clean field names
-        clean-fields (mapv #(with-meta % nil) field-syms)
-        protocols (parse-protocol-impls body clean-fields)]
+        clean-fields   (mapv #(with-meta % nil) field-syms)
+        protocols      (parse-protocol-impls body clean-fields)]
     (ast-node :deftype
               :name type-name
               :fields clean-fields
@@ -855,9 +595,9 @@
   (let [;; Parse body: alternating Type symbols and method implementations
         parse-extensions
         (fn [forms]
-          (loop [remaining (seq forms)
-                 current-type nil
-                 extensions []
+          (loop [remaining       (seq forms)
+                 current-type    nil
+                 extensions      []
                  current-methods []]
             (if (nil? remaining)
               (if current-type
@@ -895,10 +635,10 @@
 (defn- analyze-reify-protocols
   "Parse reify protocol implementations."
   [body closed-locals]
-  (loop [remaining (seq body)
+  (loop [remaining        (seq body)
          current-protocol nil
-         protocols []
-         current-methods []]
+         protocols        []
+         current-methods  []]
     (if (nil? remaining)
       (if current-protocol
         (conj protocols {:protocol current-protocol :methods current-methods})
@@ -912,7 +652,7 @@
             (recur (next remaining) item protocols []))
           ;; Method implementation
           (let [[method-name params & method-body] item
-                all-locals (into (set params) closed-locals)]
+                all-locals                         (into (set params) closed-locals)]
             (recur (next remaining)
                    current-protocol
                    protocols
@@ -928,10 +668,186 @@
   [[_ & body]]
   (let [;; Capture closed-over locals from current environment
         closed-locals (or (:locals *env*) #{})
-        protocols (analyze-reify-protocols body closed-locals)]
+        protocols     (analyze-reify-protocols body closed-locals)]
     (ast-node :reify
               :protocols protocols
               :closed-over (vec closed-locals))))
+
+;; ============================================================================
+;; Emacs Buffer/Process Interop (clel-031)
+;; ============================================================================
+
+(defn analyze-save-excursion
+  "Analyze (save-excursion body...) forms.
+   Saves point and mark, executes body, then restores them."
+  [[_ & body]]
+  (ast-node :save-excursion
+            :body (mapv analyze body)))
+
+(defn analyze-save-restriction
+  "Analyze (save-restriction body...) forms.
+   Saves the current narrowing state, executes body, then restores it."
+  [[_ & body]]
+  (ast-node :save-restriction
+            :body (mapv analyze body)))
+
+(defn analyze-with-current-buffer
+  "Analyze (with-current-buffer buffer body...) forms.
+   Executes body with buffer as the current buffer."
+  [[_ buffer & body]]
+  (ast-node :with-current-buffer
+            :buffer (analyze buffer)
+            :body (mapv analyze body)))
+
+(defn analyze-with-temp-buffer
+  "Analyze (with-temp-buffer body...) forms.
+   Creates a temporary buffer, executes body in it, then kills the buffer."
+  [[_ & body]]
+  (ast-node :with-temp-buffer
+            :body (mapv analyze body)))
+
+(defn analyze-save-current-buffer
+  "Analyze (save-current-buffer body...) forms.
+   Saves the current buffer, executes body, then restores current buffer."
+  [[_ & body]]
+  (ast-node :save-current-buffer
+            :body (mapv analyze body)))
+
+(defn analyze-with-output-to-string
+  "Analyze (with-output-to-string body...) forms.
+   Captures all output to a string and returns it."
+  [[_ & body]]
+  (ast-node :with-output-to-string
+            :body (mapv analyze body)))
+
+;; ============================================================================
+;; Iteration Forms (clel-035, clel-045)
+;; ============================================================================
+
+(defn- parse-iteration-clauses
+  "Parse a binding vector into a sequence of clauses.
+   Each clause is one of:
+   - {:type :binding :sym symbol :coll form}  - x coll
+   - {:type :let :bindings [[sym form]...]}   - :let [x expr y expr2]
+   - {:type :when :pred form}                 - :when predicate
+   - {:type :while :pred form}                - :while predicate
+
+   Handles: [x xs :when p y ys :let [z expr] :when q]"
+  [bindings]
+  (loop [remaining (seq bindings)
+         clauses   []]
+    (if (empty? remaining)
+      clauses
+      (let [item (first remaining)]
+        (cond
+          ;; :when modifier
+          (= :when item)
+          (recur (drop 2 remaining)
+                 (conj clauses {:type :when :pred (second remaining)}))
+
+          ;; :while modifier
+          (= :while item)
+          (recur (drop 2 remaining)
+                 (conj clauses {:type :while :pred (second remaining)}))
+
+          ;; :let modifier
+          (= :let item)
+          (let [let-vec (second remaining)
+                pairs   (vec (partition 2 let-vec))]
+            (recur (drop 2 remaining)
+                   (conj clauses {:type :let :bindings pairs})))
+
+          ;; Regular binding: sym coll
+          (symbol? item)
+          (recur (drop 2 remaining)
+                 (conj clauses {:type :binding :sym item :coll (second remaining)}))
+
+          ;; Unknown, skip
+          :else
+          (recur (rest remaining) clauses))))))
+
+(defn- analyze-iteration-clause
+  "Analyze a single iteration clause, updating env as needed.
+   Returns [analyzed-clause updated-locals]."
+  [clause current-locals]
+  (case (:type clause)
+    :binding
+    (let [coll-ast   (binding [*env* (with-locals *env* current-locals)]
+                       (analyze (:coll clause)))
+          new-locals (conj current-locals (:sym clause))]
+      [{:type :binding
+        :sym (:sym clause)
+        :coll coll-ast}
+       new-locals])
+
+    :let
+    (let [pairs                                                                (:bindings clause)
+          ;; Analyze let bindings sequentially
+          [analyzed-lets final-locals]
+          (reduce (fn [[lets locals] [sym form]]
+                    (let [init-ast   (binding [*env* (with-locals *env* locals)]
+                                       (analyze form))
+                          new-locals (conj locals sym)]
+                      [(conj lets {:name sym :init init-ast}) new-locals]))
+                  [[] current-locals]
+                  pairs)]
+      [{:type :let :bindings analyzed-lets} final-locals])
+
+    :when
+    (let [pred-ast (binding [*env* (with-locals *env* current-locals)]
+                     (analyze (:pred clause)))]
+      [{:type :when :pred pred-ast} current-locals])
+
+    :while
+    (let [pred-ast (binding [*env* (with-locals *env* current-locals)]
+                     (analyze (:pred clause)))]
+      [{:type :while :pred pred-ast} current-locals])))
+
+(defn- analyze-iteration-clauses
+  "Analyze all iteration clauses, threading environment through.
+   Returns [analyzed-clauses all-locals]."
+  [clauses initial-locals]
+  (reduce (fn [[analyzed locals] clause]
+            (let [[analyzed-clause new-locals] (analyze-iteration-clause clause locals)]
+              [(conj analyzed analyzed-clause) new-locals]))
+          [[] initial-locals]
+          clauses))
+
+(defn analyze-doseq
+  "Analyze (doseq [x coll :when p y coll2 :let [z expr]] body...) forms.
+   Supports multiple bindings with :when, :while, and :let modifiers.
+   Iterates over collections, executing body for side effects."
+  [[_ bindings & body]]
+  (let [clauses                       (parse-iteration-clauses bindings)
+        [analyzed-clauses all-locals] (analyze-iteration-clauses clauses #{})]
+    (ast-node :doseq
+              :clauses analyzed-clauses
+              :body (binding [*env* (with-locals *env* all-locals)]
+                      (mapv analyze body)))))
+
+(defn analyze-dotimes
+  "Analyze (dotimes [i n] body...) forms.
+   Executes body n times, with i bound to 0, 1, ..., n-1."
+  [[_ bindings & body]]
+  (let [[sym count-form] (take 2 bindings)
+        count-ast        (analyze count-form)]
+    (ast-node :dotimes
+              :binding sym
+              :count count-ast
+              :body (binding [*env* (with-locals *env* #{sym})]
+                      (mapv analyze body)))))
+
+(defn analyze-for
+  "Analyze (for [x coll :when pred y coll2 :let [z expr]] body) forms.
+   List comprehension that returns a lazy sequence.
+   Supports multiple bindings with :when, :while, and :let modifiers."
+  [[_ bindings & body]]
+  (let [clauses                       (parse-iteration-clauses bindings)
+        [analyzed-clauses all-locals] (analyze-iteration-clauses clauses #{})]
+    (ast-node :for
+              :clauses analyzed-clauses
+              :body (binding [*env* (with-locals *env* all-locals)]
+                      (mapv analyze body)))))
 
 ;; ============================================================================
 ;; Macro System
@@ -955,16 +871,16 @@
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
         ;; Parse keyword options until we hit a non-keyword or run out
-        parse-options (fn [forms]
-                        (loop [remaining forms
-                               options {}]
-                          (if (and (seq remaining)
-                                   (keyword? (first remaining))
-                                   (seq (rest remaining)))
-                            (recur (drop 2 remaining)
-                                   (assoc options (first remaining) (second remaining)))
-                            [options remaining])))
-        [options body-forms] (parse-options rest-forms)]
+        parse-options          (fn [forms]
+                                 (loop [remaining forms
+                                        options   {}]
+                                   (if (and (seq remaining)
+                                            (keyword? (first remaining))
+                                            (seq (rest remaining)))
+                                     (recur (drop 2 remaining)
+                                            (assoc options (first remaining) (second remaining)))
+                                     [options remaining])))
+        [options body-forms]   (parse-options rest-forms)]
     (ast-node :define-minor-mode
               :name mode-name
               :docstring docstring
@@ -986,7 +902,7 @@
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
         ;; Parse keyword options into a map
-        options (apply hash-map rest-forms)]
+        options                (apply hash-map rest-forms)]
     (ast-node :defgroup
               :name group-name
               :value value
@@ -1009,7 +925,7 @@
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
         ;; Parse keyword options into a map
-        options (apply hash-map rest-forms)]
+        options                (apply hash-map rest-forms)]
     (ast-node :defcustom
               :name var-name
               :default default
@@ -1025,11 +941,11 @@
   (let [[docstring fdecl] (if (string? (first fdecl))
                             [(first fdecl) (rest fdecl)]
                             [nil fdecl])
-        [params & body] fdecl
+        [params & body]   fdecl
         ;; Build and eval a Clojure fn from the macro body.
         ;; Since the compiler runs on the JVM, the macro fn executes
         ;; at compile time and produces forms for analysis.
-        macro-fn (eval (list* 'fn params body))]
+        macro-fn          (eval (list* 'fn params body))]
     (register-macro! name macro-fn)
     (ast-node :defmacro
               :name name
@@ -1069,7 +985,7 @@
   [sym]
   (when (symbol? sym)
     (let [sym-name (name sym)
-          sym-ns (namespace sym)]
+          sym-ns   (namespace sym)]
       (or (.startsWith sym-name ".")
           (= sym-ns "elisp")))))
 
@@ -1085,7 +1001,7 @@
    - (elisp/fn args..) → :elisp-call with :fn as raw Elisp name"
   [[f & args]]
   (let [f-name (when (symbol? f) (name f))
-        f-ns (when (symbol? f) (namespace f))]
+        f-ns   (when (symbol? f) (namespace f))]
     (cond
       ;; Property access: (.-point) → zero-arg Elisp function call
       (and f-name (.startsWith f-name ".-"))
@@ -1152,7 +1068,59 @@
    'with-eval-after-load analyze-with-eval-after-load
    'define-minor-mode analyze-define-minor-mode
    'defgroup analyze-defgroup
-   'defcustom analyze-defcustom})
+   'defcustom analyze-defcustom
+   ;; Emacs buffer/process interop (clel-031)
+   'save-excursion analyze-save-excursion
+   'save-restriction analyze-save-restriction
+   'with-current-buffer analyze-with-current-buffer
+   'with-temp-buffer analyze-with-temp-buffer
+   'save-current-buffer analyze-save-current-buffer
+   'with-output-to-string analyze-with-output-to-string
+   ;; Iteration forms (clel-035, clel-039)
+   'doseq analyze-doseq
+   'dotimes analyze-dotimes
+   'for analyze-for})
+
+(defn- analyze-symbol
+  "Analyze a symbol form, resolving locals, aliases, refers, and vars."
+  [form]
+  (let [sym-ns-str (namespace form)
+        sym-name   (symbol (name form))]
+    (cond
+      ;; Local takes priority
+      (contains? (:locals *env*) form)
+      (ast-node :local :name form)
+
+      ;; Aliased qualified symbol: str/join -> clojure.string/join
+      (and sym-ns-str
+           (get (:aliases *env*) (symbol sym-ns-str)))
+      (let [resolved-ns (get (:aliases *env*) (symbol sym-ns-str))]
+        (ast-node :var :name sym-name :ns resolved-ns))
+
+      ;; Already qualified symbol: clojure.string/join
+      sym-ns-str
+      (ast-node :var :name sym-name :ns (symbol sym-ns-str))
+
+      ;; Referred symbol: join -> clojure.string/join
+      (get (:refers *env*) form)
+      (let [resolved-ns (get (:refers *env*) form)]
+        (ast-node :var :name form :ns resolved-ns))
+
+      ;; Unqualified, unresolved
+      :else
+      (ast-node :var :name form))))
+
+(defn- analyze-seq
+  "Analyze a seq form: dispatch to special form, macro, or invocation."
+  [form]
+  (let [op (first form)]
+    (if-let [analyzer (get special-forms op)]
+      (analyzer form)
+      ;; Check ClojureElisp macro registry before treating as invoke
+      (if-let [macro-fn (when (symbol? op) (get-macro op))]
+        (let [expanded (apply macro-fn (rest form))]
+          (analyze expanded))
+        (analyze-invoke form)))))
 
 (defn analyze
   "Analyze a Clojure form into an AST node.
@@ -1196,31 +1164,7 @@
 
           ;; Symbol
           (symbol? form)
-          (let [sym-ns-str (namespace form)
-                sym-name (symbol (name form))]
-            (cond
-              ;; Local takes priority
-              (contains? (:locals *env*) form)
-              (ast-node :local :name form)
-
-              ;; Aliased qualified symbol: str/join -> clojure.string/join
-              (and sym-ns-str
-                   (get (:aliases *env*) (symbol sym-ns-str)))
-              (let [resolved-ns (get (:aliases *env*) (symbol sym-ns-str))]
-                (ast-node :var :name sym-name :ns resolved-ns))
-
-              ;; Already qualified symbol: clojure.string/join
-              sym-ns-str
-              (ast-node :var :name sym-name :ns (symbol sym-ns-str))
-
-              ;; Referred symbol: join -> clojure.string/join
-              (get (:refers *env*) form)
-              (let [resolved-ns (get (:refers *env*) form)]
-                (ast-node :var :name form :ns resolved-ns))
-
-              ;; Unqualified, unresolved
-              :else
-              (ast-node :var :name form)))
+          (analyze-symbol form)
 
           ;; Vector
           (vector? form)
@@ -1236,14 +1180,7 @@
 
           ;; List (special form, macro, or invocation)
           (seq? form)
-          (let [op (first form)]
-            (if-let [analyzer (get special-forms op)]
-              (analyzer form)
-              ;; Check ClojureElisp macro registry before treating as invoke
-              (if-let [macro-fn (when (symbol? op) (get-macro op))]
-                (let [expanded (apply macro-fn (rest form))]
-                  (analyze expanded))
-                (analyze-invoke form))))
+          (analyze-seq form)
 
           :else
           (ast-node :unknown :form form))))))
