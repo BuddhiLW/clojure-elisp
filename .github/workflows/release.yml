@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -41,90 +42,45 @@ jobs:
         run: clojure -M:test
 
   release:
+    name: Tag & Release
     needs: test
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Compute next version
+      - name: Read version
         id: version
         run: |
-          # Get latest tag, default to v0.0.0 if none
-          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -z "$LATEST" ]; then
-            LATEST="v0.0.0"
-          fi
-
-          echo "Latest tag: $LATEST"
-
-          # Parse version components
-          MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
-          MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
-          PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
-
-          # Check commit messages since last tag for bump hints
-          if [ "$LATEST" = "v0.0.0" ]; then
-            COMMITS=$(git log --oneline)
+          if [ -f VERSION ]; then
+            VERSION=$(cat VERSION | tr -d '[:space:]')
           else
-            COMMITS=$(git log "${LATEST}..HEAD" --oneline)
+            echo "::error::VERSION file not found"
+            exit 1
           fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
-          if echo "$COMMITS" | grep -qiE '\[major\]|BREAKING'; then
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-          elif echo "$COMMITS" | grep -qiE '\[minor\]|feat:'; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          else
-            PATCH=$((PATCH + 1))
-          fi
-
-          NEXT="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "Next version: $NEXT"
-          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-
-      - name: Check if release needed
+      - name: Check if tag exists
         id: check
         run: |
-          # Skip if HEAD is already tagged
-          HEAD_TAGS=$(git tag --points-at HEAD)
-          if echo "$HEAD_TAGS" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "HEAD already tagged: $HEAD_TAGS"
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Generate release notes
-        if: steps.check.outputs.skip != 'true'
-        id: notes
+      - name: Create tag
+        if: steps.check.outputs.exists == 'false'
         run: |
-          LATEST="${{ steps.version.outputs.latest }}"
-          if [ "$LATEST" = "v0.0.0" ]; then
-            NOTES=$(git log --oneline --no-decorate | head -20)
-          else
-            NOTES=$(git log "${LATEST}..HEAD" --oneline --no-decorate)
-          fi
-          # Write to file to avoid quoting issues
-          echo "## Changes" > release-notes.md
-          echo "" >> release-notes.md
-          echo "$NOTES" | while read -r line; do
-            echo "- $line" >> release-notes.md
-          done
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
 
-      - name: Create release
-        if: steps.check.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          git tag "$VERSION"
-          git push origin "$VERSION"
-          gh release create "$VERSION" \
-            --title "$VERSION" \
-            --notes-file release-notes.md
+      - name: Create GitHub release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
