@@ -1788,3 +1788,98 @@
       (is (clojure.string/includes? code "(cl-block nil"))
       (is (clojure.string/includes? code "(dolist")))))
 
+;; ============================================================================
+;; New Mappings (clel-050)
+;; ============================================================================
+
+(deftest emit-utility-mappings-test
+  (testing "zipmap maps to clel-zipmap"
+    (is (clojure.string/includes? (analyze-and-emit '(zipmap [:a :b] [1 2])) "clel-zipmap")))
+  (testing "select-keys maps to clel-select-keys"
+    (is (clojure.string/includes? (analyze-and-emit '(select-keys m [:a])) "clel-select-keys"))))
+
+(deftest emit-collection-extensions-test
+  (testing "peek maps to clel-peek"
+    (is (clojure.string/includes? (analyze-and-emit '(peek v)) "clel-peek")))
+  (testing "pop maps to clel-pop"
+    (is (clojure.string/includes? (analyze-and-emit '(pop v)) "clel-pop")))
+  (testing "subvec maps to clel-subvec"
+    (is (clojure.string/includes? (analyze-and-emit '(subvec v 1 3)) "clel-subvec"))))
+
+(deftest emit-sequence-extensions-test
+  (testing "cycle maps to clel-cycle"
+    (is (clojure.string/includes? (analyze-and-emit '(cycle [1 2 3])) "clel-cycle")))
+  (testing "iterate maps to clel-iterate"
+    (is (clojure.string/includes? (analyze-and-emit '(iterate inc 0)) "clel-iterate")))
+  (testing "reductions maps to clel-reductions"
+    (is (clojure.string/includes? (analyze-and-emit '(reductions + [1 2 3])) "clel-reductions")))
+  (testing "take-nth maps to clel-take-nth"
+    (is (clojure.string/includes? (analyze-and-emit '(take-nth 2 coll)) "clel-take-nth")))
+  (testing "take-last maps to clel-take-last"
+    (is (clojure.string/includes? (analyze-and-emit '(take-last 3 coll)) "clel-take-last")))
+  (testing "drop-last maps to clel-drop-last"
+    (is (clojure.string/includes? (analyze-and-emit '(drop-last 2 coll)) "clel-drop-last"))))
+
+(deftest emit-math-extensions-test
+  (testing "abs maps to abs"
+    (is (clojure.string/includes? (analyze-and-emit '(abs x)) "abs")))
+  (testing "quot maps to truncate"
+    (is (clojure.string/includes? (analyze-and-emit '(quot 10 3)) "truncate")))
+  (testing "rand maps to clel-rand"
+    (is (clojure.string/includes? (analyze-and-emit '(rand)) "clel-rand")))
+  (testing "rand-int maps to clel-rand-int"
+    (is (clojure.string/includes? (analyze-and-emit '(rand-int 10)) "clel-rand-int")))
+  (testing "rand-nth maps to clel-rand-nth"
+    (is (clojure.string/includes? (analyze-and-emit '(rand-nth coll)) "clel-rand-nth"))))
+
+(deftest emit-function-extensions-test
+  (testing "juxt maps to clel-juxt"
+    (is (clojure.string/includes? (analyze-and-emit '(juxt inc dec)) "clel-juxt")))
+  (testing "complement maps to clel-complement"
+    (is (clojure.string/includes? (analyze-and-emit '(complement even?)) "clel-complement"))))
+
+(deftest emit-io-mappings-test
+  (testing "slurp maps to clel-slurp"
+    (is (clojure.string/includes? (analyze-and-emit '(slurp "file.txt")) "clel-slurp")))
+  (testing "spit maps to clel-spit"
+    (is (clojure.string/includes? (analyze-and-emit '(spit "file.txt" "content")) "clel-spit")))
+  (testing "read-string maps to clel-read-string"
+    (is (clojure.string/includes? (analyze-and-emit '(read-string s)) "clel-read-string"))))
+
+(deftest emit-string-extensions-test
+  (testing "clojure.string/split-lines maps to clel-str-split-lines"
+    (is (clojure.string/includes?
+         (analyze-and-emit '(clojure.string/split-lines s))
+         "clel-str-split-lines"))))
+
+;; ============================================================================
+;; Special Forms: comment, binding, assert (clel-050)
+;; ============================================================================
+
+(deftest emit-comment-test
+  (testing "comment emits empty string"
+    (is (= "" (analyze-and-emit '(comment (+ 1 2) (println "ignored"))))))
+  (testing "comment with no body emits empty string"
+    (is (= "" (analyze-and-emit '(comment))))))
+
+(deftest emit-binding-test
+  (testing "binding emits let form"
+    (let [result (analyze-and-emit '(binding [x 1 y 2] (+ x y)))]
+      (is (clojure.string/includes? result "(let "))
+      (is (clojure.string/includes? result "x"))
+      (is (clojure.string/includes? result "y"))))
+  (testing "binding with single binding"
+    (let [result (analyze-and-emit '(binding [x 42] x))]
+      (is (clojure.string/includes? result "(let "))
+      (is (clojure.string/includes? result "x"))
+      (is (clojure.string/includes? result "42")))))
+
+(deftest emit-assert-test
+  (testing "assert emits cl-assert"
+    (let [result (analyze-and-emit '(assert (> x 0)))]
+      (is (clojure.string/includes? result "cl-assert"))))
+  (testing "assert with message emits cl-assert with message"
+    (let [result (analyze-and-emit '(assert (> x 0) "x must be positive"))]
+      (is (clojure.string/includes? result "cl-assert"))
+      (is (clojure.string/includes? result "x must be positive")))))
+

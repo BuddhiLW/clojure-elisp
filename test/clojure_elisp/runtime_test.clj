@@ -1718,3 +1718,85 @@
       ;; Should have nested transduce
       (is (> (count (re-seq #"clel-transduce" code)) 1)))))
 
+;; ============================================================================
+;; New Mappings Compilation Tests (clel-050)
+;; ============================================================================
+
+(deftest emit-utility-fns-test
+  (testing "zipmap compiles to clel-zipmap"
+    (is (str/includes? (clel/emit '(zipmap [:a :b] [1 2])) "clel-zipmap")))
+  (testing "select-keys compiles to clel-select-keys"
+    (is (str/includes? (clel/emit '(select-keys m [:a :b])) "clel-select-keys"))))
+
+(deftest emit-collection-fns-test
+  (testing "peek compiles to clel-peek"
+    (is (str/includes? (clel/emit '(peek v)) "clel-peek")))
+  (testing "pop compiles to clel-pop"
+    (is (str/includes? (clel/emit '(pop v)) "clel-pop")))
+  (testing "subvec compiles to clel-subvec"
+    (is (str/includes? (clel/emit '(subvec v 0 3)) "clel-subvec"))))
+
+(deftest emit-sequence-fns-test
+  (testing "cycle compiles to clel-cycle"
+    (is (str/includes? (clel/emit '(cycle [1 2 3])) "clel-cycle")))
+  (testing "iterate compiles to clel-iterate"
+    (is (str/includes? (clel/emit '(iterate inc 0)) "clel-iterate")))
+  (testing "reductions compiles to clel-reductions"
+    (is (str/includes? (clel/emit '(reductions + [1 2 3])) "clel-reductions")))
+  (testing "take-nth compiles to clel-take-nth"
+    (is (str/includes? (clel/emit '(take-nth 3 (range 20))) "clel-take-nth")))
+  (testing "take-last compiles to clel-take-last"
+    (is (str/includes? (clel/emit '(take-last 2 [1 2 3 4])) "clel-take-last")))
+  (testing "drop-last compiles to clel-drop-last"
+    (is (str/includes? (clel/emit '(drop-last 2 [1 2 3 4])) "clel-drop-last"))))
+
+(deftest emit-math-fns-test
+  (testing "abs compiles to abs"
+    (is (str/includes? (clel/emit '(abs -5)) "abs")))
+  (testing "quot compiles to truncate"
+    (is (str/includes? (clel/emit '(quot 10 3)) "truncate")))
+  (testing "rand compiles to clel-rand"
+    (is (str/includes? (clel/emit '(rand)) "clel-rand")))
+  (testing "rand-int compiles to clel-rand-int"
+    (is (str/includes? (clel/emit '(rand-int 100)) "clel-rand-int")))
+  (testing "rand-nth compiles to clel-rand-nth"
+    (is (str/includes? (clel/emit '(rand-nth coll)) "clel-rand-nth"))))
+
+(deftest emit-function-fns-test
+  (testing "juxt compiles to clel-juxt"
+    (is (str/includes? (clel/emit '(juxt first last)) "clel-juxt")))
+  (testing "complement compiles to clel-complement"
+    (is (str/includes? (clel/emit '(complement nil?)) "clel-complement"))))
+
+(deftest emit-io-fns-test
+  (testing "slurp compiles to clel-slurp"
+    (is (str/includes? (clel/emit '(slurp "file.txt")) "clel-slurp")))
+  (testing "spit compiles to clel-spit"
+    (is (str/includes? (clel/emit '(spit "out.txt" data)) "clel-spit")))
+  (testing "read-string compiles to clel-read-string"
+    (is (str/includes? (clel/emit '(read-string s)) "clel-read-string"))))
+
+(deftest emit-comment-form-test
+  (testing "comment compiles to empty string"
+    (is (= "" (clel/emit '(comment (+ 1 2) "ignored")))))
+  (testing "comment with no body"
+    (is (= "" (clel/emit '(comment))))))
+
+(deftest emit-binding-form-test
+  (testing "binding compiles to let"
+    (let [code (clel/emit '(binding [x 1] (+ x 1)))]
+      (is (str/includes? code "(let "))))
+  (testing "binding with multiple bindings"
+    (let [code (clel/emit '(binding [x 1 y 2] (+ x y)))]
+      (is (str/includes? code "(let "))
+      (is (str/includes? code "x"))
+      (is (str/includes? code "y")))))
+
+(deftest emit-assert-form-test
+  (testing "assert compiles to cl-assert"
+    (is (str/includes? (clel/emit '(assert (> x 0))) "cl-assert")))
+  (testing "assert with message"
+    (let [code (clel/emit '(assert (> x 0) "must be positive"))]
+      (is (str/includes? code "cl-assert"))
+      (is (str/includes? code "must be positive")))))
+
