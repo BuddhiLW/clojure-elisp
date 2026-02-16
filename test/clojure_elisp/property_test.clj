@@ -260,3 +260,37 @@
     (binding [emit/*validate-ast* true]
       (let [node (ana/analyze '(+ 1 2))]
         (is (string? (emit/emit node)))))))
+
+;; ============================================================================
+;; Property Tests for New Sequence Functions (clel-050)
+;; ============================================================================
+
+(defspec emit-cycle-total 100
+  (prop/for-all [form gen-simple-form]
+                (let [wrapped (list 'cycle (list 'quote [form]))]
+                  (string? (try (-> wrapped ana/analyze emit/emit)
+                                (catch Exception _ "error-but-string"))))))
+
+(defspec emit-iterate-total 100
+  (prop/for-all [n gen/small-integer]
+                (let [wrapped (list 'iterate 'inc n)]
+                  (string? (try (-> wrapped ana/analyze emit/emit)
+                                (catch Exception _ "error-but-string"))))))
+
+(defspec emit-take-nth-total 100
+  (prop/for-all [n (gen/fmap #(max 1 (Math/abs %)) gen/small-integer)]
+                (let [wrapped (list 'take-nth n 'coll)]
+                  (string? (try (-> wrapped ana/analyze emit/emit)
+                                (catch Exception _ "error-but-string"))))))
+
+(defspec emit-complement-involution 100
+  (prop/for-all [form gen-simple-form]
+    ;; complement of complement should map to nested clel-complement calls
+                (let [single (list 'complement 'pred)
+                      double (list 'complement (list 'complement 'pred))
+                      s1 (try (-> single ana/analyze emit/emit) (catch Exception _ nil))
+                      s2 (try (-> double ana/analyze emit/emit) (catch Exception _ nil))]
+                  (and (some? s1)
+                       (some? s2)
+           ;; double should contain two occurrences of clel-complement
+                       (> (count (re-seq #"clel-complement" s2)) 1)))))

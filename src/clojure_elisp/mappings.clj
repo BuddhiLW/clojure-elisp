@@ -109,7 +109,10 @@
    'empty? "clel-empty-p"
    'into "clel-into"
    'reverse "reverse"
-   'flatten "flatten-tree"})
+   'flatten "flatten-tree"
+   'peek "clel-peek"
+   'pop "clel-pop"
+   'subvec "clel-subvec"})
 
 ;; ============================================================================
 ;; Sequence Functions
@@ -141,6 +144,13 @@
    'sort-by "clel-sort-by"
    'group-by "clel-group-by"
    'frequencies "clel-frequencies"
+   ;; Additional lazy
+   'cycle "clel-cycle"
+   'iterate "clel-iterate"
+   'reductions "clel-reductions"
+   'take-nth "clel-take-nth"
+   'take-last "clel-take-last"
+   'drop-last "clel-drop-last"
    ;; Generators
    'range "clel-range"
    'repeat "clel-repeat"
@@ -200,6 +210,7 @@
    'clojure.string/reverse "clel-str-reverse"
    'clojure.string/index-of "clel-str-index-of"
    'clojure.string/last-index-of "clel-str-last-index-of"
+   'clojure.string/split-lines "clel-str-split-lines"
    ;; Regex string functions
    're-matches "clel-str-re-matches"
    're-find "clel-str-re-find"
@@ -234,7 +245,12 @@
 
 (def math-mappings
   {'min "cl-min"
-   'max "cl-max"})
+   'max "cl-max"
+   'abs "abs"
+   'quot "truncate"
+   'rand "clel-rand"
+   'rand-int "clel-rand-int"
+   'rand-nth "clel-rand-nth"})
 
 ;; ============================================================================
 ;; Functions & Symbols
@@ -246,7 +262,9 @@
    'constantly "clel-constantly"
    'partial "apply-partially"
    'comp "clel-comp"
-   'name "symbol-name"})
+   'name "symbol-name"
+   'juxt "clel-juxt"
+   'complement "clel-complement"})
 
 ;; ============================================================================
 ;; Atoms
@@ -363,6 +381,23 @@
    'other-window "other-window"})
 
 ;; ============================================================================
+;; Utility Functions
+;; ============================================================================
+
+(def utility-mappings
+  {'zipmap "clel-zipmap"
+   'select-keys "clel-select-keys"})
+
+;; ============================================================================
+;; I/O Functions
+;; ============================================================================
+
+(def io-mappings
+  {'slurp "clel-slurp"
+   'spit "clel-spit"
+   'read-string "clel-read-string"})
+
+;; ============================================================================
 ;; Merged Mapping
 ;; ============================================================================
 
@@ -386,4 +421,6 @@
          emacs-text-prop-mappings
          emacs-process-mappings
          emacs-file-mappings
-         emacs-window-mappings))
+         emacs-window-mappings
+         utility-mappings
+         io-mappings))

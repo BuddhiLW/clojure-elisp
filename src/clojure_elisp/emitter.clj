@@ -69,12 +69,16 @@
 
 (defn ns-qualify-name
   "Produce the Elisp name for a definition, prefixed by namespace if applicable.
-   Definitions in 'user namespace (the default) get no prefix."
-  [name env]
-  (let [current-ns (:ns env)]
-    (if (and current-ns (not= current-ns 'user))
-      (str (mangle-name current-ns) "-" (mangle-name name))
-      (mangle-name name))))
+   Definitions in 'user namespace (the default) get no prefix.
+   If private? is true, uses double-dash separator (Elisp convention for internal fns)."
+  ([name env]
+   (ns-qualify-name name env false))
+  ([name env private?]
+   (let [current-ns (:ns env)
+         separator   (if private? "--" "-")]
+     (if (and current-ns (not= current-ns 'user))
+       (str (mangle-name current-ns) separator (mangle-name name))
+       (mangle-name name)))))
 
 ;; ============================================================================
 ;; AST Emitters
@@ -233,8 +237,8 @@
                 elisp-name elisp-params elisp-body)))))
 
 (defmethod emit-node :defn
-  [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param env]}]
-  (let [elisp-name (ns-qualify-name name env)]
+  [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param env private?]}]
+  (let [elisp-name (ns-qualify-name name env (boolean private?))]
     (if multi-arity?
       (emit-multi-arity-defn elisp-name docstring arities)
       (emit-single-arity-defn elisp-name docstring params body variadic? fixed-params rest-param))))
@@ -290,6 +294,27 @@
   [{:keys [body]}]
   (let [body-str (str/join "\n    " (map emit body))]
     (format "(with-output-to-string\n    %s)" body-str)))
+
+;; ============================================================================
+;; Comment, Binding, Assert (clel-050)
+;; ============================================================================
+
+(defmethod emit-node :comment [_node] "")
+
+(defmethod emit-node :binding
+  [{:keys [bindings body]}]
+  (let [binding-strs (map (fn [{:keys [name init]}]
+                            (format "(%s %s)" (mangle-name name) (emit init)))
+                          bindings)
+        bindings-block (str "(" (str/join "\n        " binding-strs) ")")
+        body-str (str/join "\n    " (map emit body))]
+    (format "(let %s\n    %s)" bindings-block body-str)))
+
+(defmethod emit-node :assert
+  [{:keys [test message]}]
+  (if message
+    (format "(cl-assert %s %s)" (emit test) (emit message))
+    (format "(cl-assert %s)" (emit test))))
 
 ;; ============================================================================
 ;; Iteration Forms (clel-035, clel-045)

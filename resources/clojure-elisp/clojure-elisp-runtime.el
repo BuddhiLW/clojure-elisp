@@ -533,7 +533,10 @@ Returns ATOM."
         (while current
           (when (clel-lazy-seq-p (car current))
             (setcar current (clel-doall (car current))))
-          (setq current (cdr current)))))
+          ;; Also force lazy cdr (rest of the sequence)
+          (when (and (consp current) (clel-lazy-seq-p (cdr current)))
+            (setcdr current (clel-doall (cdr current))))
+          (setq current (cdr-safe current)))))
     s))
 
 (defun clel-dorun (seq)
@@ -1700,6 +1703,182 @@ With one argument, returns a transducer."
                  (cons first-item
                        (cons sep (clel-interpose sep rest-items)))
                (list first-item)))))))))
+
+;;; Utility Functions
+
+(defun clel-zipmap (keys vals)
+  "Create an alist from parallel sequences KEYS and VALS."
+  (let ((ks (clel-seq-force keys))
+        (vs (clel-seq-force vals))
+        (result nil))
+    (while (and ks vs)
+      (push (cons (car ks) (car vs)) result)
+      (setq ks (cdr ks))
+      (setq vs (cdr vs)))
+    (nreverse result)))
+
+(defun clel-select-keys (m ks)
+  "Return a subset of map M containing only keys in KS."
+  (let ((key-list (clel-seq-force ks))
+        (result nil))
+    (dolist (k key-list)
+      (let ((v (clel-get m k 'clel--not-found)))
+        (unless (eq v 'clel--not-found)
+          (push (cons k v) result))))
+    (nreverse result)))
+
+(defun clel-complement (f)
+  "Return a function that is the boolean complement of F."
+  (lambda (&rest args)
+    (not (apply f args))))
+
+(defun clel-juxt (&rest fns)
+  "Return a function that applies each of FNS to its args, returning a list of results."
+  (lambda (&rest args)
+    (mapcar (lambda (f) (apply f args)) fns)))
+
+(defun clel-rand (&optional n)
+  "Return a random float between 0 (inclusive) and N (default 1, exclusive)."
+  (let ((r (/ (float (random most-positive-fixnum)) (float most-positive-fixnum))))
+    (if n (* n r) r)))
+
+(defun clel-rand-int (n)
+  "Return a random integer between 0 (inclusive) and N (exclusive)."
+  (random n))
+
+(defun clel-rand-nth (coll)
+  "Return a random element from COLL."
+  (let ((s (clel-seq-force coll)))
+    (nth (random (length s)) s)))
+
+(defun clel-slurp (path)
+  "Read the entire contents of file at PATH as a string."
+  (with-temp-buffer
+    (insert-file-contents path)
+    (buffer-string)))
+
+(defun clel-spit (path content)
+  "Write CONTENT to file at PATH."
+  (with-temp-buffer
+    (insert content)
+    (write-region (point-min) (point-max) path)))
+
+(defun clel-read-string (s)
+  "Read a Clojure-like data structure from string S.
+Returns the Elisp equivalent."
+  (car (read-from-string s)))
+
+(defun clel-str-split-lines (s)
+  "Split string S into a list of lines."
+  (if (null s) nil
+    (split-string s "\n")))
+
+;;; Additional Collection Functions
+
+(defun clel-peek (coll)
+  "Return the last element of a vector, or first element of a list.
+For vectors (represented as lists in ClojureElisp), returns last element.
+For lists, returns first element."
+  (cond
+   ((null coll) nil)
+   ((vectorp coll) (if (> (length coll) 0)
+                       (aref coll (1- (length coll)))
+                     nil))
+   ((listp coll) (car coll))
+   (t nil)))
+
+(defun clel-pop (coll)
+  "Return collection without the peek element.
+For vectors, returns all but last. For lists, returns rest."
+  (cond
+   ((null coll) nil)
+   ((vectorp coll) (if (> (length coll) 0)
+                       (cl-subseq coll 0 (1- (length coll)))
+                     (vector)))
+   ((listp coll) (cdr coll))
+   (t nil)))
+
+(defun clel-subvec (v start &optional end)
+  "Return a subvector of V from START to END (exclusive).
+If END is not provided, uses the length of V."
+  (let ((e (or end (length v))))
+    (cl-subseq v start e)))
+
+;;; Additional Sequence Functions
+
+(defun clel-cycle (coll)
+  "Return a lazy infinite cycle of elements in COLL."
+  (let ((s (clel-seq-force coll)))
+    (when s
+      (cl-labels ((cycle-helper (cur)
+                    (clel-lazy-seq-create
+                     (lambda ()
+                       (if cur
+                           (cons (car cur) (cycle-helper (cdr cur)))
+                         (clel-seq-force (cycle-helper s)))))))
+        (cycle-helper s)))))
+
+(defun clel-iterate (f x)
+  "Return a lazy sequence of x, (f x), (f (f x)), etc."
+  (clel-lazy-seq-create
+   (lambda ()
+     (cons x (clel-iterate f (funcall f x))))))
+
+(defun clel-reductions (f &rest args)
+  "Return a lazy seq of intermediate reduce values.
+Usage: (clel-reductions f coll) or (clel-reductions f init coll)."
+  (let (init coll)
+    (if (= 1 (length args))
+        ;; (reductions f coll) - no init
+        (let ((s (clel-seq-force (car args))))
+          (setq init (clel-first s))
+          (setq coll (clel-rest s)))
+      ;; (reductions f init coll)
+      (setq init (car args))
+      (setq coll (clel-seq-force (cadr args))))
+    (cl-labels ((reductions-helper (acc s)
+                  (clel-lazy-seq-create
+                   (lambda ()
+                     (if s
+                         (let ((new-acc (funcall f acc (clel-first s))))
+                           (cons new-acc (reductions-helper new-acc (clel-rest s))))
+                       nil)))))
+      (clel-lazy-seq-create
+       (lambda ()
+         (cons init (reductions-helper init coll)))))))
+
+(defun clel-take-nth (n coll)
+  "Return a lazy seq of every Nth element in COLL."
+  (clel-lazy-seq-create
+   (lambda ()
+     (let ((s (clel-seq-force coll)))
+       (when s
+         (cons (clel-first s)
+               (clel-take-nth n (clel-drop n s))))))))
+
+(defun clel-take-last (n coll)
+  "Return the last N elements of COLL as a list."
+  (let ((s (clel-seq-force coll)))
+    (let ((len (length s)))
+      (if (<= len n)
+          s
+        (nthcdr (- len n) s)))))
+
+(defun clel-drop-last (&rest args)
+  "Return all but the last N elements of COLL.
+Usage: (clel-drop-last coll) or (clel-drop-last n coll)."
+  (let (n coll)
+    (if (= 1 (length args))
+        (progn
+          (setq n 1)
+          (setq coll (car args)))
+      (setq n (car args))
+      (setq coll (cadr args)))
+    (let* ((s (clel-seq-force coll))
+           (len (length s)))
+      (if (<= len n)
+          nil
+        (cl-subseq s 0 (- len n))))))
 
 ;;; Protocol Support
 

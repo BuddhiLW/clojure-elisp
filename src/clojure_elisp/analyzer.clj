@@ -150,16 +150,22 @@
                       (mapv analyze effective-body)))))
 
 (defn analyze-defn
-  "Analyze (defn name [args] body) and (defn name ([args1] body1) ([args2] body2)) forms."
-  [[_ name & fdecl]]
-  (let [[docstring fdecl] (if (string? (first fdecl))
+  "Analyze (defn name [args] body) and (defn name ([args1] body1) ([args2] body2)) forms.
+   Also handles (defn- name ...) — the head symbol is checked for private semantics."
+  [[head name & fdecl]]
+  (let [private?          (or (= head 'defn-)
+                              (:private (meta name)))
+        [docstring fdecl] (if (string? (first fdecl))
                             [(first fdecl) (rest fdecl)]
                             [nil fdecl])
         multi-arity?      (and (seq? (first fdecl))
-                               (vector? (ffirst fdecl)))]
-    (if multi-arity?
-      (analyze-multi-arity-defn name docstring fdecl)
-      (analyze-single-arity-defn name docstring fdecl))))
+                               (vector? (ffirst fdecl)))
+        base-node         (if multi-arity?
+                            (analyze-multi-arity-defn name docstring fdecl)
+                            (analyze-single-arity-defn name docstring fdecl))]
+    (if private?
+      (assoc base-node :private? true)
+      base-node)))
 
 (defn analyze-fn
   "Analyze (fn [args] body) forms.
@@ -191,6 +197,13 @@
               :rest-param rest-param
               :body (binding [*env* (with-locals *env* all-locals)]
                       (mapv analyze effective-body)))))
+
+(defn analyze-lambda
+  "Analyze (lambda (args) body) forms — Elisp-style lambda with list params.
+   Normalizes to fn AST node by converting list params to vector."
+  [[_ params & body]]
+  (let [params-vec (vec (if (seq? params) params []))]
+    (analyze-fn (list* 'fn params-vec body))))
 
 ;; ============================================================================
 ;; Destructuring Support (delegated to clojure-elisp.destructure)
@@ -674,6 +687,36 @@
               :closed-over (vec closed-locals))))
 
 ;; ============================================================================
+;; Comment, Binding, Assert (clel-050)
+;; ============================================================================
+
+(defn analyze-comment
+  "Analyze (comment ...) forms. Returns a no-op AST node."
+  [_form]
+  (ast-node :comment))
+
+(defn analyze-binding
+  "Analyze (binding [var val ...] body...) forms.
+   In Elisp, dynamically-scoped variables are rebound via let,
+   so this maps directly to a let form with dynamic binding semantics."
+  [[_ bindings & body]]
+  (let [pairs (partition 2 bindings)
+        analyzed-bindings (mapv (fn [[sym val]]
+                                  {:name sym :init (analyze val)})
+                                pairs)
+        analyzed-body (mapv analyze body)]
+    (ast-node :binding
+              :bindings analyzed-bindings
+              :body analyzed-body)))
+
+(defn analyze-assert
+  "Analyze (assert test) or (assert test message) forms."
+  [[_ test & [message]]]
+  (ast-node :assert
+            :test (analyze test)
+            :message (when message (analyze message))))
+
+;; ============================================================================
 ;; Emacs Buffer/Process Interop (clel-031)
 ;; ============================================================================
 
@@ -1035,6 +1078,7 @@
   "Map of special form symbols to their analyzers."
   {'def analyze-def
    'defn analyze-defn
+   'defn- analyze-defn
    'defmacro analyze-defmacro
    'defmulti analyze-defmulti
    'defmethod analyze-defmethod
@@ -1048,6 +1092,7 @@
    'reify analyze-reify
    'fn analyze-fn
    'fn* analyze-fn
+   'lambda analyze-lambda
    'let analyze-let
    'let* analyze-let
    'letfn analyze-letfn
@@ -1069,6 +1114,10 @@
    'define-minor-mode analyze-define-minor-mode
    'defgroup analyze-defgroup
    'defcustom analyze-defcustom
+   ;; Comment, binding, assert (clel-050)
+   'comment analyze-comment
+   'binding analyze-binding
+   'assert analyze-assert
    ;; Emacs buffer/process interop (clel-031)
    'save-excursion analyze-save-excursion
    'save-restriction analyze-save-restriction
