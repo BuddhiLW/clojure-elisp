@@ -398,6 +398,54 @@
    'read-string "clel-read-string"})
 
 ;; ============================================================================
+;; cl-lib Passthrough (for self-hosted runtime)
+;; ============================================================================
+
+(def cl-lib-mappings
+  "cl-lib functions used by the self-hosted runtime (.cljel).
+   These pass through directly since they are valid Elisp cl-lib calls."
+  {'cl-remove-if "cl-remove-if"
+   'cl-remove-if-not "cl-remove-if-not"
+   'cl-every "cl-every"
+   'cl-some "cl-some"
+   'cl-subseq "cl-subseq"
+   'cl-generic-p "cl-generic-p"
+   'cl-loop "cl-loop"
+   'cl-labels "cl-labels"})
+
+;; ============================================================================
+;; Elisp Hash-Table Operations
+;; ============================================================================
+
+(def hash-table-mappings
+  "Elisp hash-table functions passed through unchanged.
+   Needed for self-hosted runtime compilation (.cljel)."
+  {'make-hash-table "make-hash-table"
+   'puthash "puthash"
+   'gethash "gethash"
+   'remhash "remhash"
+   'copy-hash-table "copy-hash-table"
+   'maphash "maphash"
+   'hash-table-keys "hash-table-keys"
+   'hash-table-values "hash-table-values"
+   'hash-table-p "hash-table-p"})
+
+;; ============================================================================
+;; Elisp Mutation Primitives (self-hosting runtime support)
+;; ============================================================================
+
+(def mutation-mappings
+  "Low-level Elisp mutation primitives needed for writing the
+   clojure-elisp runtime in .cljel (self-hosting).
+   push and setf are special forms (handled in analyzer/emitter)."
+  {'setcar "setcar"
+   'setcdr "setcdr"
+   'nthcdr "nthcdr"
+   'nreverse "nreverse"
+   'copy-alist "copy-alist"
+   'copy-sequence "copy-sequence"})
+
+;; ============================================================================
 ;; Elisp Built-in Passthrough (special chars that mangle-name would break)
 ;; ============================================================================
 
@@ -444,4 +492,7 @@
          emacs-window-mappings
          utility-mappings
          io-mappings
+         cl-lib-mappings
+         hash-table-mappings
+         mutation-mappings
          elisp-passthrough-mappings))

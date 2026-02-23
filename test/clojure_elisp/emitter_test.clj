@@ -2004,3 +2004,25 @@
   (testing "defmacro output starts with (defmacro"
     (let [code (analyze-and-emit '(defmacro simple [x] x))]
       (is (clojure.string/starts-with? code "(defmacro")))))
+
+;; ============================================================================
+;; cl-lib Passthrough Mappings (clel-071)
+;; ============================================================================
+
+(deftest test-cl-lib-mappings
+  (testing "cl-remove-if passes through"
+    (is (= "(cl-remove-if pred xs)" (analyze-and-emit '(cl-remove-if pred xs)))))
+  (testing "cl-remove-if-not passes through"
+    (is (= "(cl-remove-if-not pred xs)" (analyze-and-emit '(cl-remove-if-not pred xs)))))
+  (testing "cl-every passes through"
+    (is (= "(cl-every pred xs)" (analyze-and-emit '(cl-every pred xs)))))
+  (testing "cl-some passes through"
+    (is (= "(cl-some pred xs)" (analyze-and-emit '(cl-some pred xs)))))
+  (testing "cl-subseq passes through"
+    (is (= "(cl-subseq xs 1 3)" (analyze-and-emit '(cl-subseq xs 1 3)))))
+  (testing "cl-generic-p passes through"
+    (is (= "(cl-generic-p sym)" (analyze-and-emit '(cl-generic-p sym)))))
+  (testing "cl-loop passes through"
+    (is (clojure.string/includes? (analyze-and-emit '(cl-loop x)) "cl-loop")))
+  (testing "cl-labels passes through"
+    (is (clojure.string/includes? (analyze-and-emit '(cl-labels x)) "cl-labels"))))
