@@ -27,9 +27,11 @@
 
 (defun clel-hash-map (&rest kvs)
   "Create a hash-table from key-value pairs KVS."
-  (let ((ht (make-hash-table :test 'equal)))
-    (cl-loop for (k v) on kvs by #'cddr
-             do (puthash k v ht))
+  (let ((ht (make-hash-table :test 'equal))
+        (rest kvs))
+    (while rest
+      (puthash (car rest) (cadr rest) ht)
+      (setq rest (cddr rest)))
     ht))
 
 ;;; Collection Operations
@@ -746,23 +748,6 @@ Each group contains consecutive elements with the same (F elem) value."
                   (lambda ()
                     (when rest
                       (cons sep (clel-interpose sep rest))))))))))))
-
-(defun clel-distinct (s)
-  "Return lazy seq of S with duplicates removed.
-Preserves order, keeping first occurrence of each element."
-  (let ((seen (make-hash-table :test 'equal)))
-    (cl-labels ((distinct-helper (cur)
-                  (clel-lazy-seq-create
-                   (lambda ()
-                     (let ((c (clel-seq-force cur)))
-                       (when c
-                         (let ((elem (clel-first c))
-                               (rest (clel-rest c)))
-                           (if (gethash elem seen)
-                               (clel-seq-force (distinct-helper rest))
-                             (puthash elem t seen)
-                             (cons elem (distinct-helper rest))))))))))
-      (distinct-helper s))))
 
 (defun clel-dedupe (s)
   "Remove consecutive duplicates from S."
@@ -1808,23 +1793,36 @@ If END is not provided, uses the length of V."
 
 ;;; Additional Sequence Functions
 
+(defun clel--cycle-helper (cur s)
+  "Recursive helper for `clel-cycle'.
+CUR is the current position in S, the original forced sequence."
+  (clel-lazy-seq-create
+   (lambda ()
+     (if cur
+         (cons (car cur) (clel--cycle-helper (cdr cur) s))
+       (clel-seq-force (clel--cycle-helper s s))))))
+
 (defun clel-cycle (coll)
   "Return a lazy infinite cycle of elements in COLL."
   (let ((s (clel-seq-force coll)))
     (when s
-      (cl-labels ((cycle-helper (cur)
-                    (clel-lazy-seq-create
-                     (lambda ()
-                       (if cur
-                           (cons (car cur) (cycle-helper (cdr cur)))
-                         (clel-seq-force (cycle-helper s)))))))
-        (cycle-helper s)))))
+      (clel--cycle-helper s s))))
 
 (defun clel-iterate (f x)
   "Return a lazy sequence of x, (f x), (f (f x)), etc."
   (clel-lazy-seq-create
    (lambda ()
      (cons x (clel-iterate f (funcall f x))))))
+
+(defun clel--reductions-helper (f acc s)
+  "Recursive helper for `clel-reductions'.
+F is the reducing function, ACC the accumulator, S the remaining sequence."
+  (clel-lazy-seq-create
+   (lambda ()
+     (if s
+         (let ((new-acc (funcall f acc (clel-first s))))
+           (cons new-acc (clel--reductions-helper f new-acc (clel-rest s))))
+       nil))))
 
 (defun clel-reductions (f &rest args)
   "Return a lazy seq of intermediate reduce values.
@@ -1838,16 +1836,9 @@ Usage: (clel-reductions f coll) or (clel-reductions f init coll)."
       ;; (reductions f init coll)
       (setq init (car args))
       (setq coll (clel-seq-force (cadr args))))
-    (cl-labels ((reductions-helper (acc s)
-                  (clel-lazy-seq-create
-                   (lambda ()
-                     (if s
-                         (let ((new-acc (funcall f acc (clel-first s))))
-                           (cons new-acc (reductions-helper new-acc (clel-rest s))))
-                       nil)))))
-      (clel-lazy-seq-create
-       (lambda ()
-         (cons init (reductions-helper init coll)))))))
+    (clel-lazy-seq-create
+     (lambda ()
+       (cons init (clel--reductions-helper f init coll))))))
 
 (defun clel-take-nth (n coll)
   "Return a lazy seq of every Nth element in COLL."
