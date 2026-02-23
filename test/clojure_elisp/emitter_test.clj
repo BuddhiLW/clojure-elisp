@@ -258,7 +258,23 @@
     (let [result (analyze-and-emit '(cond true 1 false 2))]
       (is (clojure.string/includes? result "cond"))
       (is (clojure.string/includes? result "(t 1)"))
-      (is (clojure.string/includes? result "(nil 2)")))))
+      (is (clojure.string/includes? result "(nil 2)"))))
+
+  (testing "cond :else maps to t (Elisp catch-all)"
+    (let [result (analyze-and-emit '(cond
+                                      (> x 0) "positive"
+                                      (< x 0) "negative"
+                                      :else "zero"))]
+      (is (clojure.string/includes? result "cond"))
+      (is (clojure.string/includes? result "(> x 0)"))
+      (is (clojure.string/includes? result "(t \"zero\")"))
+      (is (not (clojure.string/includes? result ":else")))
+      (is (not (clojure.string/includes? result "else")))))
+
+  (testing "cond with only :else clause"
+    (let [result (analyze-and-emit '(cond :else 42))]
+      (is (clojure.string/includes? result "(t 42)"))
+      (is (not (clojure.string/includes? result ":else"))))))
 
 (deftest emit-case-test
   (testing "case without default"
@@ -507,12 +523,13 @@
     (let [result (analyze-and-emit '(let [a 1 b 2] (+ a b)))]
       (is (clojure.string/includes? result "let*"))
       (is (clojure.string/includes? result "(+ a b)"))))
-  (testing "cond with comparisons"
+  (testing "cond with comparisons and :else → t"
     (let [result (analyze-and-emit '(cond (> x 0) "positive"
                                           (< x 0) "negative"
                                           :else "zero"))]
       (is (clojure.string/includes? result "cond"))
-      (is (clojure.string/includes? result "(> x 0)")))))
+      (is (clojure.string/includes? result "(> x 0)"))
+      (is (clojure.string/includes? result "(t \"zero\")") ":else should map to t in Elisp cond"))))
 
 ;; ============================================================================
 ;; Edge Cases
@@ -1883,3 +1900,107 @@
       (is (clojure.string/includes? result "cl-assert"))
       (is (clojure.string/includes? result "x must be positive")))))
 
+;; ============================================================================
+;; Bug Fixes
+;; ============================================================================
+
+(deftest emit-defvar-no-double-namespace-prefix-test
+  (testing "defvar uses mangle-name, not ns-qualify-name (no double prefix)"
+    (let [result (analyze-and-emit '(defvar my-var 42))]
+      (is (= "(defvar my-var 42)" result))))
+  (testing "defvar with docstring and non-nil init"
+    (let [result (analyze-and-emit '(defvar my-mode-enabled 0 "Whether mode is enabled."))]
+      (is (clojure.string/includes? result "(defvar my-mode-enabled 0"))
+      (is (clojure.string/includes? result "Whether mode is enabled."))))
+  (testing "defvar with special chars gets mangled correctly"
+    (let [result (analyze-and-emit '(defvar my-var? true))]
+      (is (clojure.string/includes? result "my-var-p"))))
+  (testing "defvar without init"
+    (let [result (analyze-and-emit '(defvar my-var))]
+      (is (= "(defvar my-var nil)" result)))))
+
+(deftest emit-function-quote-test
+  (testing "#'symbol emits Elisp function quote"
+    (let [result (analyze-and-emit '(var my-func))]
+      (is (= "#'my-func" result))))
+  (testing "#'symbol with special chars gets mangled"
+    (let [result (analyze-and-emit '(var some?))]
+      (is (= "#'some-p" result))))
+  (testing "function quote in context — e.g., (mapcar #'func list)"
+    (let [result (analyze-and-emit '(mapcar (var my-func) items))]
+      (is (clojure.string/includes? result "#'my-func")))))
+
+;; ============================================================================
+;; cl-defstruct - CL Struct Passthrough (cljel-fix)
+;; ============================================================================
+
+(deftest emit-cl-defstruct-test
+  (testing "basic cl-defstruct emits Elisp cl-defstruct"
+    (let [code (analyze-and-emit '(cl-defstruct person name age email))]
+      (is (clojure.string/includes? code "cl-defstruct"))
+      (is (clojure.string/includes? code "person"))
+      (is (clojure.string/includes? code "name"))
+      (is (clojure.string/includes? code "age"))
+      (is (clojure.string/includes? code "email"))))
+
+  (testing "cl-defstruct with no slots"
+    (let [code (analyze-and-emit '(cl-defstruct empty-struct))]
+      (is (clojure.string/includes? code "(cl-defstruct empty-struct)"))))
+
+  (testing "cl-defstruct output starts with (cl-defstruct"
+    (let [code (analyze-and-emit '(cl-defstruct point x y))]
+      (is (clojure.string/starts-with? code "(cl-defstruct"))
+      (is (clojure.string/includes? code "point"))
+      (is (clojure.string/includes? code "x"))
+      (is (clojure.string/includes? code "y")))))
+
+;; ============================================================================
+;; cl-defun - CL Function Passthrough (cljel-fix)
+;; ============================================================================
+
+(deftest emit-cl-defun-test
+  (testing "basic cl-defun emits Elisp cl-defun"
+    (let [code (analyze-and-emit '(cl-defun greet (name) (message name)))]
+      (is (clojure.string/includes? code "cl-defun"))
+      (is (clojure.string/includes? code "greet"))
+      (is (clojure.string/includes? code "message"))))
+
+  (testing "cl-defun with docstring"
+    (let [code (analyze-and-emit '(cl-defun greet (name) "Greet someone." (message name)))]
+      (is (clojure.string/includes? code "cl-defun"))
+      (is (clojure.string/includes? code "Greet someone."))))
+
+  (testing "cl-defun with &optional preserves CL keywords"
+    (let [code (analyze-and-emit '(cl-defun greet (name &optional greeting) (message greeting name)))]
+      (is (clojure.string/includes? code "&optional"))
+      (is (clojure.string/includes? code "name"))
+      (is (clojure.string/includes? code "greeting"))))
+
+  (testing "cl-defun with &key preserves CL keywords"
+    (let [code (analyze-and-emit '(cl-defun connect (host &key port timeout) (message host)))]
+      (is (clojure.string/includes? code "&key"))
+      (is (clojure.string/includes? code "host"))
+      (is (clojure.string/includes? code "port"))
+      (is (clojure.string/includes? code "timeout")))))
+
+;; ============================================================================
+;; defmacro - Emission Support (cljel-fix)
+;; ============================================================================
+
+(deftest emit-defmacro-test
+  (testing "defmacro emits actual defmacro form (not empty string)"
+    (let [code (analyze-and-emit '(defmacro my-when [test & body]
+                                    (list 'if test (cons 'progn body))))]
+      (is (not= "" code))
+      (is (clojure.string/includes? code "defmacro"))
+      (is (clojure.string/includes? code "my-when"))))
+
+  (testing "defmacro with docstring"
+    (let [code (analyze-and-emit '(defmacro my-macro [x] "Transform x." (list 'quote x)))]
+      (is (clojure.string/includes? code "defmacro"))
+      (is (clojure.string/includes? code "my-macro"))
+      (is (clojure.string/includes? code "Transform x."))))
+
+  (testing "defmacro output starts with (defmacro"
+    (let [code (analyze-and-emit '(defmacro simple [x] x))]
+      (is (clojure.string/starts-with? code "(defmacro")))))

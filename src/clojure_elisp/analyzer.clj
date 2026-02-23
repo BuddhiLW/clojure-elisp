@@ -893,6 +893,132 @@
                       (mapv analyze body)))))
 
 ;; ============================================================================
+;; Elisp Passthrough Forms (clel-060)
+;; ============================================================================
+
+(defn analyze-dolist
+  "Analyze (dolist [var list-form &optional result] body...) forms.
+   Emits proper Elisp (dolist (var list-form) body...) with correct binding syntax."
+  [[_ binding-vec & body]]
+  (let [var-sym    (first binding-vec)
+        list-form  (second binding-vec)
+        result     (when (> (count binding-vec) 2) (nth binding-vec 2))]
+    (ast-node :dolist
+              :var var-sym
+              :list-form (analyze list-form)
+              :result (when result (analyze result))
+              :body (binding [*env* (with-locals *env* #{var-sym})]
+                      (mapv analyze body)))))
+
+(defn analyze-unless
+  "Analyze (unless test body...) forms — Elisp's negated when."
+  [[_ test & body]]
+  (ast-node :unless
+            :test (analyze test)
+            :body (mapv analyze body)))
+
+(defn analyze-when-let
+  "Analyze (when-let [var val] body...) forms.
+   Single binding pair — Emacs 26+ when-let semantics."
+  [[_ binding-vec & body]]
+  (let [var-sym  (first binding-vec)
+        val-form (second binding-vec)]
+    (ast-node :when-let
+              :var var-sym
+              :val (analyze val-form)
+              :body (binding [*env* (with-locals *env* #{var-sym})]
+                      (mapv analyze body)))))
+
+(defn analyze-if-let
+  "Analyze (if-let [var val] then else?) forms.
+   Single binding pair — Emacs 26+ if-let semantics."
+  [[_ binding-vec then & [else]]]
+  (let [var-sym  (first binding-vec)
+        val-form (second binding-vec)]
+    (ast-node :if-let
+              :var var-sym
+              :val (analyze val-form)
+              :then (binding [*env* (with-locals *env* #{var-sym})]
+                      (analyze then))
+              :else (when else (analyze else)))))
+
+(defn analyze-condition-case
+  "Analyze (condition-case var body-form handler...) forms.
+   Each handler is (condition-name body...).
+   var can be a symbol (bound to error) or nil."
+  [[_ var body-form & handlers]]
+  (ast-node :condition-case
+            :var (when (and var (symbol? var) (not= var 'nil)) var)
+            :body (analyze body-form)
+            :handlers (mapv (fn [handler]
+                              (let [[condition & handler-body] handler]
+                                {:condition condition
+                                 :body (if (and var (symbol? var) (not= var 'nil))
+                                         (binding [*env* (with-locals *env* #{var})]
+                                           (mapv analyze handler-body))
+                                         (mapv analyze handler-body))}))
+                            handlers)))
+
+(defn analyze-pcase
+  "Analyze (pcase expr clause...) forms.
+   Each clause is (pattern body...). Patterns are passed through raw."
+  [[_ expr & clauses]]
+  (ast-node :pcase
+            :expr (analyze expr)
+            :clauses (mapv (fn [clause]
+                             (let [[pattern & body] clause]
+                               {:pattern pattern
+                                :body (mapv analyze body)}))
+                           clauses)))
+
+(defn analyze-setq
+  "Analyze (setq var val ...) forms. Pairs of symbol-value."
+  [[_ & pairs]]
+  (ast-node :setq
+            :pairs (mapv (fn [[sym val]]
+                           {:name sym :value (analyze val)})
+                         (partition 2 pairs))))
+
+(defn analyze-unwind-protect
+  "Analyze (unwind-protect body-form cleanup-forms...) forms."
+  [[_ body-form & cleanup]]
+  (ast-node :unwind-protect
+            :body (analyze body-form)
+            :cleanup (mapv analyze cleanup)))
+
+(defn analyze-while
+  "Analyze (while test body...) forms — Elisp loop."
+  [[_ test & body]]
+  (ast-node :while
+            :test (analyze test)
+            :body (mapv analyze body)))
+
+(defn analyze-defvar
+  "Analyze (defvar name &optional init docstring) forms.
+   Emits Elisp defvar without namespace mangling on the name."
+  [[_ var-name & rest-forms]]
+  (let [[init docstring] (cond
+                           (and (>= (count rest-forms) 2)
+                                (string? (second rest-forms)))
+                           [(first rest-forms) (second rest-forms)]
+
+                           (= (count rest-forms) 1)
+                           [(first rest-forms) nil]
+
+                           :else [nil nil])]
+    (ast-node :defvar-elisp
+              :name var-name
+              :init (when init (analyze init))
+              :docstring docstring)))
+
+(defn analyze-var
+  "Analyze (var sym) forms — the reader expansion of #'sym.
+   Produces a :function-quote AST node for Elisp #'symbol emission."
+  [[_ sym]]
+  (ast-node :function-quote
+            :symbol sym))
+
+;; ============================================================================
 ;; Macro System
 ;; ============================================================================
 
@@ -975,6 +1101,37 @@
               :docstring docstring
               :options options)))
 
+(defn analyze-cl-defstruct
+  "Analyze (cl-defstruct name-or-options & slots) forms.
+   Passes through to Elisp as cl-defstruct. The name can be a symbol
+   or a list with options like (name (:constructor make-name)).
+
+   Example:
+   (cl-defstruct person name age email)
+   (cl-defstruct (person (:constructor make-person)) name age email)"
+  [[_ name-or-opts & slots]]
+  (ast-node :cl-defstruct
+            :name-or-opts name-or-opts
+            :slots (vec slots)))
+
+(defn analyze-cl-defun
+  "Analyze (cl-defun name arglist &optional docstring body...) forms.
+   Passes through to Elisp as cl-defun. Supports Common Lisp style
+   argument lists with &optional, &rest, &key parameters.
+
+   Example:
+   (cl-defun greet (name &optional greeting)
+     (message (or greeting \"Hello\") name))"
+  [[_ name arglist & body]]
+  (let [[docstring body] (if (string? (first body))
+                           [(first body) (rest body)]
+                           [nil body])]
+    (ast-node :cl-defun
+              :name name
+              :arglist arglist
+              :docstring docstring
+              :body (mapv analyze body))))
+
 (defn analyze-defmacro
   "Analyze (defmacro name [params] body) forms.
    Evaluates the macro body as a Clojure function and registers it
@@ -993,7 +1150,8 @@
     (ast-node :defmacro
               :name name
               :docstring docstring
-              :params params)))
+              :params params
+              :body (mapv analyze body))))
 
 ;; ============================================================================
 ;; Collection Analyzers
@@ -1114,6 +1272,7 @@
    'define-minor-mode analyze-define-minor-mode
    'defgroup analyze-defgroup
    'defcustom analyze-defcustom
+   'var analyze-var
    ;; Comment, binding, assert (clel-050)
    'comment analyze-comment
    'binding analyze-binding
@@ -1128,7 +1287,22 @@
    ;; Iteration forms (clel-035, clel-039)
    'doseq analyze-doseq
    'dotimes analyze-dotimes
-   'for analyze-for})
+   'for analyze-for
+   ;; Elisp passthrough forms (clel-060)
+   'dolist analyze-dolist
+   'unless analyze-unless
+   'when-let analyze-when-let
+   'if-let analyze-if-let
+   'condition-case analyze-condition-case
+   'pcase analyze-pcase
+   'setq analyze-setq
+   'progn analyze-do  ;; progn is elisp's do
+   'unwind-protect analyze-unwind-protect
+   'while analyze-while
+   'defvar analyze-defvar
+   ;; CL passthrough forms (clel-fix)
+   'cl-defstruct analyze-cl-defstruct
+   'cl-defun analyze-cl-defun})
 
 (defn- analyze-symbol
   "Analyze a symbol form, resolving locals, aliases, refers, and vars."

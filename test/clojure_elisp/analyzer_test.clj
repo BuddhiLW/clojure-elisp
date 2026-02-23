@@ -945,9 +945,9 @@
 (deftest analyze-macro-expansion-test
   (testing "macro invocation is expanded and analyzed"
     (ana/clear-macros!)
-    (analyze '(defmacro unless [pred body]
+    (analyze '(defmacro my-unless [pred body]
                 (list 'if (list 'not pred) body nil)))
-    (let [ast (analyze '(unless true 42))]
+    (let [ast (analyze '(my-unless true 42))]
       ;; Should expand to (if (not true) 42 nil) and analyze that
       (is (= :if (:op ast)))
       (is (= :invoke (:op (:test ast))))
@@ -1630,3 +1630,94 @@
       (is (= 3 (count (:clauses ast))))
       (is (= [:binding :while :binding] (mapv :type (:clauses ast)))))))
 
+;; ============================================================================
+;; Bug Fixes
+;; ============================================================================
+
+(deftest analyze-var-function-quote-test
+  (testing "var form produces :function-quote AST node"
+    (let [ast (analyze '(var my-func))]
+      (is (= :function-quote (:op ast)))
+      (is (= 'my-func (:symbol ast)))))
+  (testing "var form with predicate symbol"
+    (let [ast (analyze '(var nil?))]
+      (is (= :function-quote (:op ast)))
+      (is (= 'nil? (:symbol ast))))))
+
+(deftest analyze-defvar-ast-test
+  (testing "defvar produces :defvar-elisp AST node"
+    (let [ast (analyze '(defvar my-var 42))]
+      (is (= :defvar-elisp (:op ast)))
+      (is (= 'my-var (:name ast)))
+      (is (some? (:init ast)))))
+  (testing "defvar with docstring"
+    (let [ast (analyze '(defvar my-var nil "A docstring."))]
+      (is (= :defvar-elisp (:op ast)))
+      (is (= "A docstring." (:docstring ast))))))
+
+;; ============================================================================
+;; cl-defstruct - CL Struct Passthrough (cljel-fix)
+;; ============================================================================
+
+(deftest analyze-cl-defstruct-test
+  (testing "basic cl-defstruct with simple name and slots"
+    (let [ast (analyze '(cl-defstruct person name age email))]
+      (is (= :cl-defstruct (:op ast)))
+      (is (= 'person (:name-or-opts ast)))
+      (is (= '[name age email] (:slots ast)))))
+
+  (testing "cl-defstruct with no slots"
+    (let [ast (analyze '(cl-defstruct empty-struct))]
+      (is (= :cl-defstruct (:op ast)))
+      (is (= 'empty-struct (:name-or-opts ast)))
+      (is (empty? (:slots ast)))))
+
+  (testing "cl-defstruct with list name+options"
+    (let [ast (analyze '(cl-defstruct (person (:constructor make-person)) name age))]
+      (is (= :cl-defstruct (:op ast)))
+      (is (seq? (:name-or-opts ast)))
+      (is (= '[name age] (:slots ast))))))
+
+;; ============================================================================
+;; cl-defun - CL Function Passthrough (cljel-fix)
+;; ============================================================================
+
+(deftest analyze-cl-defun-test
+  (testing "basic cl-defun with body"
+    (let [ast (analyze '(cl-defun greet (name) (message name)))]
+      (is (= :cl-defun (:op ast)))
+      (is (= 'greet (:name ast)))
+      (is (= '(name) (:arglist ast)))
+      (is (nil? (:docstring ast)))
+      (is (= 1 (count (:body ast))))))
+
+  (testing "cl-defun with docstring"
+    (let [ast (analyze '(cl-defun greet (name) "Greet someone." (message name)))]
+      (is (= :cl-defun (:op ast)))
+      (is (= "Greet someone." (:docstring ast)))
+      (is (= 1 (count (:body ast))))))
+
+  (testing "cl-defun with &optional params"
+    (let [ast (analyze '(cl-defun greet (name &optional greeting) (message greeting name)))]
+      (is (= :cl-defun (:op ast)))
+      (is (= '(name &optional greeting) (:arglist ast))))))
+
+;; ============================================================================
+;; defmacro - Body Analysis (cljel-fix)
+;; ============================================================================
+
+(deftest analyze-defmacro-body-test
+  (testing "defmacro stores analyzed body"
+    (let [ast (analyze '(defmacro my-when [test & body]
+                          (list 'if test (cons 'progn body))))]
+      (is (= :defmacro (:op ast)))
+      (is (= 'my-when (:name ast)))
+      (is (vector? (:body ast)))
+      (is (pos? (count (:body ast))))))
+
+  (testing "defmacro with docstring stores body"
+    (let [ast (analyze '(defmacro my-macro "A macro." [x] (list 'quote x)))]
+      (is (= :defmacro (:op ast)))
+      (is (= "A macro." (:docstring ast)))
+      (is (vector? (:body ast)))
+      (is (pos? (count (:body ast)))))))
