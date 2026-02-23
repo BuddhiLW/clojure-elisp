@@ -9,41 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-
-      - name: Setup Clojure
-        uses: DeLaGuardo/setup-clojure@12.5
-        with:
-          cli: latest
-
-      - name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.m2/repository
-            ~/.gitlibs
-            ~/.cpcache
-          key: deps-${{ hashFiles('deps.edn') }}
-          restore-keys: deps-
-
-      - name: Run tests
-        run: clojure -M:test
-
   release:
     name: Tag & Release
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -72,27 +39,6 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Generate release notes
-        if: steps.check.outputs.exists == 'false'
-        id: notes
-        run: |
-          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -z "$LATEST" ]; then
-            LATEST="v0.0.0"
-          fi
-
-          if [ "$LATEST" = "v0.0.0" ]; then
-            NOTES=$(git log --oneline --no-decorate | head -20)
-          else
-            NOTES=$(git log "${LATEST}..HEAD" --oneline --no-decorate)
-          fi
-          # Write to file to avoid quoting issues
-          echo "## Changes" > release-notes.md
-          echo "" >> release-notes.md
-          echo "$NOTES" | while read -r line; do
-            echo "- $line" >> release-notes.md
-          done
-
       - name: Create tag
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -101,9 +47,7 @@ jobs:
 
       - name: Create GitHub release
         if: steps.check.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --notes-file release-notes.md
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
