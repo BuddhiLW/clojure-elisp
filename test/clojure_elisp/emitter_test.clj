@@ -2026,3 +2026,44 @@
     (is (clojure.string/includes? (analyze-and-emit '(cl-loop x)) "cl-loop")))
   (testing "cl-labels passes through"
     (is (clojure.string/includes? (analyze-and-emit '(cl-labels x)) "cl-labels"))))
+
+;; ============================================================================
+;; Hash-Table Passthrough Mappings (clel-070)
+;; ============================================================================
+
+(deftest emit-hash-table-mappings-test
+  (testing "make-hash-table passes through"
+    (is (= "(make-hash-table :test 'equal)"
+           (analyze-and-emit '(make-hash-table :test 'equal)))))
+
+  (testing "puthash passes through"
+    (is (= "(puthash key val table)"
+           (analyze-and-emit '(puthash key val table)))))
+
+  (testing "gethash passes through"
+    (is (= "(gethash key table)"
+           (analyze-and-emit '(gethash key table)))))
+
+  (testing "remhash passes through"
+    (is (= "(remhash key table)"
+           (analyze-and-emit '(remhash key table)))))
+
+  (testing "copy-hash-table passes through"
+    (is (= "(copy-hash-table table)"
+           (analyze-and-emit '(copy-hash-table table)))))
+
+  (testing "maphash passes through"
+    (is (= "(maphash f table)"
+           (analyze-and-emit '(maphash f table)))))
+
+  (testing "hash-table-keys passes through"
+    (is (= "(hash-table-keys table)"
+           (analyze-and-emit '(hash-table-keys table)))))
+
+  (testing "hash-table-values passes through"
+    (is (= "(hash-table-values table)"
+           (analyze-and-emit '(hash-table-values table)))))
+
+  (testing "hash-table-p passes through"
+    (is (= "(hash-table-p x)"
+           (analyze-and-emit '(hash-table-p x))))))

@@ -466,6 +466,38 @@
    'string-greaterp "string-greaterp"})
 
 ;; ============================================================================
+;; Elisp Built-in Passthrough — Misc (self-hosting runtime needs)
+;; ============================================================================
+;;
+;; These Elisp builtins are used by the self-hosted runtime (.cljel).
+;; They have safe names (mangle-name wouldn't break them), but explicit
+;; mappings ensure they're recognized as builtins rather than being
+;; namespace-prefixed as user-defined functions.
+;;
+;; === CONFLICTS (not included — use interop or qualified access) ===
+;; - assoc : Elisp alist lookup (assoc KEY LIST). Clojure assoc → clel-assoc.
+;;           Use (.assoc key list) or elisp interop for Elisp assoc.
+;; - concat : Elisp sequence concatenation. Clojure concat → clel-concat.
+;;           Use (.concat ...) or elisp interop for the raw Elisp builtin.
+;; - sort : Elisp destructive sort. Clojure sort → clel-sort.
+;;           Use (.sort ...) or elisp interop for the raw Elisp builtin.
+;; - get : Elisp symbol plist access (get SYMBOL PROPNAME).
+;;           Clojure get → clel-get. Use (.get sym prop) for Elisp plist access.
+;; - format : Already mapped to "format" in string-mappings (no conflict).
+;; - nreverse : Already in mutation-mappings (no conflict).
+
+(def elisp-builtin-mappings
+  "Elisp builtins needed for self-hosting the ClojureElisp runtime.
+   Only includes non-conflicting names; see conflict docs above."
+  {'provide  "provide"
+   'gensym   "gensym"
+   'fboundp  "fboundp"
+   'type-of  "type-of"
+   'member   "member"
+   'signal   "signal"
+   'error    "error"})
+
+;; ============================================================================
 ;; Merged Mapping
 ;; ============================================================================
 
@@ -495,4 +527,5 @@
          cl-lib-mappings
          hash-table-mappings
          mutation-mappings
-         elisp-passthrough-mappings))
+         elisp-passthrough-mappings
+         elisp-builtin-mappings))
