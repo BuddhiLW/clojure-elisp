@@ -143,9 +143,59 @@
   (str "'" (pr-str form)))
 
 (defmethod emit-node :defmacro
-  [_]
-  ;; Macros are compile-time only — emit nothing
-  "")
+  [{:keys [name docstring params body env]}]
+  (let [elisp-name  (mangle-name name)
+        elisp-params (str "(" (emit-list (map mangle-name params)) ")")
+        elisp-body   (str/join "\n  " (map emit body))]
+    (if docstring
+      (format "(defmacro %s %s\n  %s\n  %s)"
+              elisp-name elisp-params (pr-str docstring) elisp-body)
+      (format "(defmacro %s %s\n  %s)"
+              elisp-name elisp-params elisp-body))))
+
+(defmethod emit-node :cl-defstruct
+  [{:keys [name-or-opts slots]}]
+  (let [;; name-or-opts can be a symbol or a list with options
+        name-str (if (symbol? name-or-opts)
+                   (mangle-name name-or-opts)
+                   ;; It's a list: (name (:constructor make-name) ...)
+                   (str "(" (str/join " "
+                                      (map (fn [x]
+                                             (cond
+                                               (symbol? x) (mangle-name x)
+                                               (seq? x) (str "(" (str/join " " (map str x)) ")")
+                                               (list? x) (str "(" (str/join " " (map str x)) ")")
+                                               :else (str x)))
+                                           name-or-opts)) ")"))
+        slots-str (str/join " " (map (fn [s]
+                                       (if (symbol? s)
+                                         (mangle-name s)
+                                         (str s)))
+                                     slots))]
+    (if (seq slots)
+      (format "(cl-defstruct %s %s)" name-str slots-str)
+      (format "(cl-defstruct %s)" name-str))))
+
+(defmethod emit-node :cl-defun
+  [{:keys [name docstring arglist body]}]
+  (let [elisp-name (mangle-name name)
+        ;; arglist may contain CL keywords like &optional, &key, &rest
+        ;; Pass through as-is, only mangling regular symbol names
+        elisp-arglist (str "(" (str/join " "
+                                         (map (fn [a]
+                                                (if (symbol? a)
+                                                  (let [s (str a)]
+                                                    (if (str/starts-with? s "&")
+                                                      s  ;; preserve &optional, &key, &rest
+                                                      (mangle-name a)))
+                                                  (str a)))
+                                              arglist)) ")")
+        elisp-body (str/join "\n  " (map emit body))]
+    (if docstring
+      (format "(cl-defun %s %s\n  %s\n  %s)"
+              elisp-name elisp-arglist (pr-str docstring) elisp-body)
+      (format "(cl-defun %s %s\n  %s)"
+              elisp-name elisp-arglist elisp-body))))
 
 (defmethod emit-node :def
   [{:keys [name docstring init env]}]
@@ -416,6 +466,109 @@
                     (format "(list %s)" (emit (first body)))
                     (format "(list (progn %s))" (str/join " " (map emit body))))]
     (emit-for-clauses clauses body-expr)))
+
+;; ============================================================================
+;; Elisp Passthrough Forms (clel-060)
+;; ============================================================================
+
+(defmethod emit-node :dolist
+  [{:keys [var list-form result body]}]
+  (let [var-str      (mangle-name var)
+        list-str     (emit list-form)
+        binding-spec (if result
+                       (format "(%s %s %s)" var-str list-str (emit result))
+                       (format "(%s %s)" var-str list-str))
+        body-str     (str/join "\n    " (map emit body))]
+    (format "(dolist %s\n    %s)" binding-spec body-str)))
+
+(defmethod emit-node :unless
+  [{:keys [test body]}]
+  (format "(unless %s\n    %s)"
+          (emit test)
+          (str/join "\n    " (map emit body))))
+
+(defmethod emit-node :when-let
+  [{:keys [var val body]}]
+  (let [var-str  (mangle-name var)
+        val-str  (emit val)
+        body-str (str/join "\n    " (map emit body))]
+    (format "(when-let ((%s %s))\n    %s)" var-str val-str body-str)))
+
+(defmethod emit-node :if-let
+  [{:keys [var val then else]}]
+  (let [var-str  (mangle-name var)
+        val-str  (emit val)
+        then-str (emit then)]
+    (if else
+      (format "(if-let ((%s %s))\n    %s\n  %s)" var-str val-str then-str (emit else))
+      (format "(if-let ((%s %s))\n    %s)" var-str val-str then-str))))
+
+(defmethod emit-node :condition-case
+  [{:keys [var body handlers]}]
+  (let [var-str      (if var (mangle-name var) "nil")
+        body-str     (emit body)
+        handler-strs (map (fn [{:keys [condition body]}]
+                            (format "(%s %s)" condition
+                                    (str/join "\n      " (map emit body))))
+                          handlers)]
+    (format "(condition-case %s\n    %s\n  %s)"
+            var-str body-str (str/join "\n  " handler-strs))))
+
+(defmethod emit-node :pcase
+  [{:keys [expr clauses]}]
+  (let [expr-str    (emit expr)
+        clause-strs (map (fn [{:keys [pattern body]}]
+                           (let [;; Emit pattern - pass through raw for elisp patterns
+                                 pat-str (cond
+                                           (symbol? pattern) (str "'" (name pattern))
+                                           (keyword? pattern) (str "'" (name pattern))
+                                           (string? pattern) (pr-str pattern)
+                                           (number? pattern) (str pattern)
+                                           ;; For list patterns like (or 'nil 'staged), (pred stringp), etc.
+                                           ;; emit them raw
+                                           (seq? pattern) (pr-str pattern)
+                                           (= pattern '_) "_"
+                                           :else (str pattern))]
+                             (format "(%s %s)" pat-str
+                                     (str/join " " (map emit body)))))
+                         clauses)]
+    (format "(pcase %s\n  %s)" expr-str (str/join "\n  " clause-strs))))
+
+(defmethod emit-node :setq
+  [{:keys [pairs]}]
+  (let [pair-strs (map (fn [{:keys [name value]}]
+                         (format "%s %s" (mangle-name name) (emit value)))
+                       pairs)]
+    (format "(setq %s)" (str/join " " pair-strs))))
+
+(defmethod emit-node :unwind-protect
+  [{:keys [body cleanup]}]
+  (let [body-str    (emit body)
+        cleanup-str (str/join "\n  " (map emit cleanup))]
+    (format "(unwind-protect\n    %s\n  %s)" body-str cleanup-str)))
+
+(defmethod emit-node :while
+  [{:keys [test body]}]
+  (format "(while %s\n    %s)"
+          (emit test)
+          (str/join "\n    " (map emit body))))
+
+(defmethod emit-node :defvar-elisp
+  [{:keys [name init docstring]}]
+  (let [elisp-name (mangle-name name)]
+    (cond
+      (and init docstring)
+      (format "(defvar %s %s\n  %s)" elisp-name (emit init) (pr-str docstring))
+
+      init
+      (format "(defvar %s %s)" elisp-name (emit init))
+
+      :else
+      (format "(defvar %s nil)" elisp-name))))
+
+(defmethod emit-node :function-quote
+  [{:keys [symbol]}]
+  (format "#'%s" (mangle-name symbol)))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]
@@ -731,7 +884,11 @@
 (defmethod emit-node :cond
   [{:keys [clauses]}]
   (let [clause-strs (map (fn [{:keys [test expr]}]
-                           (format "(%s %s)" (emit test) (emit expr)))
+                           (let [test-str (if (and (= :const (:op test))
+                                                   (= :else (:val test)))
+                                            "t"
+                                            (emit test))]
+                             (format "(%s %s)" test-str (emit expr))))
                          clauses)]
     (format "(cond\n  %s)" (str/join "\n  " clause-strs))))
 

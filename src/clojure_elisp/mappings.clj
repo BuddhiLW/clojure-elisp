@@ -398,6 +398,26 @@
    'read-string "clel-read-string"})
 
 ;; ============================================================================
+;; Elisp Built-in Passthrough (special chars that mangle-name would break)
+;; ============================================================================
+
+(def elisp-passthrough-mappings
+  "Elisp functions whose names contain characters that mangle-name
+   would incorrectly transform (=, <, >, *, +).
+   These need explicit mapping to preserve the original elisp name."
+  {;; String comparison (= → -eq would be wrong)
+   'string= "string="
+   'string< "string<"
+   'string> "string>"
+   'char= "char="
+   ;; Note: 1+ and 1- are valid elisp but invalid Clojure symbols.
+   ;; Use (inc x) and (dec x) instead — already mapped to "1+" and "1-".
+   ;; Common elisp predicates with special chars
+   'string-equal "string-equal"  ;; already safe, but explicit for discoverability
+   'string-lessp "string-lessp"
+   'string-greaterp "string-greaterp"})
+
+;; ============================================================================
 ;; Merged Mapping
 ;; ============================================================================
 
@@ -423,4 +443,5 @@
          emacs-file-mappings
          emacs-window-mappings
          utility-mappings
-         io-mappings))
+         io-mappings
+         elisp-passthrough-mappings))

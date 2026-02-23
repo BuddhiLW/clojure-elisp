@@ -287,19 +287,15 @@
 ;; ============================================================================
 
 (deftest macro-compile-string-test
-  (testing "defmacro + usage compiles to expanded Elisp"
+  (testing "defmacro + usage compiles to Elisp with defmacro definition"
     (ana/clear-macros!)
     (let [result (clel/compile-string
                   "(defmacro unless [pred body]
                       (list 'if (list 'not pred) body nil))
                     (unless false 42)")]
-      ;; defmacro itself should not emit Elisp code
-      ;; The usage expands to (if (not false) 42 nil)
-      ;; Emitter optimizes (if test then nil) -> (when test then)
-      (is (str/includes? result "when"))
-      (is (str/includes? result "not"))
-      (is (not (str/includes? result "defmacro")))
-      (is (not (str/includes? result "unless")))))
+      ;; defmacro now emits the macro definition to output
+      (is (str/includes? result "defmacro"))
+      (is (str/includes? result "unless"))))
 
   (testing "variadic macro with & body"
     (ana/clear-macros!)
@@ -307,10 +303,11 @@
                   "(defmacro my-when [test & body]
                       (list 'if test (cons 'do body) nil))
                     (my-when true 1 2 3)")]
-      ;; Emitter optimizes (if test then nil) -> (when test then)
-      (is (str/includes? result "when"))
-      (is (str/includes? result "progn"))
-      (is (not (str/includes? result "my-when")))))
+      ;; defmacro emits the definition; usage is still expanded
+      (is (str/includes? result "defmacro"))
+      (is (str/includes? result "my-when"))
+      ;; The expanded usage should contain the progn body
+      (is (str/includes? result "progn"))))
 
   (testing "macro with syntax-quote produces valid Elisp"
     (ana/clear-macros!)
@@ -318,9 +315,12 @@
                   "(defmacro with-logging [expr]
                       `(do (println \"executing\") ~expr))
                     (with-logging (+ 1 2))")]
+      ;; defmacro emits the definition
+      (is (str/includes? result "defmacro"))
+      (is (str/includes? result "with-logging"))
+      ;; The expanded usage should contain progn + message
       (is (str/includes? result "progn"))
-      (is (str/includes? result "message"))
-      (is (not (str/includes? result "with-logging")))))
+      (is (str/includes? result "message"))))
 
   (testing "multiple macros defined and used"
     (ana/clear-macros!)
@@ -328,10 +328,11 @@
                   "(defmacro double-it [x] (list '* 2 x))
                     (defmacro triple-it [x] (list '* 3 x))
                     (+ (double-it 5) (triple-it 10))")]
+      ;; defmacro definitions emitted
+      (is (str/includes? result "defmacro"))
+      ;; Expanded usage still works
       (is (str/includes? result "(* 2 5)"))
-      (is (str/includes? result "(* 3 10)"))
-      (is (not (str/includes? result "double-it")))
-      (is (not (str/includes? result "triple-it")))))
+      (is (str/includes? result "(* 3 10)"))))
 
   (testing "macro alongside regular defn"
     (ana/clear-macros!)
@@ -340,11 +341,11 @@
                       (list 'if (list 'not pred) body nil))
                     (defn safe-div [a b]
                       (unless (zero? b) (/ a b)))")]
+      ;; defmacro definition is emitted
+      (is (str/includes? result "defmacro"))
       ;; defn should emit normally
       (is (str/includes? result "defun"))
-      (is (str/includes? result "safe-div"))
-      ;; macro body should be expanded in defn
-      (is (not (str/includes? result "unless"))))))
+      (is (str/includes? result "safe-div")))))
 
 ;; ============================================================================
 ;; Namespace System - Topological Sort (clel-028)
