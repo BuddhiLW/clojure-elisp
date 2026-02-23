@@ -119,22 +119,73 @@ Clojure core functions mapped to Elisp equivalents:
 | Emacs mode | `resources/clojure-elisp/clojure-elisp-mode.el` | Major mode for `.cljel` files |
 | CIDER | `resources/clojure-elisp/cider-clojure-elisp.el` | nREPL middleware for CIDER integration |
 
+## Installation
+
+### Standalone Compiler (Uberjar)
+
+Download the latest `clel-<version>.jar` from [GitHub Releases](https://github.com/BuddhiLW/clojure-elisp/releases), then:
+
+```bash
+# Install to standard location
+mkdir -p ~/.local/lib
+cp clel-0.3.1.jar ~/.local/lib/clel.jar
+
+# Compile a file
+java -jar ~/.local/lib/clel.jar compile src/my_app.cljel -o out/my-app.el
+
+# Compile a directory
+java -jar ~/.local/lib/clel.jar compile src/ -o out/
+
+# Check version
+java -jar ~/.local/lib/clel.jar version
+```
+
+The Go CLI (`clel`) automatically detects the jar at `~/.local/lib/clel.jar` or via the `CLEL_JAR` env var, removing the need for a local repo clone:
+
+```bash
+# Uses jar if found, falls back to clojure -M -e
+clel compile src/my_app.cljel -o out/my-app.el
+```
+
+### Runtime (Emacs Package)
+
+Compiled `.el` files require the ClojureElisp runtime. Install via MELPA (once available):
+
+```elisp
+(package-install 'clojure-elisp)
+```
+
+Or manually copy from the repo:
+
+```bash
+cp resources/clojure-elisp/clojure-elisp-runtime.el ~/.emacs.d/site-lisp/
+```
+
+### Building from Source
+
+```bash
+# Build uberjar
+clojure -T:build uber
+# => target/clel-0.3.1.jar
+```
+
 ## Development
 
 ```bash
 # Start REPL with dev dependencies (nREPL, CIDER)
 clojure -M:dev
 
-# Run tests (Kaocha — 160 tests, 900+ assertions)
+# Run tests (Kaocha — 350 tests, 2100 assertions)
 clojure -M:test
 
-# Build
-clojure -T:build
+# Build uberjar
+clojure -T:build uber
 ```
 
 ### Requirements
 
 - Clojure 1.12+
+- Java 21+ (for building/running the uberjar)
 - Emacs 28.1+ (for compiled output)
 
 ## License

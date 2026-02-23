@@ -39,6 +39,23 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Setup Java
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Clojure
+        if: steps.check.outputs.exists == 'false'
+        uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          cli: latest
+
+      - name: Build uberjar
+        if: steps.check.outputs.exists == 'false'
+        run: clojure -T:build uber
+
       - name: Create tag
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -51,3 +68,4 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
+          files: target/clel-${{ steps.version.outputs.version }}.jar

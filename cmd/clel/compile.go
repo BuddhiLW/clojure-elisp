@@ -67,6 +67,12 @@ func compileFile(input, output string) error {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
+	// Prefer uberjar if available
+	if jar := findJar(); jar != "" {
+		return runJar(jar, []string{"compile", absInput, "-o", absOutput})
+	}
+
+	// Fallback: clojure -M -e
 	expr := fmt.Sprintf(
 		`(require '[clojure-elisp.core :as clel]) (let [r (clel/compile-file "%s" "%s")] (println (str "Compiled " (:input r) " -> " (:output r) " (" (:size r) " chars)")))`,
 		escapeCljString(absInput), escapeCljString(absOutput),
@@ -80,8 +86,23 @@ func compileDir(input, output string) error {
 		output = input
 	}
 
+	absInput, err := filepath.Abs(input)
+	if err != nil {
+		return fmt.Errorf("resolving input path: %w", err)
+	}
+	absOutput, err := filepath.Abs(output)
+	if err != nil {
+		return fmt.Errorf("resolving output path: %w", err)
+	}
+
+	// Prefer uberjar if available
+	if jar := findJar(); jar != "" {
+		return runJar(jar, []string{"compile", absInput, "-o", absOutput})
+	}
+
+	// Fallback: compile file-by-file via clojure -M -e
 	var files []string
-	err := filepath.Walk(input, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(input, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -139,6 +160,42 @@ func findProjectRoot() (string, error) {
 	}
 
 	return "", fmt.Errorf("cannot find project root (no deps.edn found); set CLEL_HOME env var")
+}
+
+// findJar locates the clel uberjar. Checks in order:
+// 1. CLEL_JAR env var
+// 2. ~/.local/lib/clel.jar
+// Returns empty string if not found.
+func findJar() string {
+	if jar := os.Getenv("CLEL_JAR"); jar != "" {
+		if _, err := os.Stat(jar); err == nil {
+			return jar
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		jar := filepath.Join(home, ".local", "lib", "clel.jar")
+		if _, err := os.Stat(jar); err == nil {
+			return jar
+		}
+	}
+
+	return ""
+}
+
+// runJar executes a compile command via the uberjar.
+func runJar(jar string, args []string) error {
+	java, err := exec.LookPath("java")
+	if err != nil {
+		return fmt.Errorf("java not found on PATH: %w", err)
+	}
+
+	cmdArgs := append([]string{"-jar", jar}, args...)
+	cmd := exec.Command(java, cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func runClojure(expr string) error {

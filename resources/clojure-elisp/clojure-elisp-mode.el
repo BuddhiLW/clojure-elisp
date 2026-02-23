@@ -2,7 +2,9 @@
 
 ;; Copyright (C) 2025 Pedro G. Branquinho
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
-;; Version: 0.1.0
+;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
+;; URL: https://github.com/BuddhiLW/clojure-elisp
+;; Version: 0.3.1
 ;; Package-Requires: ((emacs "28.1") (clojure-mode "5.0"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
