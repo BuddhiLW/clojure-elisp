@@ -541,6 +541,17 @@
                        pairs)]
     (format "(setq %s)" (str/join " " pair-strs))))
 
+(defmethod emit-node :setf
+  [{:keys [pairs]}]
+  (let [pair-strs (map (fn [{:keys [place value]}]
+                         (format "%s %s" (emit place) (emit value)))
+                       pairs)]
+    (format "(setf %s)" (str/join " " pair-strs))))
+
+(defmethod emit-node :push
+  [{:keys [value place]}]
+  (format "(push %s %s)" (emit value) (emit place)))
+
 (defmethod emit-node :unwind-protect
   [{:keys [body cleanup]}]
   (let [body-str    (emit body)

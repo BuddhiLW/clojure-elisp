@@ -979,6 +979,24 @@
                            {:name sym :value (analyze val)})
                          (partition 2 pairs))))
 
+(defn analyze-setf
+  "Analyze (setf place val ...) forms. Pairs of place-value.
+   Like setq but place can be any generalized Elisp place expression
+   (e.g., (car x), (aref arr 0), symbol)."
+  [[_ & pairs]]
+  (ast-node :setf
+            :pairs (mapv (fn [[place val]]
+                           {:place (analyze place) :value (analyze val)})
+                         (partition 2 pairs))))
+
+(defn analyze-push
+  "Analyze (push val place) forms. Elisp macro that pushes val
+   onto the list stored in place."
+  [[_ val place]]
+  (ast-node :push
+            :value (analyze val)
+            :place (analyze place)))
+
 (defn analyze-unwind-protect
   "Analyze (unwind-protect body-form cleanup-forms...) forms."
   [[_ body-form & cleanup]]
@@ -1296,6 +1314,8 @@
    'condition-case analyze-condition-case
    'pcase analyze-pcase
    'setq analyze-setq
+   'setf analyze-setf
+   'push analyze-push
    'progn analyze-do  ;; progn is elisp's do
    'unwind-protect analyze-unwind-protect
    'while analyze-while
