@@ -2067,3 +2067,118 @@
   (testing "hash-table-p passes through"
     (is (= "(hash-table-p x)"
            (analyze-and-emit '(hash-table-p x))))))
+
+;; ============================================================================
+;; Elisp Built-in Passthrough — Misc (clel-073)
+;; ============================================================================
+
+(deftest emit-elisp-builtin-mappings-test
+  (testing "provide passes through"
+    (is (= "(provide 'my-package)"
+           (analyze-and-emit '(provide 'my-package)))))
+
+  (testing "gensym passes through"
+    (is (= "(gensym \"prefix\")"
+           (analyze-and-emit '(gensym "prefix")))))
+
+  (testing "fboundp passes through"
+    (is (= "(fboundp 'some-fn)"
+           (analyze-and-emit '(fboundp 'some-fn)))))
+
+  (testing "type-of passes through"
+    (is (= "(type-of x)"
+           (analyze-and-emit '(type-of x)))))
+
+  (testing "member passes through"
+    (is (= "(member x xs)"
+           (analyze-and-emit '(member x xs)))))
+
+  (testing "signal passes through"
+    (is (= "(signal 'error \"boom\")"
+           (analyze-and-emit '(signal 'error "boom")))))
+
+  (testing "error passes through"
+    (is (= "(error \"something went wrong: %s\" x)"
+           (analyze-and-emit '(error "something went wrong: %s" x))))))
+
+(deftest emit-elisp-builtin-conflicts-test
+  (testing "assoc maps to clel-assoc (Clojure semantics, not Elisp alist)"
+    (is (= "(clel-assoc m :key val)"
+           (analyze-and-emit '(assoc m :key val)))))
+
+  (testing "concat maps to clel-concat (Clojure semantics)"
+    (is (= "(clel-concat xs ys)"
+           (analyze-and-emit '(concat xs ys)))))
+
+  (testing "sort maps to clel-sort (Clojure semantics)"
+    (is (= "(clel-sort xs)"
+           (analyze-and-emit '(sort xs)))))
+
+  (testing "get maps to clel-get (Clojure semantics)"
+    (is (= "(clel-get m :key)"
+           (analyze-and-emit '(get m :key))))))
+
+;; ============================================================================
+;; Mutation Primitives (clel-072)
+;; ============================================================================
+
+(deftest emit-mutation-mappings-test
+  (testing "setcar passes through"
+    (is (= "(setcar cell val)"
+           (analyze-and-emit '(setcar cell val)))))
+
+  (testing "setcdr passes through"
+    (is (= "(setcdr cell val)"
+           (analyze-and-emit '(setcdr cell val)))))
+
+  (testing "nthcdr passes through"
+    (is (= "(nthcdr 2 xs)"
+           (analyze-and-emit '(nthcdr 2 xs)))))
+
+  (testing "nreverse passes through"
+    (is (= "(nreverse xs)"
+           (analyze-and-emit '(nreverse xs)))))
+
+  (testing "copy-alist passes through"
+    (is (= "(copy-alist alist)"
+           (analyze-and-emit '(copy-alist alist)))))
+
+  (testing "copy-sequence passes through"
+    (is (= "(copy-sequence xs)"
+           (analyze-and-emit '(copy-sequence xs))))))
+
+(deftest emit-setf-test
+  (testing "setf with simple symbol place"
+    (let [code (analyze-and-emit '(setf x 42))]
+      (is (= "(setf x 42)" code))))
+
+  (testing "setf with generalized place (car)"
+    (let [code (analyze-and-emit '(setf (car cell) val))]
+      (is (clojure.string/starts-with? code "(setf"))
+      (is (clojure.string/includes? code "(car cell)"))
+      (is (clojure.string/includes? code "val"))))
+
+  (testing "setf with multiple pairs"
+    (let [code (analyze-and-emit '(setf x 1 y 2))]
+      (is (= "(setf x 1 y 2)" code))))
+
+  (testing "setf with aref place"
+    (let [code (analyze-and-emit '(setf (aref arr 0) val))]
+      (is (clojure.string/starts-with? code "(setf"))
+      (is (clojure.string/includes? code "(aref arr 0)"))
+      (is (clojure.string/includes? code "val")))))
+
+(deftest emit-push-test
+  (testing "push value onto list variable"
+    (let [code (analyze-and-emit '(push item my-list))]
+      (is (= "(push item my-list)" code))))
+
+  (testing "push literal value"
+    (let [code (analyze-and-emit '(push 42 stack))]
+      (is (= "(push 42 stack)" code))))
+
+  (testing "push with expression value"
+    (let [code (analyze-and-emit '(push (cons a b) result))]
+      (is (clojure.string/starts-with? code "(push"))
+      (is (clojure.string/includes? code "(cons a b)"))
+      (is (clojure.string/includes? code "result")))))
