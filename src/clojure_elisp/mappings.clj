@@ -498,6 +498,26 @@
    'error    "error"})
 
 ;; ============================================================================
+;; Elisp Conflict-Avoidance Mappings (self-hosting runtime)
+;; ============================================================================
+;;
+;; The runtime needs raw Elisp builtins whose names collide with
+;; Clojure→Elisp mappings.  These cljel aliases emit the original
+;; Elisp name:
+;;   alist-assoc  → assoc   (Elisp alist lookup; assoc → clel-assoc)
+;;   elisp-concat → concat  (Elisp seq/string concat; concat → clel-concat)
+;;   elisp-sort   → sort    (Elisp destructive sort; sort → clel-sort)
+;;   symbol-get   → get     (Elisp symbol plist; get → clel-get)
+
+(def elisp-conflict-mappings
+  "Conflict-avoidance mappings for Elisp builtins needed by the
+   self-hosted runtime whose names clash with Clojure function mappings."
+  {'alist-assoc  "assoc"
+   'elisp-concat "concat"
+   'elisp-sort   "sort"
+   'symbol-get   "get"})
+
+;; ============================================================================
 ;; Merged Mapping
 ;; ============================================================================
 
@@ -528,4 +548,5 @@
          hash-table-mappings
          mutation-mappings
          elisp-passthrough-mappings
-         elisp-builtin-mappings))
+         elisp-builtin-mappings
+         elisp-conflict-mappings))

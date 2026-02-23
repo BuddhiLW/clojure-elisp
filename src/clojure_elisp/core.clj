@@ -251,8 +251,63 @@
                 (compile-file input-path output-path))))
           order)))
 
+;; ============================================================================
+;; Self-Hosted Runtime Compilation
+;; ============================================================================
+
+(defn- read-version
+  "Read the project version from the VERSION file (classpath or filesystem)."
+  []
+  (let [resource (io/resource "clojure-elisp/VERSION")]
+    (if resource
+      (str/trim (slurp resource))
+      (str/trim (slurp "VERSION")))))
+
+(defn- runtime-header
+  "MELPA-compatible header for the compiled runtime .el file."
+  []
+  (str ";;; clojure-elisp-runtime.el --- Runtime library for ClojureElisp -*- lexical-binding: t; -*-\n"
+       "\n"
+       ";; Copyright (C) 2025 Pedro G. Branquinho\n"
+       ";; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>\n"
+       ";; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>\n"
+       ";; URL: https://github.com/BuddhiLW/clojure-elisp\n"
+       ";; Version: " (read-version) "\n"
+       ";; Package-Requires: ((emacs \"28.1\"))\n"
+       ";; Keywords: languages, lisp, clojure\n"
+       ";; SPDX-License-Identifier: MIT\n"
+       "\n"
+       ";;; Commentary:\n"
+       ";;\n"
+       ";; Runtime support library for ClojureElisp compiled code.\n"
+       ";; Provides Clojure-like functions that don't have direct Elisp equivalents.\n"
+       ";; Auto-generated from runtime.cljel — do not edit by hand.\n"
+       "\n"
+       ";;; Code:\n"
+       "\n"
+       "(require 'cl-lib)\n"
+       "(require 'seq)\n"))
+
+(defn compile-runtime
+  "Compile the self-hosted runtime .cljel to the .el runtime library.
+   The runtime .cljel has no (ns ...) form because runtime functions
+   must not be namespace-prefixed.  This function adds the MELPA header,
+   cl-lib/seq requires, and the (provide ...) footer."
+  [input-path output-path]
+  (let [source (slurp input-path)
+        code   (compile-file-string source)
+        elisp  (str (runtime-header) "\n" code
+                    "\n\n(provide 'clojure-elisp-runtime)\n"
+                    ";;; clojure-elisp-runtime.el ends here\n")]
+    (spit output-path elisp)
+    {:input input-path :output output-path :size (count elisp)}))
+
 (comment
   ;; Quick test
   (emit '(defn foo [x] (+ x 1)))
   (emit '(let [a 1 b 2] (+ a b)))
-  (emit '(if (> x 0) "positive" "non-positive")))
+  (emit '(if (> x 0) "positive" "non-positive"))
+
+  ;; Compile runtime
+  (compile-runtime "resources/clojure-elisp/runtime.cljel"
+                   "resources/clojure-elisp/clojure-elisp-runtime.el"))

@@ -5,6 +5,10 @@
 target/
 *.jar
 deps.local.edn
+out/
+
+# Hive
+.hive-project.edn
 
 # MCP
 .clojure-mcp/
