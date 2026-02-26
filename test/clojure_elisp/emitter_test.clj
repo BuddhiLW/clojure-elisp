@@ -2182,3 +2182,69 @@
       (is (clojure.string/starts-with? code "(push"))
       (is (clojure.string/includes? code "(cons a b)"))
       (is (clojure.string/includes? code "result")))))
+
+;; ============================================================================
+;; literal-vector - Elisp [...] vector syntax
+;; ============================================================================
+
+(deftest emit-literal-vector-test
+  (testing "basic literal-vector emits bracket syntax"
+    (let [node {:op :literal-vector :items [{:op :const :val 1 :type :number}
+                                            {:op :const :val 2 :type :number}
+                                            {:op :const :val 3 :type :number}]}
+          code (emit/emit node)]
+      (is (= "[1 2 3]" code))))
+
+  (testing "empty literal-vector"
+    (let [node {:op :literal-vector :items []}
+          code (emit/emit node)]
+      (is (= "[]" code))))
+
+  (testing "nested literal-vectors"
+    (let [node {:op :literal-vector
+                :items [{:op :const :val "Group" :type :string}
+                        {:op :literal-vector
+                         :items [{:op :const :val "Sub" :type :string}]}]}
+          code (emit/emit node)]
+      (is (= "[\"Group\" [\"Sub\"]]" code)))))
+
+;; ============================================================================
+;; transient-define-prefix
+;; ============================================================================
+
+(deftest emit-transient-define-prefix-test
+  (testing "basic transient-define-prefix with groups"
+    (let [code (analyze-and-emit '(transient-define-prefix my-menu ()
+                                                           "My menu."
+                                                           ["Group"
+                                                            ["Sub"
+                                                             ("k" "desc" my-fn)]]))]
+      (is (clojure.string/includes? code "transient-define-prefix"))
+      (is (clojure.string/includes? code "my-menu"))
+      (is (clojure.string/includes? code "()"))
+      (is (clojure.string/includes? code "\"My menu.\""))
+      (is (clojure.string/includes? code "[\"Group\""))
+      (is (clojure.string/includes? code "[\"Sub\""))
+      (is (not (clojure.string/includes? code "(list")))))
+
+  (testing "empty arglist is preserved as ()"
+    (let [code (analyze-and-emit '(transient-define-prefix simple-menu ()
+                                                           "Doc."
+                                                           ["Actions"]))]
+      (is (clojure.string/includes? code "simple-menu ()"))
+      (is (not (clojure.string/includes? code "(nil)")))))
+
+  (testing "transient-define-prefix without docstring"
+    (let [code (analyze-and-emit '(transient-define-prefix no-doc-menu ()
+                                                           ["Group" ("k" "desc" fn1)]))]
+      (is (clojure.string/includes? code "no-doc-menu"))
+      (is (clojure.string/includes? code "[\"Group\""))
+      (is (not (clojure.string/includes? code "nil")))))
+
+  (testing "multiple groups"
+    (let [code (analyze-and-emit '(transient-define-prefix multi-menu ()
+                                                           "Multi."
+                                                           ["Group A" ("a" "action-a" fn-a)]
+                                                           ["Group B" ("b" "action-b" fn-b)]))]
+      (is (clojure.string/includes? code "[\"Group A\""))
+      (is (clojure.string/includes? code "[\"Group B\"")))))

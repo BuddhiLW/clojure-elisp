@@ -128,6 +128,21 @@
   [{:keys [items]}]
   (str "(list " (emit-list (map emit items)) ")"))
 
+(defmethod emit-node :literal-vector
+  [{:keys [items]}]
+  (str "[" (emit-list (map emit items)) "]"))
+
+(defmethod emit-node :transient-define-prefix
+  [{:keys [name docstring arglist groups]}]
+  (let [name-str   (mangle-name name)
+        arglist-str (if (seq arglist)
+                      (str "(" (emit-list (map str arglist)) ")")
+                      "()")
+        parts      (cond-> [(str "(transient-define-prefix " name-str " " arglist-str)]
+                     docstring (conj (str "  " (pr-str docstring)))
+                     (seq groups) (into (map #(str "  " (emit %)) groups)))]
+    (str (str/join "\n" parts) ")")))
+
 (defmethod emit-node :map
   [{:keys [keys vals]}]
   (let [pairs (map (fn [k v] (str "(" (emit k) " . " (emit v) ")"))

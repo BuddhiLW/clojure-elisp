@@ -81,6 +81,7 @@
 ;; ============================================================================
 
 (declare analyze)
+(declare analyze-literal-vector)
 
 (defn analyze-def
   "Analyze (def name expr) or (def name docstring expr)."
@@ -1119,6 +1120,25 @@
               :docstring docstring
               :options options)))
 
+(defn analyze-transient-define-prefix
+  "Analyze (transient-define-prefix NAME ARGLIST DOCSTRING? GROUP...) forms.
+   Groups (vectors) are emitted as literal Elisp [...] vectors via :literal-vector.
+   ARGLIST is preserved as-is to avoid () → (nil) mis-compilation."
+  [[_ name arglist & rest-forms]]
+  (let [[docstring rest-forms] (if (string? (first rest-forms))
+                                 [(first rest-forms) (rest rest-forms)]
+                                 [nil rest-forms])
+        groups (mapv (fn [g]
+                       (if (vector? g)
+                         (analyze-literal-vector g)
+                         (analyze g)))
+                     rest-forms)]
+    (ast-node :transient-define-prefix
+              :name name
+              :arglist arglist
+              :docstring docstring
+              :groups groups)))
+
 (defn analyze-cl-defstruct
   "Analyze (cl-defstruct name-or-options & slots) forms.
    Passes through to Elisp as cl-defstruct. The name can be a symbol
@@ -1180,6 +1200,18 @@
   [v]
   (ast-node :vector
             :items (mapv analyze v)))
+
+(defn analyze-literal-vector
+  "Analyze a vector that must remain as a literal [...] in Elisp output.
+   Nested vectors are also treated as literal-vectors; everything else
+   is analyzed normally."
+  [v]
+  (ast-node :literal-vector
+            :items (mapv (fn [item]
+                           (if (vector? item)
+                             (analyze-literal-vector item)
+                             (analyze item)))
+                         v)))
 
 (defn analyze-map
   "Analyze map literals."
@@ -1290,6 +1322,7 @@
    'define-minor-mode analyze-define-minor-mode
    'defgroup analyze-defgroup
    'defcustom analyze-defcustom
+   'transient-define-prefix analyze-transient-define-prefix
    'var analyze-var
    ;; Comment, binding, assert (clel-050)
    'comment analyze-comment

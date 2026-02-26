@@ -64,6 +64,8 @@
    :define-minor-mode   #{:name}
    :defgroup            #{:name}
    :defcustom           #{:name}
+   :literal-vector        #{:items}
+   :transient-define-prefix #{:name}
    :unknown             #{:form}})
 
 ;; ============================================================================
