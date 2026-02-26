@@ -69,15 +69,107 @@
 ;; File-Aware Compilation (with namespace context)
 ;; ============================================================================
 
+;; ---------------------------------------------------------------------------
+;; Elisp syntax preprocessing
+;; ---------------------------------------------------------------------------
+;; The Clojure reader rejects certain valid Elisp syntax:
+;;   1. Number-like symbols: 1+ and 1- (increment/decrement functions)
+;;   2. Hex string escapes: \xNN (Elisp) vs \uNNNN (Clojure)
+;;   3. Elisp-specific escapes: \e (escape), \a (bell)
+;; We preprocess before reading and postprocess after emitting.
+
+(def ^:private elisp-number-symbols
+  "Map of Elisp number-like symbols to reader-safe aliases."
+  {"1+" "cljel--1plus"
+   "1-" "cljel--1minus"})
+
+(def ^:private elisp-number-symbols-reverse
+  "Map of reader-safe aliases back to Elisp symbols."
+  (into {} (map (fn [[k v]] [v k])) elisp-number-symbols))
+
+(def ^:private hex-escape-pre-re
+  "Regex matching Elisp \\xNN hex escapes in source text."
+  (re-pattern "\\\\x([0-9a-fA-F]{1,2})"))
+
+(def ^:private hex-escape-post-re
+  "Regex matching CLJEL_HEX_ placeholders in emitted text."
+  #"CLJEL_HEX_([0-9a-fA-F]{1,2})")
+
+(defn- preprocess-elisp-escapes
+  "Replace Elisp hex string escapes (\\xNN) with reader-safe placeholders.
+   The Clojure reader doesn't support \\x escapes in strings."
+  [s]
+  (str/replace s hex-escape-pre-re "CLJEL_HEX_$1"))
+
+(defn- postprocess-elisp-escapes
+  "Restore Elisp hex escapes from placeholders in emitted code."
+  [s]
+  (str/replace s hex-escape-post-re "\\\\x$1"))
+
+(defn- preprocess-elisp-numbers
+  "Replace Elisp number-like symbols (1+, 1-) with reader-safe aliases.
+   Only matches in call position: (1+ ...) or (1- ...)"
+  [s]
+  (-> s
+      (str/replace #"\(1\+(?=[\s\(\)])" "(cljel--1plus")
+      (str/replace #"\(1-(?=[\s\(\)])" "(cljel--1minus")))
+
+(defn- postprocess-elisp-numbers
+  "Restore Elisp number-like symbols from reader-safe aliases in emitted code."
+  [s]
+  (reduce-kv (fn [s alias original]
+               (str/replace s alias original))
+             s
+             elisp-number-symbols-reverse))
+
+(defn- preprocess-elisp-syntax
+  "Combined preprocessing: numbers + string escapes."
+  [s]
+  (-> s preprocess-elisp-numbers preprocess-elisp-escapes))
+
+(defn- postprocess-elisp-syntax
+  "Combined postprocessing: numbers + string escapes."
+  [s]
+  (-> s postprocess-elisp-numbers postprocess-elisp-escapes))
+
+;; ---------------------------------------------------------------------------
+;; Reader
+;; ---------------------------------------------------------------------------
+
+(defn- number-format-cause?
+  "Check if an exception (or its cause chain) originates from a NumberFormatException."
+  [^Throwable e]
+  (loop [^Throwable ex e]
+    (cond
+      (nil? ex) false
+      (instance? NumberFormatException ex) true
+      :else (recur (.getCause ex)))))
+
 (defn- read-all-forms
   "Read all forms from a string, preserving source line/column metadata.
    Uses LineNumberingPushbackReader so the Clojure reader attaches
-   :line and :column metadata to forms."
+   :line and :column metadata to forms.
+   NOTE: Source should be preprocessed with preprocess-elisp-numbers first."
   [s]
   (let [rdr (clojure.lang.LineNumberingPushbackReader.
              (java.io.StringReader. s))]
     (loop [forms []]
-      (let [form (try (read rdr) (catch Exception _ ::eof))]
+      (let [form (try
+                   (read rdr)
+                   (catch Exception e
+                     ;; The Clojure reader wraps NumberFormatException in
+                     ;; ReaderException. Check the cause chain to detect
+                     ;; unhandled number-like symbols (safety net).
+                     (if (number-format-cause? e)
+                       (throw (ex-info (str "Unhandled Elisp number symbol: "
+                                            (if-let [cause (.getCause e)]
+                                              (.getMessage cause)
+                                              (.getMessage e))
+                                            " (line " (.getLineNumber rdr) ")"
+                                            " — add to elisp-number-symbols map")
+                                       {:line (.getLineNumber rdr)}
+                                       e))
+                       ::eof)))]
         (if (= ::eof form)
           forms
           (recur (conj forms form)))))))
@@ -85,18 +177,23 @@
 (defn compile-file-string
   "Compile a string of Clojure code as a file (with namespace context).
    Uses analyze-file-forms so (ns ...) establishes aliases/refers
-   for subsequent forms. Appends (provide ...) when ns is present."
+   for subsequent forms. Appends (provide ...) when ns is present.
+   Handles Elisp number-symbols (1+, 1-) via pre/post-processing."
   [s]
-  (let [forms     (read-all-forms s)
-        ast-nodes (ana/analyze-file-forms forms)]
-    (emit/emit-file ast-nodes)))
+  (let [preprocessed (preprocess-elisp-syntax s)
+        forms        (read-all-forms preprocessed)
+        ast-nodes    (ana/analyze-file-forms forms)
+        raw-elisp    (emit/emit-file ast-nodes)]
+    (postprocess-elisp-syntax raw-elisp)))
 
 (defn compile-string
   "Compile a string of Clojure code to Elisp.
    For namespace-aware compilation, use compile-file-string instead."
   [s]
-  (let [forms (read-string (str "[" s "]"))]
-    (emit-forms forms)))
+  (let [preprocessed (preprocess-elisp-syntax s)
+        forms        (read-string (str "[" preprocessed "]"))
+        raw-elisp    (emit-forms forms)]
+    (postprocess-elisp-syntax raw-elisp)))
 
 ;; ============================================================================
 ;; File Compilation

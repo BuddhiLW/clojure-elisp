@@ -184,14 +184,26 @@
 ;; Binding Expansion
 ;; ============================================================================
 
+(defn- paren-pair-bindings?
+  "Detect [(var val) (var2 val2)] style bindings (common in elisp ports).
+   Returns true if all elements are 2-element lists starting with a symbol."
+  [bindings]
+  (and (seq bindings)
+       (every? #(and (seq? %) (= 2 (count %)) (symbol? (first %)))
+               bindings)))
+
 (defn expand-bindings
   "Expand a let binding vector, handling destructuring.
-   Returns a flat vector suitable for a simple let form."
+   Returns a flat vector suitable for a simple let form.
+   Auto-flattens [(var val) (var2 val2)] into [var val var2 val2]."
   [bindings]
-  (->> (partition 2 bindings)
-       (mapcat (fn [[pattern init]]
-                 (expand-destructuring pattern init)))
-       vec))
+  (let [bindings (if (paren-pair-bindings? bindings)
+                   (vec (mapcat identity bindings))
+                   bindings)]
+    (->> (partition 2 bindings)
+         (mapcat (fn [[pattern init]]
+                   (expand-destructuring pattern init)))
+         vec)))
 
 ;; ============================================================================
 ;; Function Parameter Processing
