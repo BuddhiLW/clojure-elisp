@@ -17,6 +17,7 @@
    :locals #{}
    :aliases {}
    :refers {}
+   :defs {}
    :in-tail-position? false})
 
 (def ^:dynamic *source-context*
@@ -36,8 +37,29 @@
 (def clear-macros! macros/clear-macros!)
 (def get-macro macros/get-macro)
 (def register-macro! macros/register-macro!)
+(def register-builtin-macro! macros/register-builtin-macro!)
 (def macroexpand-1-clel macros/macroexpand-1-clel)
 (def macroexpand-clel macros/macroexpand-clel)
+
+;; ============================================================================
+;; Built-in Macros
+;; ============================================================================
+
+(defn- elisp-cond-expand
+  "Transform Elisp-style cond clauses into Clojure-style cond.
+   (elisp-cond (test1 body1...) (test2 body2...) (t default...))
+   → (cond test1 (do body1...) test2 (do body2...) t (do default...))
+   Single-body clauses omit the `do` wrapper."
+  [& clauses]
+  (let [pairs (mapcat (fn [clause]
+                        (let [[test & body] clause]
+                          (if (= 1 (count body))
+                            [test (first body)]
+                            [test (cons 'do body)])))
+                      clauses)]
+    (cons 'cond pairs)))
+
+(register-builtin-macro! 'elisp-cond elisp-cond-expand)
 
 ;; ============================================================================
 ;; Source Location
@@ -1116,7 +1138,9 @@
         options                (apply hash-map rest-forms)]
     (ast-node :defcustom
               :name var-name
-              :default default
+              :default (if (and (seq? default) (= 'var (first default)))
+                         (analyze-var default)
+                         default)
               :docstring docstring
               :options options)))
 
@@ -1174,7 +1198,9 @@
   "Analyze (defmacro name [params] body) forms.
    Evaluates the macro body as a Clojure function and registers it
    in the compile-time macro registry. Returns a :defmacro AST node
-   that the emitter should skip (macros are compile-time only)."
+   that the emitter should skip (macros are compile-time only).
+   If eval fails (e.g. Elisp-native macros with &rest syntax), the macro
+   is not registered and the form is passed through for emission."
   [[_ name & fdecl]]
   (let [[docstring fdecl] (if (string? (first fdecl))
                             [(first fdecl) (rest fdecl)]
@@ -1183,8 +1209,13 @@
         ;; Build and eval a Clojure fn from the macro body.
         ;; Since the compiler runs on the JVM, the macro fn executes
         ;; at compile time and produces forms for analysis.
-        macro-fn          (eval (list* 'fn params body))]
-    (register-macro! name macro-fn)
+        ;; Elisp-native macros (e.g. using &rest) will fail eval —
+        ;; skip registration and pass through for emission.
+        macro-fn          (try
+                            (eval (list* 'fn params body))
+                            (catch Exception _ nil))]
+    (when macro-fn
+      (register-macro! name macro-fn))
     (ast-node :defmacro
               :name name
               :docstring docstring
@@ -1382,6 +1413,11 @@
       (let [resolved-ns (get (:refers *env*) form)]
         (ast-node :var :name form :ns resolved-ns))
 
+      ;; Same-namespace definition (including defn- private functions)
+      (get (:defs *env*) form)
+      (let [{:keys [private?]} (get (:defs *env*) form)]
+        (ast-node :var :name form :ns (:ns *env*) :private? private?))
+
       ;; Unqualified, unresolved
       :else
       (ast-node :var :name form))))
@@ -1465,17 +1501,30 @@
 ;; File-Level Analysis
 ;; ============================================================================
 
+(defn- pre-scan-defs
+  "Quick scan top-level forms to collect defn/defn-/def names.
+   Returns map of {name {:private? bool}} for same-namespace resolution."
+  [forms]
+  (into {}
+        (for [form forms
+              :when (and (seq? form) (symbol? (second form)))
+              :let [head (first form)]
+              :when (#{'defn 'defn- 'def} head)]
+          [(second form) {:private? (= head 'defn-)}])))
+
 (defn analyze-file-forms
   "Analyze a sequence of forms as they appear in a file.
    If the first form is (ns ...), it establishes the namespace context
-   (current ns, aliases, refers) for all subsequent forms."
+   (current ns, aliases, refers) for all subsequent forms.
+   Pre-scans all top-level defs so same-namespace references resolve correctly."
   [forms]
   (if (and (seq forms)
            (seq? (first forms))
            (= 'ns (first (first forms))))
     (let [ns-ast (analyze (first forms))
-          ns-env (build-ns-env (:requires ns-ast))]
-      (binding [*env* (merge *env* {:ns (:name ns-ast)} ns-env)]
+          ns-env (build-ns-env (:requires ns-ast))
+          defs   (pre-scan-defs (rest forms))]
+      (binding [*env* (merge *env* {:ns (:name ns-ast) :defs defs} ns-env)]
         (into [ns-ast] (mapv analyze (rest forms)))))
     (mapv analyze forms)))
 

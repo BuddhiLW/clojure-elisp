@@ -57,10 +57,11 @@
 ;; ============================================================================
 
 (defn- send-compiled-result
-  "Send a successful compilation result via transport."
+  "Send a successful compilation result via transport.
+   Uses :cljel-compiled-elisp (not :value) to avoid CIDER's built-in
+   display handler which has assertion issues with compiled Elisp strings."
   [{:keys [transport] :as msg} elisp]
-  (t/send transport (response-for msg {:value elisp
-                                       :cljel-compiled-elisp elisp
+  (t/send transport (response-for msg {:cljel-compiled-elisp elisp
                                        :ns "user"}))
   (t/send transport (response-for msg {:status :done})))
 

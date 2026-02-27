@@ -90,6 +90,7 @@
    'butlast "butlast"
    'rest "clel-rest"
    'next "clel-next"
+   'list "list"
    'cons "cons"
    'conj "clel-conj"
    'count "length"
@@ -111,7 +112,7 @@
    'reverse "reverse"
    'flatten "flatten-tree"
    'peek "clel-peek"
-   'pop "clel-pop"
+   'pop "pop"
    'subvec "clel-subvec"})
 
 ;; ============================================================================
@@ -244,8 +245,8 @@
 ;; ============================================================================
 
 (def math-mappings
-  {'min "cl-min"
-   'max "cl-max"
+  {'min "min"
+   'max "max"
    'abs "abs"
    'quot "truncate"
    'rand "clel-rand"

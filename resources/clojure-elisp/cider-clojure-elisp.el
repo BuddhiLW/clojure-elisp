@@ -60,13 +60,15 @@ Subsequent eval operations will compile ClojureElisp to Elisp
 and evaluate the result locally in Emacs."
   (interactive)
   (cider-ensure-connected)
-  (cider-nrepl-send-request
-   '("op" "cljel-start")
-   (lambda (response)
-     (let ((value (nrepl-dict-get response "value")))
-       (when value
-         (setq cider-cljel-active t)
-         (message "%s" value))))))
+  (let ((buf (current-buffer)))
+    (cider-nrepl-send-request
+     '("op" "cljel-start")
+     (lambda (response)
+       (let ((value (nrepl-dict-get response "value")))
+         (when value
+           (with-current-buffer buf
+             (setq cider-cljel-active t))
+           (message "%s" value)))))))
 
 (defun cider-cljel-stop ()
   "Stop the ClojureElisp compilation session.
@@ -105,13 +107,11 @@ evaluates it locally in Emacs and displays the result."
        (compiled
         (let ((result (cider-cljel--eval-elisp-string compiled)))
           (with-current-buffer buffer
-            (if (fboundp 'cider--display-interactive-eval-result)
-                (cider--display-interactive-eval-result result point)
-              (message "=> %s" result)))))
+            (message "=> %s" result))))
        ;; Compilation error
        (err
         (with-current-buffer buffer
-          (message "%s" err)))))))
+          (message "CLJEL error: %s" err)))))))
 
 ;;; --- Eval Functions ---
 

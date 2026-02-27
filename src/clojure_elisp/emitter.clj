@@ -105,7 +105,7 @@
   (mangle-name name))
 
 (defmethod emit-node :var
-  [{:keys [name ns]}]
+  [{:keys [name ns private?]}]
   (cond
     ;; No namespace - check core mapping, then bare name
     (nil? ns)
@@ -120,9 +120,10 @@
 
     ;; Other namespace - check fully-qualified symbol in mapping first
     :else
-    (let [qualified-sym (symbol (str ns) (str name))]
+    (let [qualified-sym (symbol (str ns) (str name))
+          separator     (if private? "--" "-")]
       (or (get core-fn-mapping qualified-sym)
-          (str (mangle-name ns) "-" (mangle-name name))))))
+          (str (mangle-name ns) separator (mangle-name name))))))
 
 (defmethod emit-node :vector
   [{:keys [items]}]
@@ -218,7 +219,7 @@
     (if init
       (emit-sexp "defvar" elisp-name (emit init)
                  (when docstring (pr-str docstring)))
-      (emit-sexp "defvar" elisp-name "nil"))))
+      (format "(defvar %s)" elisp-name))))
 
 (defn- nth-accessor
   "Emit an efficient nth accessor for an args list.
@@ -589,8 +590,11 @@
       init
       (format "(defvar %s %s)" elisp-name (emit init))
 
+      docstring
+      (format "(defvar %s nil\n  %s)" elisp-name (pr-str docstring))
+
       :else
-      (format "(defvar %s nil)" elisp-name))))
+      (format "(defvar %s)" elisp-name))))
 
 (defmethod emit-node :function-quote
   [{:keys [symbol]}]
@@ -1067,7 +1071,11 @@
   [{:keys [fn args]}]
   (let [fn-str   (emit fn)
         args-str (map emit args)]
-    (apply emit-sexp fn-str args-str)))
+    ;; Arity-aware dispatch for assoc: 2-arg = Elisp native alist lookup,
+    ;; 3+ = clel-assoc (Clojure put). Clojure assoc always needs 3+ args.
+    (if (and (= fn-str "clel-assoc") (= 2 (count args)))
+      (apply emit-sexp "assoc" args-str)
+      (apply emit-sexp fn-str args-str))))
 
 (defmethod emit-node :define-minor-mode
   [{:keys [name docstring options body]}]
@@ -1139,8 +1147,10 @@
                             (and (seq? v) (= 'quote (first v)))
                             (str "'" (second v))
                             :else (str v)))
-        ;; Emit default value
-        default-str     (emit-option-val default)
+        ;; Emit default value (may be an analyzed AST node, e.g. :function-quote from #')
+        default-str     (if (and (map? default) (:op default))
+                          (emit default)
+                          (emit-option-val default))
         ;; Emit options as keyword-value pairs
         options-str     (->> options
                              (map (fn [[k v]]
