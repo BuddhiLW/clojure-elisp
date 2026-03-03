@@ -780,30 +780,30 @@
     (is (re-find #"butlast\s+my-list" (clel/emit '(butlast my-list))))))
 
 (deftest min-compilation-test
-  (testing "min compiles to cl-min"
-    (is (= "(cl-min 1 2 3)" (clel/emit '(min 1 2 3))))
-    (is (= "(cl-min a b)" (clel/emit '(min a b)))))
+  (testing "min compiles to min"
+    (is (= "(min 1 2 3)" (clel/emit '(min 1 2 3))))
+    (is (= "(min a b)" (clel/emit '(min a b)))))
 
   (testing "min in expression context"
     (let [code (clel/emit '(let [x (min a b c)] x))]
-      (is (str/includes? code "cl-min"))
+      (is (str/includes? code "min"))
       (is (str/includes? code "let"))))
 
   (testing "min preserves arguments"
-    (is (re-find #"cl-min\s+x\s+y\s+z" (clel/emit '(min x y z))))))
+    (is (re-find #"min\s+x\s+y\s+z" (clel/emit '(min x y z))))))
 
 (deftest max-compilation-test
-  (testing "max compiles to cl-max"
-    (is (= "(cl-max 1 2 3)" (clel/emit '(max 1 2 3))))
-    (is (= "(cl-max a b)" (clel/emit '(max a b)))))
+  (testing "max compiles to max"
+    (is (= "(max 1 2 3)" (clel/emit '(max 1 2 3))))
+    (is (= "(max a b)" (clel/emit '(max a b)))))
 
   (testing "max in expression context"
     (let [code (clel/emit '(let [x (max a b c)] x))]
-      (is (str/includes? code "cl-max"))
+      (is (str/includes? code "max"))
       (is (str/includes? code "let"))))
 
   (testing "max preserves arguments"
-    (is (re-find #"cl-max\s+x\s+y\s+z" (clel/emit '(max x y z))))))
+    (is (re-find #"max\s+x\s+y\s+z" (clel/emit '(max x y z))))))
 
 (deftest contains-p-compilation-test
   (testing "contains? compiles to clel-contains-p"

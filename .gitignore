@@ -24,6 +24,7 @@ out/
 
 # Binaries
 /clel
+cmd/clel/clel
 
 # OS
 .DS_Store

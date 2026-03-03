@@ -12,10 +12,20 @@
   macro-registry
   (atom {}))
 
+(defonce ^{:doc "Built-in macros that survive clear-macros!."}
+  builtin-macros
+  (atom {}))
+
+(defn register-builtin-macro!
+  "Register a macro fn as built-in (survives clear-macros!)."
+  [sym macro-fn]
+  (swap! builtin-macros assoc sym macro-fn)
+  (swap! macro-registry assoc sym macro-fn))
+
 (defn clear-macros!
-  "Clear all registered macros. Useful for tests."
+  "Clear user-defined macros. Built-in macros are preserved."
   []
-  (reset! macro-registry {}))
+  (reset! macro-registry @builtin-macros))
 
 (defn get-macro
   "Look up a macro by name. Returns the macro fn or nil."

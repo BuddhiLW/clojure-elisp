@@ -488,3 +488,29 @@
     (binding [ana/*source-context* {:line 10 :column 5}]
       (let [err (ana/analysis-error "Test error" {:foo 1})]
         (is (str/includes? (.getMessage err) "10:5"))))))
+
+;; ============================================================================
+;; extract-ns-name & ns-derived-output-name
+;; ============================================================================
+
+(deftest extract-ns-name-test
+  (testing "extracts ns name from source"
+    (is (= 'hive-mcp-projectile
+           (clel/extract-ns-name "(ns hive-mcp-projectile)"))))
+  (testing "extracts ns name with requires"
+    (is (= 'my.app
+           (clel/extract-ns-name "(ns my.app (:require [cl-lib]))"))))
+  (testing "returns nil for source without ns"
+    (is (nil? (clel/extract-ns-name "(defn foo [x] x)"))))
+  (testing "returns nil for empty source"
+    (is (nil? (clel/extract-ns-name "")))))
+
+(deftest ns-derived-output-name-test
+  (testing "derives output name from ns"
+    (is (= "hive-mcp-projectile.el"
+           (clel/ns-derived-output-name "(ns hive-mcp-projectile)"))))
+  (testing "mangles dotted ns name"
+    (is (= "my-app.el"
+           (clel/ns-derived-output-name "(ns my.app)"))))
+  (testing "returns nil for source without ns"
+    (is (nil? (clel/ns-derived-output-name "(defn foo [x] x)")))))

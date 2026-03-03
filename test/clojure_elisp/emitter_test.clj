@@ -142,9 +142,7 @@
       (is (clojure.string/includes? result "42"))))
   (testing "def without init"
     (let [result (analyze-and-emit '(def bar))]
-      (is (clojure.string/includes? result "defvar"))
-      (is (clojure.string/includes? result "bar"))
-      (is (clojure.string/includes? result "nil")))))
+      (is (= "(defvar bar)" result)))))
 
 ;; ============================================================================
 ;; defn
@@ -358,6 +356,28 @@
       (is (clojure.string/includes? code ";;; my-app.el"))
       (is (clojure.string/includes? code "lexical-binding: t"))
       (is (clojure.string/includes? code "(require 'clojure-elisp-runtime)")))))
+
+(deftest emit-ns-load-path-test
+  (testing "load-path emitted before requires"
+    (let [code (analyze-and-emit '(ns my.app
+                                    (:load-path ["swarm"])
+                                    (:require [hive-mcp-swarm-events])))]
+      (is (clojure.string/includes? code "add-to-list 'load-path"))
+      (is (clojure.string/includes? code "expand-file-name \"swarm\" this-dir"))
+      ;; load-path block should appear before require
+      (let [lp-pos  (.indexOf code "add-to-list")
+            req-pos (.indexOf code "(require 'hive-mcp-swarm-events)")]
+        (is (< lp-pos req-pos)))))
+
+  (testing "multiple load-paths"
+    (let [code (analyze-and-emit '(ns my.app
+                                    (:load-path ["kanban" "swarm"])))]
+      (is (clojure.string/includes? code "expand-file-name \"kanban\" this-dir"))
+      (is (clojure.string/includes? code "expand-file-name \"swarm\" this-dir"))))
+
+  (testing "no load-path produces no block"
+    (let [code (analyze-and-emit '(ns my.app (:require [cl-lib])))]
+      (is (not (clojure.string/includes? code "add-to-list"))))))
 
 ;; ============================================================================
 ;; loop/recur
@@ -1917,7 +1937,7 @@
       (is (clojure.string/includes? result "my-var-p"))))
   (testing "defvar without init"
     (let [result (analyze-and-emit '(defvar my-var))]
-      (is (= "(defvar my-var nil)" result)))))
+      (is (= "(defvar my-var)" result)))))
 
 (deftest emit-function-quote-test
   (testing "#'symbol emits Elisp function quote"
@@ -1925,7 +1945,7 @@
       (is (= "#'my-func" result))))
   (testing "#'symbol with special chars gets mangled"
     (let [result (analyze-and-emit '(var some?))]
-      (is (= "#'some-p" result))))
+      (is (= "#'clel-some-p" result))))
   (testing "function quote in context — e.g., (mapcar #'func list)"
     (let [result (analyze-and-emit '(mapcar (var my-func) items))]
       (is (clojure.string/includes? result "#'my-func")))))
@@ -2248,3 +2268,42 @@
                                                            ["Group B" ("b" "action-b" fn-b)]))]
       (is (clojure.string/includes? code "[\"Group A\""))
       (is (clojure.string/includes? code "[\"Group B\"")))))
+
+;; ============================================================================
+;; elisp-cond macro
+;; ============================================================================
+
+(deftest emit-elisp-cond-test
+  (testing "elisp-cond with single-body clauses"
+    (let [code (analyze-and-emit '(elisp-cond
+                                   ((string= x "a") (do-a))
+                                   ((string= x "b") (do-b))
+                                   (t (default-action))))]
+      (is (clojure.string/includes? code "cond"))
+      (is (clojure.string/includes? code "(string= x \"a\")"))
+      (is (clojure.string/includes? code "(do-a)"))
+      (is (clojure.string/includes? code "(string= x \"b\")"))
+      (is (clojure.string/includes? code "(do-b)"))
+      (is (clojure.string/includes? code "(default-action)"))))
+
+  (testing "elisp-cond with multi-body clauses wraps in progn"
+    (let [code (analyze-and-emit '(elisp-cond
+                                   ((test-fn x)
+                                    (setq result "positive")
+                                    (message "pos"))
+                                   (t (message "other"))))]
+      (is (clojure.string/includes? code "cond"))
+      (is (clojure.string/includes? code "progn"))
+      (is (clojure.string/includes? code "result"))
+      (is (clojure.string/includes? code "\"positive\""))))
+
+  (testing "elisp-cond with variable test (degraded-mode pattern)"
+    (let [code (analyze-and-emit '(elisp-cond
+                                   (degraded nil)
+                                   ((> count max) (enter-degraded))
+                                   (t (reconnect))))]
+      (is (clojure.string/includes? code "cond"))
+      (is (clojure.string/includes? code "degraded"))
+      (is (clojure.string/includes? code "nil"))
+      (is (clojure.string/includes? code "(enter-degraded)"))
+      (is (clojure.string/includes? code "(reconnect)")))))

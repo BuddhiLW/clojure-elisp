@@ -40,9 +40,17 @@
 
 (defn- compile-file-cmd [input output]
   (let [output (or output
-                   (str (subs input 0 (- (count input)
-                                         (count (re-find #"\.[^.]*$" input))))
-                        ".el"))]
+                   (let [input-dir (.getParent (java.io.File. input))
+                         input-dir (or input-dir ".")
+                         source    (slurp input)
+                         ns-name   (clel/ns-derived-output-name source)
+                         basename  (or ns-name
+                                       (str (subs input 0 (- (count input)
+                                                             (count (re-find #"\.[^.]*$" input))))
+                                            ".el"))]
+                     (if ns-name
+                       (str input-dir "/" ns-name)
+                       basename)))]
     (try
       (let [result (clel/compile-file input output)]
         (println (str "Compiled " (:input result)

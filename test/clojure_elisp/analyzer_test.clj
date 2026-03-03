@@ -541,6 +541,34 @@
       (is (= 2 (count (:requires ast)))))))
 
 ;; ============================================================================
+;; :load-path Directive
+;; ============================================================================
+
+(deftest analyze-ns-load-path-test
+  (testing "single load-path with vector"
+    (let [ast (analyze '(ns my.app (:load-path ["kanban"])))]
+      (is (= ["kanban"] (:load-paths ast)))))
+
+  (testing "multiple paths in one directive"
+    (let [ast (analyze '(ns my.app (:load-path ["kanban" "swarm"])))]
+      (is (= ["kanban" "swarm"] (:load-paths ast)))))
+
+  (testing "bare string load-path"
+    (let [ast (analyze '(ns my.app (:load-path "kanban")))]
+      (is (= ["kanban"] (:load-paths ast)))))
+
+  (testing "no load-path gives empty vector"
+    (let [ast (analyze '(ns my.app (:require [cl-lib])))]
+      (is (= [] (:load-paths ast)))))
+
+  (testing "load-path with requires"
+    (let [ast (analyze '(ns my.app
+                          (:load-path ["swarm"])
+                          (:require [hive-mcp-swarm-events])))]
+      (is (= ["swarm"] (:load-paths ast)))
+      (is (= 1 (count (:requires ast)))))))
+
+;; ============================================================================
 ;; Function Invocation
 ;; ============================================================================
 
@@ -1174,9 +1202,10 @@
       (is (= :define-minor-mode (:op ast)))
       (is (= 'my-mode (:name ast)))
       (is (= "A test minor mode." (:docstring ast)))
-      (is (= nil (get-in ast [:options :init-value])))
-      (is (= " M" (get-in ast [:options :lighter])))
-      (is (= 't (get-in ast [:options :global])))))
+      (is (= :const (:op (get-in ast [:options :init-value]))))
+      (is (= nil (:val (get-in ast [:options :init-value]))))
+      (is (= " M" (:val (get-in ast [:options :lighter]))))
+      (is (= 't (:name (get-in ast [:options :global]))))))
 
   (testing "define-minor-mode with :group option"
     (let [ast (analyze '(define-minor-mode hive-mcp-eca-mode
@@ -1184,7 +1213,8 @@
                           :group 'hive-mcp-eca))]
       (is (= :define-minor-mode (:op ast)))
       (is (= 'hive-mcp-eca-mode (:name ast)))
-      (is (= '(quote hive-mcp-eca) (get-in ast [:options :group])))))
+      (is (= :quote (:op (get-in ast [:options :group]))))
+      (is (= 'hive-mcp-eca (:form (get-in ast [:options :group]))))))
 
   (testing "define-minor-mode with body"
     (let [ast (analyze '(define-minor-mode my-mode
@@ -1213,7 +1243,7 @@
       (is (= :define-minor-mode (:op ast)))
       (is (= 'simple-mode (:name ast)))
       (is (nil? (:docstring ast)))
-      (is (= " S" (get-in ast [:options :lighter])))))
+      (is (= " S" (:val (get-in ast [:options :lighter]))))))
 
   (testing "define-minor-mode with :keymap option"
     (let [ast (analyze '(define-minor-mode keymap-mode

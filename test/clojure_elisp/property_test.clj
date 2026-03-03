@@ -294,3 +294,47 @@
                        (some? s2)
            ;; double should contain two occurrences of clel-complement
                        (> (count (re-seq #"clel-complement" s2)) 1)))))
+
+;; ============================================================================
+;; Property: ns-derived-output-name idempotency via mangle-name
+;; ============================================================================
+
+(props/defprop-idempotent ns-mangle-idempotent
+  emit/mangle-name
+  (gen/fmap #(symbol (str "hive-mcp-" %)) gen/string-alpha-numeric)
+  {:num-tests 200})
+
+;; ============================================================================
+;; Property: extract-ns-name totality — never crashes on any source string
+;; ============================================================================
+
+(props/defprop-total extract-ns-name-total
+  clel/extract-ns-name
+  (gen/one-of [(gen/return "")
+               (gen/return "(defn foo [x] x)")
+               (gen/fmap #(str "(ns pkg-" % ")") gen/string-alpha-numeric)
+               (gen/fmap #(str "(ns my-pkg-" % ")") gen/string-alpha-numeric)])
+  {:num-tests 100})
+
+;; ============================================================================
+;; Property: ns-derived-output-name roundtrip — ns name → .el filename
+;; ============================================================================
+
+(defspec ns-derived-output-name-ends-with-el 100
+  (prop/for-all [suffix gen/string-alpha-numeric]
+                (let [src (str "(ns hive-mcp-" suffix ")")
+                      result (clel/ns-derived-output-name src)]
+                  (if result
+                    (clojure.string/ends-with? result ".el")
+                    true))))
+
+;; ============================================================================
+;; Property: load-paths parsing totality — analyze-ns never crashes
+;; ============================================================================
+
+(defspec ns-load-path-totality 100
+  (prop/for-all [paths (gen/vector gen/string-alpha-numeric 0 3)]
+                (let [ns-form (list 'ns 'test-ns (list :load-path (vec paths)))
+                      ast (ana/analyze ns-form)]
+                  (and (= :ns (:op ast))
+                       (= paths (:load-paths ast))))))

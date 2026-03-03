@@ -112,7 +112,7 @@
    'reverse "reverse"
    'flatten "flatten-tree"
    'peek "clel-peek"
-   'pop "pop"
+   'pop "clel-pop"
    'subvec "clel-subvec"})
 
 ;; ============================================================================

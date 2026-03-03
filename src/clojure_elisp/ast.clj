@@ -27,7 +27,7 @@
    :do                  #{:body}
    :and                 #{:exprs}
    :or                  #{:exprs}
-   :ns                  #{:name :requires}
+   :ns                  #{:name :requires :load-paths}
    :quote               #{:form}
    :loop                #{:bindings :body}
    :recur               #{:args}

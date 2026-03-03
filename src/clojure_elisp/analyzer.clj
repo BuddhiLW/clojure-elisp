@@ -46,18 +46,9 @@
 ;; ============================================================================
 
 (defn- elisp-cond-expand
-  "Transform Elisp-style cond clauses into Clojure-style cond.
-   (elisp-cond (test1 body1...) (test2 body2...) (t default...))
-   → (cond test1 (do body1...) test2 (do body2...) t (do default...))
-   Single-body clauses omit the `do` wrapper."
+  "Transform elisp-cond into cond (now a no-op alias since cond handles Elisp-style)."
   [& clauses]
-  (let [pairs (mapcat (fn [clause]
-                        (let [[test & body] clause]
-                          (if (= 1 (count body))
-                            [test (first body)]
-                            [test (cons 'do body)])))
-                      clauses)]
-    (cons 'cond pairs)))
+  (cons 'cond clauses))
 
 (register-builtin-macro! 'elisp-cond elisp-cond-expand)
 
@@ -273,13 +264,27 @@
             :body (mapv analyze body)))
 
 (defn analyze-cond
-  "Analyze (cond clause...) forms."
+  "Analyze (cond clause...) forms.
+   Auto-detects style:
+   - Elisp-style: (cond (test body...) ...) — all args are lists
+   - Clojure-style: (cond test expr test expr ...) — flat pairs, has non-list args"
   [[_ & clauses]]
-  (ast-node :cond
-            :clauses (->> (partition 2 clauses)
-                          (mapv (fn [[test expr]]
-                                  {:test (analyze test)
-                                   :expr (analyze expr)})))))
+  (if (every? seq? clauses)
+    ;; Elisp-style: each arg is a clause (test body...)
+    (ast-node :cond
+              :clauses (mapv (fn [clause]
+                               (let [[test & body] clause]
+                                 {:test (analyze test)
+                                  :expr (if (= 1 (count body))
+                                          (analyze (first body))
+                                          (analyze (cons 'do body)))}))
+                             clauses))
+    ;; Clojure-style: flat pairs
+    (ast-node :cond
+              :clauses (->> (partition 2 clauses)
+                            (mapv (fn [[test expr]]
+                                    {:test (analyze test)
+                                     :expr (analyze expr)}))))))
 
 (defn analyze-case
   "Analyze (case expr clause...) forms.
@@ -347,18 +352,36 @@
     {:aliases aliases
      :refers refers}))
 
+(defn- parse-load-paths
+  "Extract :load-path values from ns clauses.
+   Supports (:load-path [\"dir1\" \"dir2\"]) and (:load-path \"dir\")."
+  [clauses]
+  (->> clauses
+       (filter #(and (sequential? %) (= :load-path (first %))))
+       (mapcat (fn [[_ & args]]
+                 (mapcat (fn [arg]
+                           (cond
+                             (vector? arg) arg
+                             (string? arg) [arg]
+                             :else []))
+                         args)))
+       vec))
+
 (defn analyze-ns
   "Analyze (ns name ...) forms.
-   Parses :require clauses into structured data with :as and :refer options."
+   Parses :require clauses into structured data with :as and :refer options.
+   Parses :load-path clauses into a :load-paths vector."
   [[_ ns-name & clauses]]
   (let [requires (->> clauses
                       (filter #(and (sequential? %) (= :require (first %))))
                       (mapcat rest)
                       (map parse-require-spec)
-                      vec)]
+                      vec)
+        load-paths (parse-load-paths clauses)]
     (ast-node :ns
               :name ns-name
               :requires requires
+              :load-paths load-paths
               :clauses clauses)))
 
 (defn analyze-quote
@@ -423,31 +446,40 @@
             :body (mapv analyze body)))
 
 (defn analyze-throw
-  "Analyze (throw exception) forms.
+  "Analyze (throw ...) forms.
    Supports:
+   - (throw TAG VALUE) - Elisp catch/throw (2 args, TAG is quoted symbol)
    - (throw (ex-info message data)) - exception with message and data
    - (throw (Exception. message)) - simple exception with message
    - (throw e) - re-throw a caught exception"
-  [[_ exception]]
-  (let [analyzed-ex (analyze exception)
-        ex-type     (cond
-                      (and (= :invoke (:op analyzed-ex))
-                           (= 'ex-info (get-in analyzed-ex [:fn :name])))
-                      :ex-info
-
-                      (and (= :invoke (:op analyzed-ex))
-                           (let [fn-name (get-in analyzed-ex [:fn :name])]
-                             (and fn-name (.endsWith (name fn-name) "."))))
-                      :constructor
-
-                      (#{:local :var} (:op analyzed-ex))
-                      :rethrow
-
-                      :else
-                      :expression)]
+  [[_ & args]]
+  (if (= 2 (count args))
+    ;; Elisp-style throw: (throw 'tag value) for catch/throw
     (ast-node :throw
-              :exception analyzed-ex
-              :exception-type ex-type)))
+              :exception-type :elisp-throw
+              :tag (analyze (first args))
+              :value (analyze (second args)))
+    ;; Clojure-style throw: (throw exception)
+    (let [exception   (first args)
+          analyzed-ex (analyze exception)
+          ex-type     (cond
+                        (and (= :invoke (:op analyzed-ex))
+                             (= 'ex-info (get-in analyzed-ex [:fn :name])))
+                        :ex-info
+
+                        (and (= :invoke (:op analyzed-ex))
+                             (let [fn-name (get-in analyzed-ex [:fn :name])]
+                               (and fn-name (.endsWith (name fn-name) "."))))
+                        :constructor
+
+                        (#{:local :var} (:op analyzed-ex))
+                        :rethrow
+
+                        :else
+                        :expression)]
+      (ast-node :throw
+                :exception analyzed-ex
+                :exception-type ex-type))))
 
 (defn analyze-letfn
   "Analyze (letfn [(name [params] body)...] body) forms.
@@ -965,6 +997,51 @@
                       (analyze then))
               :else (when else (analyze else)))))
 
+(defn analyze-when-let*
+  "Analyze (when-let* [var1 val1 var2 val2 ...] body...) forms.
+   Multiple sequential bindings — Emacs 26+ when-let* semantics.
+   Each binding can see previous bindings (sequential scoping)."
+  [[_ binding-vec & body]]
+  (let [pairs (partition 2 binding-vec)
+        binding-nodes (reduce
+                       (fn [acc [var-sym val-form]]
+                         (let [analyzed-val (binding [*env* (with-locals *env* (set (map first acc)))]
+                                              (analyze val-form))]
+                           (conj acc [var-sym analyzed-val])))
+                       []
+                       pairs)
+        all-vars (set (map first binding-nodes))]
+    (ast-node :when-let*
+              :bindings (mapv (fn [[var-sym val-node]]
+                                {:var var-sym :val val-node})
+                              binding-nodes)
+              :body (binding [*env* (with-locals *env* all-vars)]
+                      (mapv analyze body)))))
+
+(defn analyze-if-let*
+  "Analyze (if-let* [var1 val1 var2 val2 ...] then else?) forms.
+   Multiple sequential bindings — Emacs 29+ if-let* semantics.
+   Like when-let* but with an optional else clause."
+  [[_ binding-vec then & [else]]]
+  (let [pairs (partition 2 binding-vec)
+        binding-nodes (reduce
+                       (fn [acc [var-sym val-form]]
+                         (let [analyzed-val (binding [*env* (with-locals *env* (set (map first acc)))]
+                                              (analyze val-form))]
+                           (conj acc [var-sym analyzed-val])))
+                       []
+                       pairs)
+        all-vars (set (map first binding-nodes))]
+    (ast-node :if-let*
+              :bindings (mapv (fn [[var-sym val-node]]
+                                {:var var-sym :val val-node})
+                              binding-nodes)
+              :then (binding [*env* (with-locals *env* all-vars)]
+                      (analyze then))
+              :else (when else
+                      (binding [*env* (with-locals *env* all-vars)]
+                        (analyze else))))))
+
 (defn analyze-condition-case
   "Analyze (condition-case var body-form handler...) forms.
    Each handler is (condition-name body...).
@@ -1088,7 +1165,7 @@
                                             (keyword? (first remaining))
                                             (seq (rest remaining)))
                                      (recur (drop 2 remaining)
-                                            (assoc options (first remaining) (second remaining)))
+                                            (assoc options (first remaining) (analyze (second remaining))))
                                      [options remaining])))
         [options body-forms]   (parse-options rest-forms)]
     (ast-node :define-minor-mode
@@ -1374,7 +1451,9 @@
    'dolist analyze-dolist
    'unless analyze-unless
    'when-let analyze-when-let
+   'when-let* analyze-when-let*
    'if-let analyze-if-let
+   'if-let* analyze-if-let*
    'condition-case analyze-condition-case
    'pcase analyze-pcase
    'setq analyze-setq
