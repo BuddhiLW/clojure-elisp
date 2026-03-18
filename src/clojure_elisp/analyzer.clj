@@ -24,6 +24,11 @@
   "Current source location context {:line N :column N}, or nil."
   nil)
 
+(def ^:dynamic *project-exports*
+  "Map of {ns-symbol -> #{exported-symbol ...}} for cross-file symbol checking.
+   Populated during project-level compilation. nil when compiling single files."
+  nil)
+
 (defn with-locals
   "Add locals to the environment."
   [env locals]
@@ -1481,11 +1486,26 @@
       (and sym-ns-str
            (get (:aliases *env*) (symbol sym-ns-str)))
       (let [resolved-ns (get (:aliases *env*) (symbol sym-ns-str))]
+        (when (and *project-exports*
+                   (contains? *project-exports* resolved-ns)
+                   (not (contains? (get *project-exports* resolved-ns) sym-name)))
+          (binding [*out* *err*]
+            (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
+                          (when *source-context*
+                            (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
         (ast-node :var :name sym-name :ns resolved-ns))
 
       ;; Already qualified symbol: clojure.string/join
       sym-ns-str
-      (ast-node :var :name sym-name :ns (symbol sym-ns-str))
+      (let [resolved-ns (symbol sym-ns-str)]
+        (when (and *project-exports*
+                   (contains? *project-exports* resolved-ns)
+                   (not (contains? (get *project-exports* resolved-ns) sym-name)))
+          (binding [*out* *err*]
+            (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
+                          (when *source-context*
+                            (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
+        (ast-node :var :name sym-name :ns resolved-ns))
 
       ;; Referred symbol: join -> clojure.string/join
       (get (:refers *env*) form)
@@ -1590,6 +1610,11 @@
               :let [head (first form)]
               :when (#{'defn 'defn- 'def} head)]
           [(second form) {:private? (= head 'defn-)}])))
+
+(defn scan-exports
+  "Public API for scanning top-level defs from forms. Returns set of defined symbols."
+  [forms]
+  (set (keys (pre-scan-defs forms))))
 
 (defn analyze-file-forms
   "Analyze a sequence of forms as they appear in a file.
