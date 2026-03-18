@@ -3,6 +3,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure-elisp.core :as clel]
             [clojure-elisp.analyzer :as ana]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]))
 
@@ -801,3 +802,141 @@
       (is (string? result))
       ;; helper should appear in output (unresolved, so no namespace prefix)
       (is (str/includes? result "helper")))))
+
+;; ============================================================================
+;; Incremental Compilation (clel-module-004)
+;; ============================================================================
+
+(defn- make-test-project
+  "Create a temporary project directory with source files for incremental tests.
+   Returns {:project-dir :src-dir :out-dir :utils-file :app-file}."
+  []
+  (let [project-dir (java.io.File/createTempFile "clel-incr" "")
+        _           (.delete project-dir)
+        _           (.mkdirs project-dir)
+        src-dir     (io/file project-dir "src" "my")
+        out-dir     (io/file project-dir "out")]
+    (.mkdirs src-dir)
+    (let [utils-file (io/file src-dir "utils.cljel")
+          app-file   (io/file src-dir "app.cljel")]
+      (spit utils-file "(ns my.utils)\n(defn helper [x] (+ x 1))")
+      (spit app-file   "(ns my.app (:require [my.utils :as u]))\n(defn main [] (u/helper 42))")
+      {:project-dir project-dir
+       :src-dir     (.getAbsolutePath (io/file project-dir "src"))
+       :out-dir     (.getAbsolutePath out-dir)
+       :utils-file  utils-file
+       :app-file    app-file})))
+
+(defn- cleanup-test-project [project-dir]
+  (doseq [f (reverse (file-seq project-dir))]
+    (.delete f)))
+
+(deftest incremental-fresh-compile-writes-manifest-test
+  (testing "fresh compile writes manifest with correct structure"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        (clel/compile-project [src-dir] out-dir)
+        ;; Manifest should exist
+        (let [manifest-file (io/file out-dir ".clel-cache" "manifest.edn")]
+          (is (.exists manifest-file))
+          ;; Read and verify structure
+          (let [manifest (edn/read-string (slurp manifest-file))]
+            (is (= 1 (:version manifest)))
+            (is (map? (:files manifest)))
+            (is (contains? (:files manifest) 'my.utils))
+            (is (contains? (:files manifest) 'my.app))
+            ;; Check entry structure
+            (let [utils-entry (get-in manifest [:files 'my.utils])]
+              (is (string? (:source-path utils-entry)))
+              (is (number? (:source-mtime utils-entry)))
+              (is (string? (:output-path utils-entry)))
+              (is (number? (:output-mtime utils-entry)))
+              (is (set? (:deps utils-entry))))))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-skip-unchanged-test
+  (testing "second compile without changes returns cached results"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Second compile — no changes
+        (let [results (clel/compile-project [src-dir] out-dir)]
+          ;; All results should be cached
+          (is (every? #(or (nil? %) (:cached %)) results))
+          (is (some :cached results)))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-source-change-triggers-recompile-test
+  (testing "touching source file triggers recompilation"
+    (let [{:keys [project-dir src-dir out-dir utils-file]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Wait a moment for mtime granularity, then modify source
+        (Thread/sleep 50)
+        (spit utils-file "(ns my.utils)\n(defn helper [x] (+ x 2))")
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)
+              non-nil (filter some? results)]
+          ;; At least one result should have :size (was recompiled)
+          (is (some :size non-nil)))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-dependency-propagation-test
+  (testing "changing a dependency triggers recompilation of dependents"
+    (let [{:keys [project-dir src-dir out-dir utils-file]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Modify utils (which app depends on)
+        (Thread/sleep 50)
+        (spit utils-file "(ns my.utils)\n(defn helper [x] (+ x 99))")
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)
+              non-nil (filter some? results)
+              recompiled (filter :size non-nil)]
+          ;; Both utils AND app should be recompiled (app depends on utils)
+          (is (= 2 (count recompiled))))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-new-file-detection-test
+  (testing "adding a new file triggers its compilation"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Add a new file
+        (let [new-file (io/file (.getParentFile (io/file src-dir)) "src" "my" "extra.cljel")]
+          (spit new-file "(ns my.extra)\n(defn bonus [] 42)"))
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)
+              non-nil (filter some? results)]
+          ;; New file should be compiled (has :size)
+          (is (some :size non-nil))
+          ;; Output file should exist
+          (is (.exists (io/file out-dir "my-extra.el"))))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-deleted-output-triggers-recompile-test
+  (testing "deleting an output file triggers recompilation"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Delete one output file
+        (.delete (io/file out-dir "my-utils.el"))
+        (is (not (.exists (io/file out-dir "my-utils.el"))))
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)]
+          ;; utils should be recompiled — output should exist again
+          (is (.exists (io/file out-dir "my-utils.el")))
+          ;; At least one result should have :size (was recompiled)
+          (is (some #(and (some? %) (:size %)) results)))
+        (finally
+          (cleanup-test-project project-dir))))))

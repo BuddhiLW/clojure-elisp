@@ -561,16 +561,58 @@
               :when ns-name]
           [ns-name (ana/scan-exports (rest forms))])))
 
+;; ============================================================================
+;; Incremental Compilation (mtime tracking)
+;; ============================================================================
+
+(defn- manifest-path [output-dir]
+  (str output-dir "/.clel-cache/manifest.edn"))
+
+(defn- read-manifest [output-dir]
+  (let [path (manifest-path output-dir)]
+    (if (.exists (io/file path))
+      (edn/read-string (slurp path))
+      {:version 1 :files {}})))
+
+(defn- write-manifest [output-dir manifest]
+  (let [path (manifest-path output-dir)
+        dir  (io/file (str output-dir "/.clel-cache"))]
+    (.mkdirs dir)
+    (spit path (pr-str manifest))))
+
+(defn- file-mtime [path]
+  (.lastModified (io/file path)))
+
+(defn- needs-recompile?
+  "Check if a namespace needs recompilation based on manifest.
+   Returns true if source changed, output missing, not in manifest,
+   or a dependency is stale (via stale-set)."
+  [ns-sym ns->file output-dir manifest stale-set]
+  (let [input-path  (get ns->file ns-sym)
+        output-name (str (emit/mangle-name ns-sym) ".el")
+        output-path (str output-dir "/" output-name)
+        entry       (get-in manifest [:files ns-sym])]
+    (or
+      ;; Not in manifest (new file)
+      (nil? entry)
+      ;; Source changed
+      (not= (file-mtime input-path) (:source-mtime entry))
+      ;; Output missing
+      (not (.exists (io/file output-path)))
+      ;; A dependency is stale (checked via stale-set)
+      (some stale-set (:deps entry)))))
+
 (defn compile-project
   "Compile all .cljel files under source-paths in dependency order.
    source-paths: vector of directories containing .cljel files.
    output-dir: directory for .el output files.
    Pass 1: builds a project-wide symbol table from all files.
    Pass 2: compiles each file with cross-file symbol checking enabled.
+   Supports incremental compilation — only recompiles changed files and dependents.
    Returns a vector of compilation results."
   [source-paths output-dir]
   (let [files    (discover-cljel-files source-paths)
-        ;; Pass 1: build project-wide symbol table
+        ;; Pass 1: build project-wide symbol table (always, for correctness)
         exports  (build-project-symbol-table files)
         ;; Map ns-name -> file-path
         ns->file (into {}
@@ -580,17 +622,46 @@
                              :when ns-name]
                          [ns-name path]))
         graph    (build-dependency-graph files)
-        order    (topological-sort graph)]
+        order    (topological-sort graph)
+        manifest (read-manifest output-dir)
+        ;; Walk topo order, accumulating stale set
+        stale-set (loop [remaining order
+                         stale     #{}]
+                    (if (empty? remaining)
+                      stale
+                      (let [ns-sym (first remaining)]
+                        (if (needs-recompile? ns-sym ns->file output-dir manifest stale)
+                          (recur (rest remaining) (conj stale ns-sym))
+                          (recur (rest remaining) stale)))))]
     ;; Ensure output directory exists
     (.mkdirs (io/file output-dir))
-    ;; Pass 2: compile with symbol table available
-    (binding [ana/*project-exports* exports]
-      (mapv (fn [ns-sym]
-              (when-let [input-path (get ns->file ns-sym)]
-                (let [output-name (str (emit/mangle-name ns-sym) ".el")
-                      output-path (str output-dir "/" output-name)]
-                  (compile-file input-path output-path))))
-            order))))
+    ;; Pass 2: compile with symbol table available (only stale files)
+    (let [results
+          (binding [ana/*project-exports* exports]
+            (mapv (fn [ns-sym]
+                    (when-let [input-path (get ns->file ns-sym)]
+                      (let [output-name (str (emit/mangle-name ns-sym) ".el")
+                            output-path (str output-dir "/" output-name)]
+                        (if (contains? stale-set ns-sym)
+                          (compile-file input-path output-path)
+                          ;; Skip — return cached info
+                          {:input input-path :output output-path :cached true}))))
+                  order))
+          ;; Build new manifest
+          new-manifest {:version 1
+                        :files (into {}
+                                     (for [ns-sym order
+                                           :let [input-path (get ns->file ns-sym)
+                                                 output-name (str (emit/mangle-name ns-sym) ".el")
+                                                 output-path (str output-dir "/" output-name)]
+                                           :when input-path]
+                                       [ns-sym {:source-path input-path
+                                                :source-mtime (file-mtime input-path)
+                                                :output-path output-path
+                                                :output-mtime (file-mtime output-path)
+                                                :deps (get graph ns-sym #{})}]))}]
+      (write-manifest output-dir new-manifest)
+      results)))
 
 ;; ============================================================================
 ;; Project Descriptor (clel.edn)
