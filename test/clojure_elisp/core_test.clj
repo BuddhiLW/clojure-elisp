@@ -735,3 +735,69 @@
                 *err* warnings]
         (ana/analyze 'u/anything))
       (is (= "" (str warnings))))))
+
+;; ============================================================================
+;; :refer :all - Wildcard Imports (clel-module-003)
+;; ============================================================================
+
+(deftest refer-all-project-compilation-test
+  (testing "compile-project resolves :refer :all symbols correctly"
+    (let [project-dir (java.io.File/createTempFile "clel-refer-all" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src" "my")
+          out-dir     (io/file project-dir "out")]
+      (try
+        (.mkdirs src-dir)
+        ;; utils.cljel exports helper and pi
+        (spit (io/file src-dir "utils.cljel")
+              "(ns my.utils)\n(defn helper [x] (+ x 1))\n(def pi 3.14)")
+        ;; app.cljel uses :refer :all to import everything from my.utils
+        (spit (io/file src-dir "app.cljel")
+              "(ns my.app (:require [my.utils :refer :all]))\n(defn main [] (helper pi))")
+        (let [results (clel/compile-project [(.getAbsolutePath (io/file project-dir "src"))]
+                                            (.getAbsolutePath out-dir))]
+          ;; Both files should compile
+          (is (= 2 (count (filter some? results))))
+          ;; Check that referred symbols resolve correctly in the output
+          (let [app-el (slurp (io/file out-dir "my-app.el"))]
+            ;; helper should resolve to my-utils-helper (namespace-prefixed)
+            (is (str/includes? app-el "my-utils-helper"))
+            ;; pi should resolve to my-utils-pi (namespace-prefixed)
+            (is (str/includes? app-el "my-utils-pi"))))
+        (finally
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f))))))
+
+  (testing ":refer :all with :as alias both work together"
+    (let [project-dir (java.io.File/createTempFile "clel-refer-all-as" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src" "my")
+          out-dir     (io/file project-dir "out")]
+      (try
+        (.mkdirs src-dir)
+        (spit (io/file src-dir "utils.cljel")
+              "(ns my.utils)\n(defn helper [x] (+ x 1))")
+        ;; Use both :as and :refer :all
+        (spit (io/file src-dir "app.cljel")
+              "(ns my.app (:require [my.utils :as u :refer :all]))\n(defn main [] (helper 1))\n(defn other [] (u/helper 2))")
+        (let [results (clel/compile-project [(.getAbsolutePath (io/file project-dir "src"))]
+                                            (.getAbsolutePath out-dir))]
+          (is (= 2 (count (filter some? results))))
+          (let [app-el (slurp (io/file out-dir "my-app.el"))]
+            ;; Both unqualified (via :refer :all) and qualified (via :as) should resolve
+            (is (str/includes? app-el "my-utils-helper"))))
+        (finally
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f)))))))
+
+(deftest refer-all-single-file-graceful-test
+  (testing ":refer :all in single-file mode compiles without error"
+    ;; compile-file-string doesn't set *project-exports*, so :refer :all
+    ;; should be a no-op — symbols just won't resolve to a namespace
+    (let [result (clel/compile-file-string
+                   "(ns my.app (:require [my.utils :refer :all]))\n(defn main [] (helper 42))")]
+      (is (string? result))
+      ;; helper should appear in output (unresolved, so no namespace prefix)
+      (is (str/includes? result "helper")))))

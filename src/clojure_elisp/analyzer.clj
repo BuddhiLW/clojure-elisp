@@ -333,27 +333,39 @@
      clojure.string                    -> {:ns clojure.string}
      [clojure.string]                  -> {:ns clojure.string}
      [clojure.string :as str]          -> {:ns clojure.string :as str}
-     [clojure.string :refer [join]]    -> {:ns clojure.string :refer [join]}"
+     [clojure.string :refer [join]]    -> {:ns clojure.string :refer [join]}
+     [clojure.string :refer :all]      -> {:ns clojure.string :refer :all}"
   [spec]
   (if (vector? spec)
     (let [[ns-name & opts] spec
-          opts-map         (apply hash-map opts)]
+          opts-map         (apply hash-map opts)
+          refer-val        (:refer opts-map)]
       {:ns ns-name
        :as (:as opts-map)
-       :refer (:refer opts-map)})
+       :refer (if (= :all refer-val) :all refer-val)})
     {:ns spec}))
 
 (defn build-ns-env
   "Build environment entries from parsed require specs.
-   Returns a map with :aliases and :refers suitable for merging into *env*."
+   Returns a map with :aliases and :refers suitable for merging into *env*.
+   When :refer is :all and *project-exports* contains the namespace,
+   expands to all exported symbols from that namespace."
   [requires]
   (let [aliases (into {} (for [{:keys [ns as]} requires
                                :when           as]
                            [as ns]))
-        refers  (into {} (for [{:keys [ns refer]} requires
-                               :when              refer
-                               sym                refer]
-                           [sym ns]))]
+        refers  (into {}
+                      (for [{:keys [ns refer]} requires
+                            :when              refer
+                            sym                (if (= :all refer)
+                                                ;; Expand :all from project-exports if available
+                                                (if-let [exports (when *project-exports*
+                                                                   (get *project-exports* ns))]
+                                                  exports
+                                                  ;; Single-file mode or unknown namespace: no expansion
+                                                  [])
+                                                refer)]
+                        [sym ns]))]
     {:aliases aliases
      :refers refers}))
 

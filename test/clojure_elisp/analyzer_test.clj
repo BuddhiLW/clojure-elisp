@@ -1833,3 +1833,91 @@
                   (defn- private-fn [] nil)
                   (+ 1 2))]
       (is (= #{'foo 'bar 'private-fn} (ana/scan-exports forms))))))
+
+;; ============================================================================
+;; :refer :all - Wildcard Imports (clel-module-003)
+;; ============================================================================
+
+(deftest parse-require-spec-refer-all-test
+  (testing "parse-require-spec with :refer :all returns :all keyword"
+    (let [spec (ana/parse-require-spec '[my.utils :refer :all])]
+      (is (= 'my.utils (:ns spec)))
+      (is (= :all (:refer spec)))))
+
+  (testing "parse-require-spec with :refer :all and :as"
+    (let [spec (ana/parse-require-spec '[my.utils :as u :refer :all])]
+      (is (= 'my.utils (:ns spec)))
+      (is (= 'u (:as spec)))
+      (is (= :all (:refer spec)))))
+
+  (testing "parse-require-spec with :refer vector is unchanged"
+    (let [spec (ana/parse-require-spec '[my.utils :refer [helper]])]
+      (is (= '[helper] (:refer spec)))))
+
+  (testing "parse-require-spec bare symbol is unchanged"
+    (let [spec (ana/parse-require-spec 'my.utils)]
+      (is (= 'my.utils (:ns spec)))
+      (is (nil? (:refer spec))))))
+
+(deftest build-ns-env-refer-all-test
+  (testing "build-ns-env expands :refer :all from *project-exports*"
+    (binding [ana/*project-exports* {'my.utils #{'helper 'pi 'add}}]
+      (let [env (ana/build-ns-env [{:ns 'my.utils :refer :all}])]
+        (is (= {'helper 'my.utils
+                'pi     'my.utils
+                'add    'my.utils}
+               (:refers env))))))
+
+  (testing "build-ns-env :refer :all with no project-exports produces empty refers"
+    (binding [ana/*project-exports* nil]
+      (let [env (ana/build-ns-env [{:ns 'my.utils :refer :all}])]
+        (is (= {} (:refers env))))))
+
+  (testing "build-ns-env :refer :all for unknown namespace produces empty refers"
+    (binding [ana/*project-exports* {'other.ns #{'foo}}]
+      (let [env (ana/build-ns-env [{:ns 'my.utils :refer :all}])]
+        (is (= {} (:refers env))))))
+
+  (testing "build-ns-env :refer :all coexists with :as alias"
+    (binding [ana/*project-exports* {'my.utils #{'helper}}]
+      (let [env (ana/build-ns-env [{:ns 'my.utils :as 'u :refer :all}])]
+        (is (= {'u 'my.utils} (:aliases env)))
+        (is (= {'helper 'my.utils} (:refers env))))))
+
+  (testing "build-ns-env mixes :refer :all and explicit :refer"
+    (binding [ana/*project-exports* {'my.utils #{'helper 'pi}}]
+      (let [env (ana/build-ns-env [{:ns 'my.utils :refer :all}
+                                   {:ns 'other.lib :refer ['foo]}])]
+        (is (= {'helper 'my.utils
+                'pi     'my.utils
+                'foo    'other.lib}
+               (:refers env)))))))
+
+(deftest analyze-file-forms-refer-all-test
+  (testing "analyze-file-forms with :refer :all resolves symbols via project-exports"
+    (binding [ana/*project-exports* {'my.utils #{'helper 'pi}}]
+      (let [forms '[(ns my.app
+                      (:require [my.utils :refer :all]))
+                    (helper 42)]
+            asts  (ana/analyze-file-forms forms)]
+        ;; Second AST is invocation of helper
+        (let [invoke-ast (second asts)
+              fn-node    (:fn invoke-ast)]
+          (is (= :var (:op fn-node)))
+          (is (= 'helper (:name fn-node)))
+          (is (= 'my.utils (:ns fn-node)))))))
+
+  (testing "analyze-file-forms with :refer :all in single-file mode doesn't crash"
+    (binding [ana/*project-exports* nil]
+      (let [forms '[(ns my.app
+                      (:require [my.utils :refer :all]))
+                    (helper 42)]
+            asts  (ana/analyze-file-forms forms)]
+        ;; Should still produce ASTs (helper won't resolve to a namespace)
+        (is (= 2 (count asts)))
+        (let [invoke-ast (second asts)
+              fn-node    (:fn invoke-ast)]
+          (is (= :var (:op fn-node)))
+          (is (= 'helper (:name fn-node)))
+          ;; Without project-exports, helper is unresolved (no :ns)
+          (is (nil? (:ns fn-node))))))))
