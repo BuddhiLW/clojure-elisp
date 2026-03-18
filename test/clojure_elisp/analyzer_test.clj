@@ -1751,3 +1751,85 @@
       (is (= "A macro." (:docstring ast)))
       (is (vector? (:body ast)))
       (is (pos? (count (:body ast)))))))
+
+;; ============================================================================
+;; Cross-File Symbol Table Warning (clel-module-002)
+;; ============================================================================
+
+(deftest project-exports-warning-test
+  (testing "warns when qualified symbol not found in known namespace"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* {'my.utils #{'helper 'pi}}
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'u 'my.utils})
+                *err* warnings]
+        (let [ast (analyze 'u/nonexistent)]
+          ;; AST should still be produced (warning, not error)
+          (is (= :var (:op ast)))
+          (is (= 'nonexistent (:name ast)))
+          (is (= 'my.utils (:ns ast)))
+          ;; Warning should have been emitted to stderr
+          (is (clojure.string/includes? (str warnings) "WARNING"))
+          (is (clojure.string/includes? (str warnings) "nonexistent"))
+          (is (clojure.string/includes? (str warnings) "my.utils"))))))
+
+  (testing "no warning when symbol exists in known namespace"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* {'my.utils #{'helper 'pi}}
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'u 'my.utils})
+                *err* warnings]
+        (let [ast (analyze 'u/helper)]
+          (is (= :var (:op ast)))
+          (is (= 'helper (:name ast)))
+          (is (= 'my.utils (:ns ast)))
+          ;; No warning for existing symbol
+          (is (= "" (str warnings)))))))
+
+  (testing "no warning when namespace not in project-exports"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* {'my.utils #{'helper}}
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'cl 'cl-lib})
+                *err* warnings]
+        (let [ast (analyze 'cl/defstruct)]
+          (is (= :var (:op ast)))
+          ;; No warning for external namespace
+          (is (= "" (str warnings)))))))
+
+  (testing "warns for fully qualified symbol not found"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* {'my.utils #{'helper}}
+                *err* warnings]
+        (let [ast (analyze 'my.utils/missing)]
+          (is (= :var (:op ast)))
+          (is (clojure.string/includes? (str warnings) "WARNING"))
+          (is (clojure.string/includes? (str warnings) "missing"))))))
+
+  (testing "no warning when project-exports is nil"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* nil
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'u 'my.utils})
+                *err* warnings]
+        (analyze 'u/anything)
+        (is (= "" (str warnings))))))
+
+  (testing "warning includes source location when available"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* {'my.utils #{'helper}}
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'u 'my.utils})
+                ana/*source-context* {:file "app.cljel" :line 42}
+                *err* warnings]
+        (analyze 'u/missing)
+        (let [w (str warnings)]
+          (is (clojure.string/includes? w "app.cljel"))
+          (is (clojure.string/includes? w "42"))))))
+
+  (testing "scan-exports returns set of defined symbols"
+    (let [forms '((defn foo [x] x)
+                  (def bar 42)
+                  (defn- private-fn [] nil)
+                  (+ 1 2))]
+      (is (= #{'foo 'bar 'private-fn} (ana/scan-exports forms))))))

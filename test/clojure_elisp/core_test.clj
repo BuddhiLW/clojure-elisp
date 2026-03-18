@@ -514,3 +514,97 @@
            (clel/ns-derived-output-name "(ns my.app)"))))
   (testing "returns nil for source without ns"
     (is (nil? (clel/ns-derived-output-name "(defn foo [x] x)")))))
+
+;; ============================================================================
+;; Cross-File Symbol Table (clel-module-002)
+;; ============================================================================
+
+(deftest build-project-symbol-table-test
+  (testing "scans defs from temp files"
+    (let [f1 (java.io.File/createTempFile "test-a" ".cljel")
+          f2 (java.io.File/createTempFile "test-b" ".cljel")]
+      (try
+        (spit f1 "(ns my.utils)\n(defn helper [x] x)\n(def pi 3.14)")
+        (spit f2 "(ns my.app)\n(defn main [] nil)\n(defn- private-fn [] nil)")
+        (let [table (clel/build-project-symbol-table
+                      [(.getAbsolutePath f1) (.getAbsolutePath f2)])]
+          ;; my.utils exports helper and pi
+          (is (contains? table 'my.utils))
+          (is (contains? (get table 'my.utils) 'helper))
+          (is (contains? (get table 'my.utils) 'pi))
+          ;; my.app exports main and private-fn (both are defs)
+          (is (contains? table 'my.app))
+          (is (contains? (get table 'my.app) 'main))
+          (is (contains? (get table 'my.app) 'private-fn)))
+        (finally
+          (.delete f1)
+          (.delete f2)))))
+
+  (testing "skips files without ns form"
+    (let [f1 (java.io.File/createTempFile "test-no-ns" ".cljel")]
+      (try
+        (spit f1 "(defn orphan [] nil)")
+        (let [table (clel/build-project-symbol-table
+                      [(.getAbsolutePath f1)])]
+          (is (empty? table)))
+        (finally
+          (.delete f1)))))
+
+  (testing "empty file produces empty table"
+    (let [f1 (java.io.File/createTempFile "test-empty" ".cljel")]
+      (try
+        (spit f1 "")
+        (let [table (clel/build-project-symbol-table
+                      [(.getAbsolutePath f1)])]
+          (is (empty? table)))
+        (finally
+          (.delete f1))))))
+
+(deftest cross-file-warning-test
+  (testing "warning emitted for missing symbol in known namespace"
+    (let [f1 (java.io.File/createTempFile "test-utils" ".cljel")
+          f2 (java.io.File/createTempFile "test-app" ".cljel")
+          out-dir (java.io.File/createTempFile "test-out" "")]
+      (try
+        ;; out-dir needs to be a directory
+        (.delete out-dir)
+        (.mkdirs out-dir)
+        (spit f1 "(ns my.utils)\n(defn helper [x] x)")
+        ;; my.app calls my.utils/nonexistent which doesn't exist
+        (spit f2 "(ns my.app (:require [my.utils :as u]))\n(defn main [] (u/nonexistent 42))")
+        (let [stderr-output (java.io.StringWriter.)
+              result (binding [*err* stderr-output]
+                       (clel/compile-project [(.getParent f1)] (.getAbsolutePath out-dir)))
+              warnings (str stderr-output)]
+          ;; Should produce a warning about nonexistent
+          (is (str/includes? warnings "WARNING"))
+          (is (str/includes? warnings "nonexistent"))
+          (is (str/includes? warnings "my.utils"))
+          ;; Compilation should still succeed (warning, not error)
+          (is (vector? result)))
+        (finally
+          (.delete f1)
+          (.delete f2)
+          ;; Clean up output directory
+          (doseq [f (file-seq out-dir)]
+            (.delete f))))))
+
+  (testing "no warning for symbols in external namespaces"
+    ;; When a namespace is NOT in *project-exports*, no warning should be emitted
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* {'my.utils #{'helper}}
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'ext 'external.lib})
+                *err* warnings]
+        ;; ext/something — external.lib is not in project-exports, so no warning
+        (ana/analyze 'ext/something))
+      (is (= "" (str warnings)))))
+
+  (testing "no warning when project-exports is nil (single-file mode)"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* nil
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'u 'my.utils})
+                *err* warnings]
+        (ana/analyze 'u/anything))
+      (is (= "" (str warnings))))))

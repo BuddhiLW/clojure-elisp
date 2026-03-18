@@ -547,13 +547,30 @@
                     [ns-name (set (filter local-nses deps))])
                   raw))))
 
+(defn build-project-symbol-table
+  "Build a project-wide symbol table by scanning all .cljel files.
+   Returns {ns-sym -> #{def-sym ...}} mapping each namespace to its exported symbols."
+  [file-paths]
+  (into {}
+        (for [path  file-paths
+              :let  [source (slurp path)
+                     preprocessed (preprocess-elisp-syntax source)
+                     forms (read-all-forms preprocessed)
+                     ns-name (extract-ns-name source)]
+              :when ns-name]
+          [ns-name (ana/scan-exports (rest forms))])))
+
 (defn compile-project
   "Compile all .cljel files under source-paths in dependency order.
    source-paths: vector of directories containing .cljel files.
    output-dir: directory for .el output files.
+   Pass 1: builds a project-wide symbol table from all files.
+   Pass 2: compiles each file with cross-file symbol checking enabled.
    Returns a vector of compilation results."
   [source-paths output-dir]
   (let [files    (discover-cljel-files source-paths)
+        ;; Pass 1: build project-wide symbol table
+        exports  (build-project-symbol-table files)
         ;; Map ns-name -> file-path
         ns->file (into {}
                        (for [path  files
@@ -565,13 +582,14 @@
         order    (topological-sort graph)]
     ;; Ensure output directory exists
     (.mkdirs (io/file output-dir))
-    ;; Compile in dependency order
-    (mapv (fn [ns-sym]
-            (when-let [input-path (get ns->file ns-sym)]
-              (let [output-name (str (emit/mangle-name ns-sym) ".el")
-                    output-path (str output-dir "/" output-name)]
-                (compile-file input-path output-path))))
-          order)))
+    ;; Pass 2: compile with symbol table available
+    (binding [ana/*project-exports* exports]
+      (mapv (fn [ns-sym]
+              (when-let [input-path (get ns->file ns-sym)]
+                (let [output-name (str (emit/mangle-name ns-sym) ".el")
+                      output-path (str output-dir "/" output-name)]
+                  (compile-file input-path output-path))))
+            order))))
 
 ;; ============================================================================
 ;; Self-Hosted Runtime Compilation
