@@ -1,0 +1,8 @@
+(ns my.app
+  (:require [my.utils :as u]))
+
+(defn main []
+  "Entry point — greet the user and compute a square."
+  (let [msg (u/greet "World")
+        val (u/square 7)]
+    (message "%s The square of 7 is %d" msg val)))

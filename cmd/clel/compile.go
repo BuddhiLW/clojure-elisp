@@ -14,17 +14,21 @@ var CompileCmd = &bonzai.Cmd{
 	Name:    "compile",
 	Alias:   "c",
 	Short:   "compile cljel files to elisp",
-	Usage:   "<file.cljel|dir/> [-o output]",
-	MinArgs: 1,
+	Usage:   "[file.cljel|dir/] [-o output]",
+	MinArgs: 0,
 	MaxArgs: 3,
 	Mcp: &bonzai.McpMeta{
-		Desc: "Compile ClojureElisp (.cljel) files to Emacs Lisp (.el)",
+		Desc: "Compile ClojureElisp (.cljel) files to Emacs Lisp (.el). With no args, uses clel.edn project config.",
 		Params: []bonzai.McpParam{
-			{Name: "input", Desc: "Input .cljel file or directory path", Type: "string", Required: true},
+			{Name: "input", Desc: "Input .cljel file or directory path (optional, uses clel.edn if omitted)", Type: "string"},
 			{Name: "output", Desc: "Output .el file or directory path", Type: "string"},
 		},
 	},
 	Do: func(x *bonzai.Cmd, args ...string) error {
+		if len(args) == 0 {
+			return compileFromConfig()
+		}
+
 		input := args[0]
 		output := parseOutputFlag(args[1:])
 
@@ -127,6 +131,54 @@ func compileDir(input, output string) error {
 		}
 	}
 	return nil
+}
+
+func findConfigFile() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting working directory: %w", err)
+	}
+
+	for {
+		candidate := filepath.Join(dir, "clel.edn")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return "", fmt.Errorf("no clel.edn found in current directory or any parent")
+}
+
+func compileFromConfig() error {
+	configPath, err := findConfigFile()
+	if err != nil {
+		return err
+	}
+
+	absConfig, err := filepath.Abs(configPath)
+	if err != nil {
+		return fmt.Errorf("resolving config path: %w", err)
+	}
+
+	fmt.Printf("Using project config: %s\n", absConfig)
+
+	// Prefer uberjar if available
+	if jar := findJar(); jar != "" {
+		return runJar(jar, []string{"compile-project", absConfig})
+	}
+
+	// Fallback: clojure -M -e
+	expr := fmt.Sprintf(
+		`(require '[clojure-elisp.core :as clel]) (let [results (clel/compile-project-from-config "%s")] (doseq [r results :when r] (println (str "Compiled " (:input r) " -> " (:output r) " (" (:size r) " chars)"))))`,
+		escapeCljString(absConfig),
+	)
+
+	return runClojure(expr)
 }
 
 func escapeCljString(s string) string {

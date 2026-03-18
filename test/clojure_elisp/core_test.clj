@@ -514,3 +514,131 @@
            (clel/ns-derived-output-name "(ns my.app)"))))
   (testing "returns nil for source without ns"
     (is (nil? (clel/ns-derived-output-name "(defn foo [x] x)")))))
+
+;; ============================================================================
+;; Project Descriptor - read-project-config (clel-module-001)
+;; ============================================================================
+
+(deftest read-project-config-valid-test
+  (testing "reads a fully-specified clel.edn"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:source-paths [\"src\" \"lib\"] :output-dir \"build\" :runtime :bundled}")
+        (let [config (clel/read-project-config (.getAbsolutePath config-file))]
+          (is (= ["src" "lib"] (:source-paths config)))
+          (is (= "build" (:output-dir config)))
+          (is (= :bundled (:runtime config))))
+        (finally
+          (.delete config-file))))))
+
+(deftest read-project-config-defaults-test
+  (testing "applies defaults for missing keys"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{}")
+        (let [config (clel/read-project-config (.getAbsolutePath config-file))]
+          (is (= ["src"] (:source-paths config)))
+          (is (= "out" (:output-dir config)))
+          (is (= :require (:runtime config))))
+        (finally
+          (.delete config-file)))))
+
+  (testing "applies defaults for partial config"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:output-dir \"dist\"}")
+        (let [config (clel/read-project-config (.getAbsolutePath config-file))]
+          (is (= ["src"] (:source-paths config)))
+          (is (= "dist" (:output-dir config)))
+          (is (= :require (:runtime config))))
+        (finally
+          (.delete config-file))))))
+
+(deftest read-project-config-validation-test
+  (testing "rejects non-map config"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "[:not :a :map]")
+        (is (thrown-with-msg? Exception #"must contain a map"
+                              (clel/read-project-config (.getAbsolutePath config-file))))
+        (finally
+          (.delete config-file)))))
+
+  (testing "rejects invalid :runtime value"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:runtime :invalid}")
+        (is (thrown-with-msg? Exception #":runtime must be"
+                              (clel/read-project-config (.getAbsolutePath config-file))))
+        (finally
+          (.delete config-file)))))
+
+  (testing "rejects invalid :source-paths type"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:source-paths \"not-a-vector\"}")
+        (is (thrown-with-msg? Exception #":source-paths must be"
+                              (clel/read-project-config (.getAbsolutePath config-file))))
+        (finally
+          (.delete config-file))))))
+
+;; ============================================================================
+;; Project Descriptor - compile-project-from-config (clel-module-001)
+;; ============================================================================
+
+(deftest compile-project-from-config-test
+  (testing "compiles a project from clel.edn config"
+    (let [project-dir (java.io.File/createTempFile "clel-project" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src" "my")
+          out-dir     (io/file project-dir "out")
+          config-file (io/file project-dir "clel.edn")]
+      (try
+        ;; Create source directory
+        (.mkdirs src-dir)
+        ;; Write config
+        (spit config-file "{:source-paths [\"src\"] :output-dir \"out\"}")
+        ;; Write source files
+        (spit (io/file src-dir "utils.cljel")
+              "(ns my.utils)\n(defn helper [x] (+ x 1))")
+        (spit (io/file src-dir "app.cljel")
+              "(ns my.app (:require [my.utils :as u]))\n(defn main [] (u/helper 42))")
+        ;; Compile
+        (let [results (clel/compile-project-from-config (.getAbsolutePath config-file))]
+          ;; Should compile both files
+          (is (= 2 (count (filter some? results))))
+          ;; Output directory should exist
+          (is (.exists out-dir))
+          ;; Output files should exist
+          (is (.exists (io/file out-dir "my-utils.el")))
+          (is (.exists (io/file out-dir "my-app.el")))
+          ;; Check content of compiled files
+          (let [utils-el (slurp (io/file out-dir "my-utils.el"))
+                app-el   (slurp (io/file out-dir "my-app.el"))]
+            (is (str/includes? utils-el "my-utils-helper"))
+            (is (str/includes? app-el "my-app-main"))))
+        (finally
+          ;; Cleanup recursively
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f))))))
+
+  (testing "compiles with :bundled runtime copies runtime file"
+    (let [project-dir (java.io.File/createTempFile "clel-project" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src")
+          out-dir     (io/file project-dir "out")
+          config-file (io/file project-dir "clel.edn")]
+      (try
+        (.mkdirs src-dir)
+        (spit config-file "{:source-paths [\"src\"] :output-dir \"out\" :runtime :bundled}")
+        (spit (io/file src-dir "hello.cljel")
+              "(ns hello)\n(defn greet [] \"hi\")")
+        (clel/compile-project-from-config (.getAbsolutePath config-file))
+        ;; Runtime should be bundled
+        (is (.exists (io/file out-dir "clojure-elisp-runtime.el")))
+        (finally
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f)))))))
+

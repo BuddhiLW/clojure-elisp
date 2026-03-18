@@ -1,0 +1,9 @@
+(ns my.utils)
+
+(defn greet [name]
+  "Return a greeting string for NAME."
+  (str "Hello, " name "!"))
+
+(defn square [x]
+  "Return X squared."
+  (* x x))

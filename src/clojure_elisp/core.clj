@@ -21,6 +21,7 @@
      (clel/compile-file-result in out)      ;; => {:ok {...}} or {:error ...}"
   (:require [clojure-elisp.analyzer :as ana]
             [clojure-elisp.emitter :as emit]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [hive-dsl.result :as r]))
@@ -572,6 +573,66 @@
                     output-path (str output-dir "/" output-name)]
                 (compile-file input-path output-path))))
           order)))
+
+;; ============================================================================
+;; Project Descriptor (clel.edn)
+;; ============================================================================
+
+(def ^:private default-project-config
+  "Default values for clel.edn project config."
+  {:source-paths ["src"]
+   :output-dir   "out"
+   :runtime      :require})
+
+(defn read-project-config
+  "Read a clel.edn project config file. Returns map with :source-paths, :output-dir, :runtime.
+   Missing keys are filled with defaults: {:source-paths [\"src\"], :output-dir \"out\", :runtime :require}."
+  [config-path]
+  (let [raw  (edn/read-string (slurp config-path))
+        _    (when-not (map? raw)
+               (throw (ex-info "clel.edn must contain a map"
+                               {:path config-path :value raw})))
+        config (merge default-project-config raw)]
+    ;; Validate known keys
+    (when-not (vector? (:source-paths config))
+      (throw (ex-info ":source-paths must be a vector of directory paths"
+                      {:path config-path :source-paths (:source-paths config)})))
+    (when-not (string? (:output-dir config))
+      (throw (ex-info ":output-dir must be a string"
+                      {:path config-path :output-dir (:output-dir config)})))
+    (when-not (#{:bundled :require} (:runtime config))
+      (throw (ex-info ":runtime must be :bundled or :require"
+                      {:path config-path :runtime (:runtime config)})))
+    config))
+
+(defn- bundle-runtime
+  "Copy the runtime .el file to the output directory."
+  [output-dir]
+  (let [runtime-resource (io/resource "clojure-elisp/clojure-elisp-runtime.el")
+        dest             (io/file output-dir "clojure-elisp-runtime.el")]
+    (when runtime-resource
+      (.mkdirs (io/file output-dir))
+      (spit dest (slurp runtime-resource))
+      {:runtime-output (.getAbsolutePath dest)})))
+
+(defn compile-project-from-config
+  "Compile a project using a clel.edn config file.
+   With no arguments, reads clel.edn from the current directory.
+   Resolves source-paths and output-dir relative to the config file's directory."
+  ([] (compile-project-from-config "clel.edn"))
+  ([config-path]
+   (let [config-file (io/file config-path)
+         base-dir    (.getParentFile (.getAbsoluteFile config-file))
+         config      (read-project-config config-path)
+         ;; Resolve paths relative to config file directory
+         source-paths (mapv #(.getAbsolutePath (io/file base-dir %))
+                            (:source-paths config))
+         output-dir   (.getAbsolutePath (io/file base-dir (:output-dir config)))
+         results      (compile-project source-paths output-dir)]
+     ;; Bundle runtime if requested
+     (when (= :bundled (:runtime config))
+       (bundle-runtime output-dir))
+     results)))
 
 ;; ============================================================================
 ;; Self-Hosted Runtime Compilation
