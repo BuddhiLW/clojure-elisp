@@ -1541,8 +1541,12 @@
       (analyzer form)
       ;; Check ClojureElisp macro registry before treating as invoke
       (if-let [macro-fn (when (symbol? op) (get-macro op))]
-        (let [expanded (apply macro-fn (rest form))]
-          (analyze expanded))
+        (try
+          (let [expanded (apply macro-fn (rest form))]
+            (analyze expanded))
+          (catch Exception _
+            ;; Macro expansion failed (arity mismatch, etc.) — treat as regular invocation
+            (analyze-invoke form)))
         (analyze-invoke form)))))
 
 (defn analyze
