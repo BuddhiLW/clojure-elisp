@@ -98,6 +98,8 @@ Clojure core functions mapped to Elisp equivalents:
 
 - 3-stage pipeline: Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen)
 - Source location tracking with optional `;;; L<line>:C<col>` comments
+- Incremental compilation with mtime tracking (`.clel-cache/manifest.edn`)
+- Cross-file symbol table with compile-time warnings for missing symbols
 - Dependency-aware project compilation with topological sort
 - Name mangling: `valid?` → `valid-p`, `reset!` → `reset-bang`, `my.ns/foo` → `my-ns-foo`
 
@@ -121,30 +123,36 @@ Clojure core functions mapped to Elisp equivalents:
 
 ## Installation
 
-### Standalone Compiler (Uberjar)
+### Via bbin (recommended)
 
-Download the latest `clel-<version>.jar` from [GitHub Releases](https://github.com/BuddhiLW/clojure-elisp/releases), then:
+Install the `clel` CLI with [bbin](https://github.com/babashka/bbin):
 
 ```bash
-# Install to standard location
-mkdir -p ~/.local/lib
-cp clel-0.3.1.jar ~/.local/lib/clel.jar
-
-# Compile a file
-java -jar ~/.local/lib/clel.jar compile src/my_app.cljel -o out/my-app.el
-
-# Compile a directory
-java -jar ~/.local/lib/clel.jar compile src/ -o out/
-
-# Check version
-java -jar ~/.local/lib/clel.jar version
+bbin install io.github.BuddhiLW/clojure-elisp
 ```
 
-The Go CLI (`clel`) automatically detects the jar at `~/.local/lib/clel.jar` or via the `CLEL_JAR` env var, removing the need for a local repo clone:
+This gives you the `clel` command globally. Requires [Babashka](https://github.com/babashka/babashka) and the uberjar (see below).
+
+### Uberjar
+
+The CLI delegates compilation to a JVM uberjar. Download from [GitHub Releases](https://github.com/BuddhiLW/clojure-elisp/releases) or build from source:
 
 ```bash
-# Uses jar if found, falls back to clojure -M -e
-clel compile src/my_app.cljel -o out/my-app.el
+# Build and install
+make build install
+# => ~/.local/lib/clel.jar
+```
+
+The CLI auto-detects the jar at `~/.local/lib/clel.jar` or via `$CLEL_JAR`. If no jar is found, it falls back to `clojure -M -e`.
+
+### CLI Usage
+
+```bash
+clel compile                            # Compile project from clel.edn
+clel compile src/my_app.cljel -o out/   # Compile a single file
+clel compile src/ -o out/               # Compile a directory
+clel watch src/ -o out/                 # Watch and recompile on changes
+clel version                            # Print version
 ```
 
 ### Runtime (Emacs Package)
@@ -166,7 +174,7 @@ cp resources/clojure-elisp/clojure-elisp-runtime.el ~/.emacs.d/site-lisp/
 ```bash
 # Build uberjar
 clojure -T:build uber
-# => target/clel-0.3.1.jar
+# => target/clel-<version>.jar
 ```
 
 ## Development
@@ -175,7 +183,7 @@ clojure -T:build uber
 # Start REPL with dev dependencies (nREPL, CIDER)
 clojure -M:dev
 
-# Run tests (Kaocha — 350 tests, 2100 assertions)
+# Run tests (Kaocha — 427 tests, 2398 assertions)
 clojure -M:test
 
 # Build uberjar
