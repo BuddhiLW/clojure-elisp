@@ -178,12 +178,14 @@
   (println "  compile                          Compile from clel.edn project config")
   (println "  compile <file.cljel> [-o out.el] Compile a single file")
   (println "  compile <dir/> [-o outdir/]      Compile all .cljel files in directory")
+  (println "  watch <dir/> [-o outdir/]        Watch and recompile on changes")
   (println "  version                          Print version")
   (println)
   (println "Examples:")
   (println "  clel compile")
   (println "  clel compile src/my_app.cljel -o out/my-app.el")
-  (println "  clel compile src/ -o out/"))
+  (println "  clel compile src/ -o out/")
+  (println "  clel watch src/ -o out/"))
 
 ;; ---------------------------------------------------------------------------
 ;; Main
@@ -204,6 +206,15 @@
             (if (fs/directory? input)
               (compile-dir input output)
               (compile-file input output))))
+
+        ("watch" "w")
+        (if (empty? rest-args)
+          (die 1 "Error: watch requires a directory argument")
+          (let [dir    (first rest-args)
+                output (parse-output-flag (rest rest-args))]
+            (require 'clel.watch)
+            ((resolve 'clel.watch/watch-and-compile)
+             dir output compile-file)))
 
         ("version" "v")
         (println (str "clel " (read-version)))
