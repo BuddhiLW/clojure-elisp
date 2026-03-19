@@ -20,6 +20,13 @@
 (require 'cl-lib)
 (require 'seq)
 
+;; Elisp-2 compatibility: defvars bridge function-slot names to value-slot.
+;; CLJEL-compiled defmacro bodies reference these at macro-expansion time.
+(defvar clojure-core-vector #'vector
+  "Function-slot bridge for `vector' (Elisp-2 compatibility).")
+(defvar clojure-core-list #'list
+  "Function-slot bridge for `list' (Elisp-2 compatibility).")
+
 (defun clel-vector (&rest args)
   (let ((items (nthcdr 0 args)))
     "Create a vector from ITEMS."
