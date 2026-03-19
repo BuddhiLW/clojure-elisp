@@ -26,6 +26,9 @@ out/
 /clel
 cmd/clel/clel
 
+# Incremental compilation cache
+.clel-cache/
+
 # OS
 .DS_Store
 Thumbs.db

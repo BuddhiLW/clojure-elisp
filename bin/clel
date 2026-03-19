@@ -1,0 +1,4 @@
+#!/usr/bin/env bb
+
+(require 'clel.main)
+(apply clel.main/-main *command-line-args*)

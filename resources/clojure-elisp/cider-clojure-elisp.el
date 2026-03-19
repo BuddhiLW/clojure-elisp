@@ -4,7 +4,7 @@
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.4.0
+;; Version: 0.4.1
 ;; Package-Requires: ((emacs "28.1") (cider "1.0"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT

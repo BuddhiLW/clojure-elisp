@@ -24,6 +24,11 @@
   "Current source location context {:line N :column N}, or nil."
   nil)
 
+(def ^:dynamic *project-exports*
+  "Map of {ns-symbol -> #{exported-symbol ...}} for cross-file symbol checking.
+   Populated during project-level compilation. nil when compiling single files."
+  nil)
+
 (defn with-locals
   "Add locals to the environment."
   [env locals]
@@ -328,27 +333,39 @@
      clojure.string                    -> {:ns clojure.string}
      [clojure.string]                  -> {:ns clojure.string}
      [clojure.string :as str]          -> {:ns clojure.string :as str}
-     [clojure.string :refer [join]]    -> {:ns clojure.string :refer [join]}"
+     [clojure.string :refer [join]]    -> {:ns clojure.string :refer [join]}
+     [clojure.string :refer :all]      -> {:ns clojure.string :refer :all}"
   [spec]
   (if (vector? spec)
     (let [[ns-name & opts] spec
-          opts-map         (apply hash-map opts)]
+          opts-map         (apply hash-map opts)
+          refer-val        (:refer opts-map)]
       {:ns ns-name
        :as (:as opts-map)
-       :refer (:refer opts-map)})
+       :refer (if (= :all refer-val) :all refer-val)})
     {:ns spec}))
 
 (defn build-ns-env
   "Build environment entries from parsed require specs.
-   Returns a map with :aliases and :refers suitable for merging into *env*."
+   Returns a map with :aliases and :refers suitable for merging into *env*.
+   When :refer is :all and *project-exports* contains the namespace,
+   expands to all exported symbols from that namespace."
   [requires]
   (let [aliases (into {} (for [{:keys [ns as]} requires
                                :when           as]
                            [as ns]))
-        refers  (into {} (for [{:keys [ns refer]} requires
-                               :when              refer
-                               sym                refer]
-                           [sym ns]))]
+        refers  (into {}
+                      (for [{:keys [ns refer]} requires
+                            :when              refer
+                            sym                (if (= :all refer)
+                                                ;; Expand :all from project-exports if available
+                                                (if-let [exports (when *project-exports*
+                                                                   (get *project-exports* ns))]
+                                                  exports
+                                                  ;; Single-file mode or unknown namespace: no expansion
+                                                  [])
+                                                refer)]
+                        [sym ns]))]
     {:aliases aliases
      :refers refers}))
 
@@ -1481,11 +1498,26 @@
       (and sym-ns-str
            (get (:aliases *env*) (symbol sym-ns-str)))
       (let [resolved-ns (get (:aliases *env*) (symbol sym-ns-str))]
+        (when (and *project-exports*
+                   (contains? *project-exports* resolved-ns)
+                   (not (contains? (get *project-exports* resolved-ns) sym-name)))
+          (binding [*out* *err*]
+            (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
+                          (when *source-context*
+                            (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
         (ast-node :var :name sym-name :ns resolved-ns))
 
       ;; Already qualified symbol: clojure.string/join
       sym-ns-str
-      (ast-node :var :name sym-name :ns (symbol sym-ns-str))
+      (let [resolved-ns (symbol sym-ns-str)]
+        (when (and *project-exports*
+                   (contains? *project-exports* resolved-ns)
+                   (not (contains? (get *project-exports* resolved-ns) sym-name)))
+          (binding [*out* *err*]
+            (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
+                          (when *source-context*
+                            (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
+        (ast-node :var :name sym-name :ns resolved-ns))
 
       ;; Referred symbol: join -> clojure.string/join
       (get (:refers *env*) form)
@@ -1590,6 +1622,11 @@
               :let [head (first form)]
               :when (#{'defn 'defn- 'def} head)]
           [(second form) {:private? (= head 'defn-)}])))
+
+(defn scan-exports
+  "Public API for scanning top-level defs from forms. Returns set of defined symbols."
+  [forms]
+  (set (keys (pre-scan-defs forms))))
 
 (defn analyze-file-forms
   "Analyze a sequence of forms as they appear in a file.

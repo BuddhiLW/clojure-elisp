@@ -3,6 +3,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure-elisp.core :as clel]
             [clojure-elisp.analyzer :as ana]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]))
 
@@ -514,3 +515,428 @@
            (clel/ns-derived-output-name "(ns my.app)"))))
   (testing "returns nil for source without ns"
     (is (nil? (clel/ns-derived-output-name "(defn foo [x] x)")))))
+
+;; ============================================================================
+;; Project Descriptor - read-project-config (clel-module-001)
+;; ============================================================================
+
+(deftest read-project-config-valid-test
+  (testing "reads a fully-specified clel.edn"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:source-paths [\"src\" \"lib\"] :output-dir \"build\" :runtime :bundled}")
+        (let [config (clel/read-project-config (.getAbsolutePath config-file))]
+          (is (= ["src" "lib"] (:source-paths config)))
+          (is (= "build" (:output-dir config)))
+          (is (= :bundled (:runtime config))))
+        (finally
+          (.delete config-file))))))
+
+(deftest read-project-config-defaults-test
+  (testing "applies defaults for missing keys"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{}")
+        (let [config (clel/read-project-config (.getAbsolutePath config-file))]
+          (is (= ["src"] (:source-paths config)))
+          (is (= "out" (:output-dir config)))
+          (is (= :require (:runtime config))))
+        (finally
+          (.delete config-file)))))
+
+  (testing "applies defaults for partial config"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:output-dir \"dist\"}")
+        (let [config (clel/read-project-config (.getAbsolutePath config-file))]
+          (is (= ["src"] (:source-paths config)))
+          (is (= "dist" (:output-dir config)))
+          (is (= :require (:runtime config))))
+        (finally
+          (.delete config-file))))))
+
+(deftest read-project-config-validation-test
+  (testing "rejects non-map config"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "[:not :a :map]")
+        (is (thrown-with-msg? Exception #"must contain a map"
+                              (clel/read-project-config (.getAbsolutePath config-file))))
+        (finally
+          (.delete config-file)))))
+
+  (testing "rejects invalid :runtime value"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:runtime :invalid}")
+        (is (thrown-with-msg? Exception #":runtime must be"
+                              (clel/read-project-config (.getAbsolutePath config-file))))
+        (finally
+          (.delete config-file)))))
+
+  (testing "rejects invalid :source-paths type"
+    (let [config-file (java.io.File/createTempFile "clel" ".edn")]
+      (try
+        (spit config-file "{:source-paths \"not-a-vector\"}")
+        (is (thrown-with-msg? Exception #":source-paths must be"
+                              (clel/read-project-config (.getAbsolutePath config-file))))
+        (finally
+          (.delete config-file))))))
+
+;; ============================================================================
+;; Project Descriptor - compile-project-from-config (clel-module-001)
+;; ============================================================================
+
+(deftest compile-project-from-config-test
+  (testing "compiles a project from clel.edn config"
+    (let [project-dir (java.io.File/createTempFile "clel-project" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src" "my")
+          out-dir     (io/file project-dir "out")
+          config-file (io/file project-dir "clel.edn")]
+      (try
+        ;; Create source directory
+        (.mkdirs src-dir)
+        ;; Write config
+        (spit config-file "{:source-paths [\"src\"] :output-dir \"out\"}")
+        ;; Write source files
+        (spit (io/file src-dir "utils.cljel")
+              "(ns my.utils)\n(defn helper [x] (+ x 1))")
+        (spit (io/file src-dir "app.cljel")
+              "(ns my.app (:require [my.utils :as u]))\n(defn main [] (u/helper 42))")
+        ;; Compile
+        (let [results (clel/compile-project-from-config (.getAbsolutePath config-file))]
+          ;; Should compile both files
+          (is (= 2 (count (filter some? results))))
+          ;; Output directory should exist
+          (is (.exists out-dir))
+          ;; Output files should exist
+          (is (.exists (io/file out-dir "my-utils.el")))
+          (is (.exists (io/file out-dir "my-app.el")))
+          ;; Check content of compiled files
+          (let [utils-el (slurp (io/file out-dir "my-utils.el"))
+                app-el   (slurp (io/file out-dir "my-app.el"))]
+            (is (str/includes? utils-el "my-utils-helper"))
+            (is (str/includes? app-el "my-app-main"))))
+        (finally
+          ;; Cleanup recursively
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f))))))
+
+  (testing "compiles with :bundled runtime copies runtime file"
+    (let [project-dir (java.io.File/createTempFile "clel-project" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src")
+          out-dir     (io/file project-dir "out")
+          config-file (io/file project-dir "clel.edn")]
+      (try
+        (.mkdirs src-dir)
+        (spit config-file "{:source-paths [\"src\"] :output-dir \"out\" :runtime :bundled}")
+        (spit (io/file src-dir "hello.cljel")
+              "(ns hello)\n(defn greet [] \"hi\")")
+        (clel/compile-project-from-config (.getAbsolutePath config-file))
+        ;; Runtime should be bundled
+        (is (.exists (io/file out-dir "clojure-elisp-runtime.el")))
+        (finally
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f)))))))
+
+;; ============================================================================
+;; Cross-File Symbol Table (clel-module-002)
+;; ============================================================================
+
+(deftest build-project-symbol-table-test
+  (testing "scans defs from temp files"
+    (let [f1 (java.io.File/createTempFile "test-a" ".cljel")
+          f2 (java.io.File/createTempFile "test-b" ".cljel")]
+      (try
+        (spit f1 "(ns my.utils)\n(defn helper [x] x)\n(def pi 3.14)")
+        (spit f2 "(ns my.app)\n(defn main [] nil)\n(defn- private-fn [] nil)")
+        (let [table (clel/build-project-symbol-table
+                      [(.getAbsolutePath f1) (.getAbsolutePath f2)])]
+          ;; my.utils exports helper and pi
+          (is (contains? table 'my.utils))
+          (is (contains? (get table 'my.utils) 'helper))
+          (is (contains? (get table 'my.utils) 'pi))
+          ;; my.app exports main and private-fn (both are defs)
+          (is (contains? table 'my.app))
+          (is (contains? (get table 'my.app) 'main))
+          (is (contains? (get table 'my.app) 'private-fn)))
+        (finally
+          (.delete f1)
+          (.delete f2)))))
+
+  (testing "skips files without ns form"
+    (let [f1 (java.io.File/createTempFile "test-no-ns" ".cljel")]
+      (try
+        (spit f1 "(defn orphan [] nil)")
+        (let [table (clel/build-project-symbol-table
+                      [(.getAbsolutePath f1)])]
+          (is (empty? table)))
+        (finally
+          (.delete f1)))))
+
+  (testing "empty file produces empty table"
+    (let [f1 (java.io.File/createTempFile "test-empty" ".cljel")]
+      (try
+        (spit f1 "")
+        (let [table (clel/build-project-symbol-table
+                      [(.getAbsolutePath f1)])]
+          (is (empty? table)))
+        (finally
+          (.delete f1))))))
+
+(deftest cross-file-warning-test
+  (testing "warning emitted for missing symbol in known namespace"
+    (let [f1 (java.io.File/createTempFile "test-utils" ".cljel")
+          f2 (java.io.File/createTempFile "test-app" ".cljel")
+          out-dir (java.io.File/createTempFile "test-out" "")]
+      (try
+        ;; out-dir needs to be a directory
+        (.delete out-dir)
+        (.mkdirs out-dir)
+        (spit f1 "(ns my.utils)\n(defn helper [x] x)")
+        ;; my.app calls my.utils/nonexistent which doesn't exist
+        (spit f2 "(ns my.app (:require [my.utils :as u]))\n(defn main [] (u/nonexistent 42))")
+        (let [stderr-output (java.io.StringWriter.)
+              result (binding [*err* stderr-output]
+                       (clel/compile-project [(.getParent f1)] (.getAbsolutePath out-dir)))
+              warnings (str stderr-output)]
+          ;; Should produce a warning about nonexistent
+          (is (str/includes? warnings "WARNING"))
+          (is (str/includes? warnings "nonexistent"))
+          (is (str/includes? warnings "my.utils"))
+          ;; Compilation should still succeed (warning, not error)
+          (is (vector? result)))
+        (finally
+          (.delete f1)
+          (.delete f2)
+          ;; Clean up output directory
+          (doseq [f (file-seq out-dir)]
+            (.delete f))))))
+
+  (testing "no warning for symbols in external namespaces"
+    ;; When a namespace is NOT in *project-exports*, no warning should be emitted
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* {'my.utils #{'helper}}
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'ext 'external.lib})
+                *err* warnings]
+        ;; ext/something — external.lib is not in project-exports, so no warning
+        (ana/analyze 'ext/something))
+      (is (= "" (str warnings)))))
+
+  (testing "no warning when project-exports is nil (single-file mode)"
+    (let [warnings (java.io.StringWriter.)]
+      (binding [ana/*project-exports* nil
+                ana/*env* (assoc ana/*env*
+                                 :aliases {'u 'my.utils})
+                *err* warnings]
+        (ana/analyze 'u/anything))
+      (is (= "" (str warnings))))))
+
+;; ============================================================================
+;; :refer :all - Wildcard Imports (clel-module-003)
+;; ============================================================================
+
+(deftest refer-all-project-compilation-test
+  (testing "compile-project resolves :refer :all symbols correctly"
+    (let [project-dir (java.io.File/createTempFile "clel-refer-all" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src" "my")
+          out-dir     (io/file project-dir "out")]
+      (try
+        (.mkdirs src-dir)
+        ;; utils.cljel exports helper and pi
+        (spit (io/file src-dir "utils.cljel")
+              "(ns my.utils)\n(defn helper [x] (+ x 1))\n(def pi 3.14)")
+        ;; app.cljel uses :refer :all to import everything from my.utils
+        (spit (io/file src-dir "app.cljel")
+              "(ns my.app (:require [my.utils :refer :all]))\n(defn main [] (helper pi))")
+        (let [results (clel/compile-project [(.getAbsolutePath (io/file project-dir "src"))]
+                                            (.getAbsolutePath out-dir))]
+          ;; Both files should compile
+          (is (= 2 (count (filter some? results))))
+          ;; Check that referred symbols resolve correctly in the output
+          (let [app-el (slurp (io/file out-dir "my-app.el"))]
+            ;; helper should resolve to my-utils-helper (namespace-prefixed)
+            (is (str/includes? app-el "my-utils-helper"))
+            ;; pi should resolve to my-utils-pi (namespace-prefixed)
+            (is (str/includes? app-el "my-utils-pi"))))
+        (finally
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f))))))
+
+  (testing ":refer :all with :as alias both work together"
+    (let [project-dir (java.io.File/createTempFile "clel-refer-all-as" "")
+          _           (.delete project-dir)
+          _           (.mkdirs project-dir)
+          src-dir     (io/file project-dir "src" "my")
+          out-dir     (io/file project-dir "out")]
+      (try
+        (.mkdirs src-dir)
+        (spit (io/file src-dir "utils.cljel")
+              "(ns my.utils)\n(defn helper [x] (+ x 1))")
+        ;; Use both :as and :refer :all
+        (spit (io/file src-dir "app.cljel")
+              "(ns my.app (:require [my.utils :as u :refer :all]))\n(defn main [] (helper 1))\n(defn other [] (u/helper 2))")
+        (let [results (clel/compile-project [(.getAbsolutePath (io/file project-dir "src"))]
+                                            (.getAbsolutePath out-dir))]
+          (is (= 2 (count (filter some? results))))
+          (let [app-el (slurp (io/file out-dir "my-app.el"))]
+            ;; Both unqualified (via :refer :all) and qualified (via :as) should resolve
+            (is (str/includes? app-el "my-utils-helper"))))
+        (finally
+          (doseq [f (reverse (file-seq project-dir))]
+            (.delete f)))))))
+
+(deftest refer-all-single-file-graceful-test
+  (testing ":refer :all in single-file mode compiles without error"
+    ;; compile-file-string doesn't set *project-exports*, so :refer :all
+    ;; should be a no-op — symbols just won't resolve to a namespace
+    (let [result (clel/compile-file-string
+                   "(ns my.app (:require [my.utils :refer :all]))\n(defn main [] (helper 42))")]
+      (is (string? result))
+      ;; helper should appear in output (unresolved, so no namespace prefix)
+      (is (str/includes? result "helper")))))
+
+;; ============================================================================
+;; Incremental Compilation (clel-module-004)
+;; ============================================================================
+
+(defn- make-test-project
+  "Create a temporary project directory with source files for incremental tests.
+   Returns {:project-dir :src-dir :out-dir :utils-file :app-file}."
+  []
+  (let [project-dir (java.io.File/createTempFile "clel-incr" "")
+        _           (.delete project-dir)
+        _           (.mkdirs project-dir)
+        src-dir     (io/file project-dir "src" "my")
+        out-dir     (io/file project-dir "out")]
+    (.mkdirs src-dir)
+    (let [utils-file (io/file src-dir "utils.cljel")
+          app-file   (io/file src-dir "app.cljel")]
+      (spit utils-file "(ns my.utils)\n(defn helper [x] (+ x 1))")
+      (spit app-file   "(ns my.app (:require [my.utils :as u]))\n(defn main [] (u/helper 42))")
+      {:project-dir project-dir
+       :src-dir     (.getAbsolutePath (io/file project-dir "src"))
+       :out-dir     (.getAbsolutePath out-dir)
+       :utils-file  utils-file
+       :app-file    app-file})))
+
+(defn- cleanup-test-project [project-dir]
+  (doseq [f (reverse (file-seq project-dir))]
+    (.delete f)))
+
+(deftest incremental-fresh-compile-writes-manifest-test
+  (testing "fresh compile writes manifest with correct structure"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        (clel/compile-project [src-dir] out-dir)
+        ;; Manifest should exist
+        (let [manifest-file (io/file out-dir ".clel-cache" "manifest.edn")]
+          (is (.exists manifest-file))
+          ;; Read and verify structure
+          (let [manifest (edn/read-string (slurp manifest-file))]
+            (is (= 1 (:version manifest)))
+            (is (map? (:files manifest)))
+            (is (contains? (:files manifest) 'my.utils))
+            (is (contains? (:files manifest) 'my.app))
+            ;; Check entry structure
+            (let [utils-entry (get-in manifest [:files 'my.utils])]
+              (is (string? (:source-path utils-entry)))
+              (is (number? (:source-mtime utils-entry)))
+              (is (string? (:output-path utils-entry)))
+              (is (number? (:output-mtime utils-entry)))
+              (is (set? (:deps utils-entry))))))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-skip-unchanged-test
+  (testing "second compile without changes returns cached results"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Second compile — no changes
+        (let [results (clel/compile-project [src-dir] out-dir)]
+          ;; All results should be cached
+          (is (every? #(or (nil? %) (:cached %)) results))
+          (is (some :cached results)))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-source-change-triggers-recompile-test
+  (testing "touching source file triggers recompilation"
+    (let [{:keys [project-dir src-dir out-dir utils-file]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Wait a moment for mtime granularity, then modify source
+        (Thread/sleep 50)
+        (spit utils-file "(ns my.utils)\n(defn helper [x] (+ x 2))")
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)
+              non-nil (filter some? results)]
+          ;; At least one result should have :size (was recompiled)
+          (is (some :size non-nil)))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-dependency-propagation-test
+  (testing "changing a dependency triggers recompilation of dependents"
+    (let [{:keys [project-dir src-dir out-dir utils-file]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Modify utils (which app depends on)
+        (Thread/sleep 50)
+        (spit utils-file "(ns my.utils)\n(defn helper [x] (+ x 99))")
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)
+              non-nil (filter some? results)
+              recompiled (filter :size non-nil)]
+          ;; Both utils AND app should be recompiled (app depends on utils)
+          (is (= 2 (count recompiled))))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-new-file-detection-test
+  (testing "adding a new file triggers its compilation"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Add a new file
+        (let [new-file (io/file (.getParentFile (io/file src-dir)) "src" "my" "extra.cljel")]
+          (spit new-file "(ns my.extra)\n(defn bonus [] 42)"))
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)
+              non-nil (filter some? results)]
+          ;; New file should be compiled (has :size)
+          (is (some :size non-nil))
+          ;; Output file should exist
+          (is (.exists (io/file out-dir "my-extra.el"))))
+        (finally
+          (cleanup-test-project project-dir))))))
+
+(deftest incremental-deleted-output-triggers-recompile-test
+  (testing "deleting an output file triggers recompilation"
+    (let [{:keys [project-dir src-dir out-dir]} (make-test-project)]
+      (try
+        ;; First compile
+        (clel/compile-project [src-dir] out-dir)
+        ;; Delete one output file
+        (.delete (io/file out-dir "my-utils.el"))
+        (is (not (.exists (io/file out-dir "my-utils.el"))))
+        ;; Second compile
+        (let [results (clel/compile-project [src-dir] out-dir)]
+          ;; utils should be recompiled — output should exist again
+          (is (.exists (io/file out-dir "my-utils.el")))
+          ;; At least one result should have :size (was recompiled)
+          (is (some #(and (some? %) (:size %)) results)))
+        (finally
+          (cleanup-test-project project-dir))))))

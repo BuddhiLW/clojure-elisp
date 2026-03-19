@@ -1,0 +1,3 @@
+{:paths ["bb"]
+ :deps {}
+ :bbin/bin {clel {:main-opts ["-m" "clel.main"]}}}
