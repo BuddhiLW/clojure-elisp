@@ -45,12 +45,16 @@
   "Expand a ClojureElisp macro form by one step.
    If the form is a list whose first element is a registered macro,
    applies the macro fn and returns the result. Otherwise returns
-   the form unchanged."
+   the form unchanged. On expansion failure (e.g. arity mismatch),
+   returns the form unchanged."
   [form]
   (if (and (seq? form)
            (symbol? (first form)))
     (if-let [macro-fn (get-macro (first form))]
-      (apply macro-fn (rest form))
+      (try
+        (apply macro-fn (rest form))
+        (catch Exception _
+          form))
       form)
     form))
 

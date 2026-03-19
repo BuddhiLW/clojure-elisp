@@ -1,4 +1,4 @@
-JAR_VERSION := 0.4.1
+JAR_VERSION := 0.4.2
 JAR_NAME    := clel-$(JAR_VERSION).jar
 TARGET_JAR  := target/$(JAR_NAME)
 INSTALL_DIR := $(HOME)/.local/lib

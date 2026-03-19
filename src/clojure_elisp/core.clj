@@ -639,6 +639,7 @@
     (let [results
           (binding [ana/*project-exports* exports]
             (mapv (fn [ns-sym]
+                    (ana/clear-macros!)  ;; Reset macro registry for each file
                     (when-let [input-path (get ns->file ns-sym)]
                       (let [output-name (str (emit/mangle-name ns-sym) ".el")
                             output-path (str output-dir "/" output-name)]
