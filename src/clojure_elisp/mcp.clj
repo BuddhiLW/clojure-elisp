@@ -189,9 +189,8 @@
 
       "analyze"
       (let [code (get arguments "code")
-            forms (clel/read-all-forms code)
-            asts (binding [ana/*env* (ana/empty-env)]
-                   (mapv ana/analyze forms))]
+            forms (read-string (str "[" code "]"))
+            asts (mapv ana/analyze forms)]
         [{"type" "text" "text" (pr-str asts)}])
 
       ;; unknown tool

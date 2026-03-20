@@ -6,7 +6,7 @@ JAR_NAME    := clel-$(JAR_VERSION).jar
 TARGET_JAR  := target/$(JAR_NAME)
 INSTALL_DIR := $(HOME)/.local/lib
 INSTALL_JAR := $(INSTALL_DIR)/clel.jar
-BIN_DIR     := $(HOME)/.local/bin
+BIN_DIR     := $(HOME)/.local/bin/blw
 BIN_LINK    := $(BIN_DIR)/clel
 
 .PHONY: build install uninstall test clean
