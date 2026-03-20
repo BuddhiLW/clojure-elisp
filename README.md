@@ -118,6 +118,9 @@ Clojure core functions mapped to Elisp equivalents:
 | Emitter | `src/clojure_elisp/emitter.clj` | AST nodes → Elisp source strings |
 | Core | `src/clojure_elisp/core.clj` | Public API, file/project compilation, dependency resolution |
 | Runtime | `resources/clojure-elisp/clojure-elisp-runtime.el` | 55+ Elisp functions implementing Clojure semantics |
+| MCP Server | `src/clojure_elisp/mcp.clj` | MCP stdio server exposing compiler as AI tools |
+| CLI | `src/clojure_elisp/cli.clj` | JVM uberjar entry point (compile, mcp, version) |
+| BB CLI | `bb/clel/main.clj` | Babashka CLI frontend (delegates to uberjar) |
 | Emacs mode | `resources/clojure-elisp/clojure-elisp-mode.el` | Major mode for `.cljel` files |
 | CIDER | `resources/clojure-elisp/cider-clojure-elisp.el` | nREPL middleware for CIDER integration |
 
@@ -152,6 +155,7 @@ clel compile                            # Compile project from clel.edn
 clel compile src/my_app.cljel -o out/   # Compile a single file
 clel compile src/ -o out/               # Compile a directory
 clel watch src/ -o out/                 # Watch and recompile on changes
+clel mcp                                # Start MCP stdio server
 clel version                            # Print version
 ```
 
@@ -183,7 +187,7 @@ clojure -T:build uber
 # Start REPL with dev dependencies (nREPL, CIDER)
 clojure -M:dev
 
-# Run tests (Kaocha — 427 tests, 2398 assertions)
+# Run tests (Kaocha — 500 tests, 2588 assertions)
 clojure -M:test
 
 # Build uberjar
