@@ -22,9 +22,6 @@ out/
 .lsp/
 .clj-kondo/
 
-# Binaries
-/clel
-cmd/clel/clel
 
 # Incremental compilation cache
 .clel-cache/

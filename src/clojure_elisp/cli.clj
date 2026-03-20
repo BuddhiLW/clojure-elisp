@@ -2,6 +2,7 @@
   "Command-line interface for the ClojureElisp compiler.
    Entry point for the standalone uberjar distribution."
   (:require [clojure-elisp.core :as clel]
+            [clojure-elisp.mcp :as mcp]
             [clojure.string :as str])
   (:gen-class))
 
@@ -16,6 +17,7 @@
   (println "Commands:")
   (println "  compile <file.cljel> [-o output.el]    Compile a single file")
   (println "  compile <dir/> [-o outdir/]             Compile all .cljel files in directory")
+  (println "  mcp                                     Start MCP stdio server")
   (println "  version                                 Print version")
   (println)
   (println "Examples:")
@@ -93,6 +95,9 @@
           (if dir?
             (compile-dir-cmd input output)
             (compile-file-cmd input output))))
+
+      "mcp"
+      (mcp/start-server)
 
       "version"
       (println (str "clojure-elisp " version))
