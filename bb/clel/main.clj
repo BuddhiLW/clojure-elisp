@@ -177,6 +177,7 @@
   (println "  compile <file.cljel> [-o out.el] Compile a single file")
   (println "  compile <dir/> [-o outdir/]      Compile all .cljel files in directory")
   (println "  watch <dir/> [-o outdir/]        Watch and recompile on changes")
+  (println "  mcp                              Start MCP stdio server")
   (println "  version                          Print version")
   (println)
   (println "Examples:")
@@ -213,6 +214,11 @@
             (require 'clel.watch)
             ((resolve 'clel.watch/watch-and-compile)
              dir output compile-file)))
+
+        "mcp"
+        (if-let [jar (find-jar)]
+          (run-jar jar "mcp")
+          (die 1 "MCP server requires the uberjar. Run: make build install"))
 
         ("version" "v")
         (println (str "clel " (read-version)))
