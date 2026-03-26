@@ -144,7 +144,7 @@
   "Return the last element of COLL.\nUnlike Elisp `last' which returns a cons cell, this returns the element itself."
   (cond
   ((null coll) nil)
-  ((listp coll) (car (clel-last coll)))
+  ((listp coll) (car (last coll)))
   ((vectorp coll) (when (> (length coll) 0) (aref coll (1- (length coll)))))
   (t nil)))
 
