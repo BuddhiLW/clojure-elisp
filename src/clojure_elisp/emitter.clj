@@ -569,6 +569,9 @@
         clause-strs (map (fn [{:keys [pattern body]}]
                            (let [;; Emit pattern - pass through raw for elisp patterns
                                  pat-str (cond
+                                           ;; Wildcard _ must be checked before symbol? — it's the
+                                           ;; pcase catch-all and must emit as bare _, not quoted '_
+                                           (= pattern '_) "_"
                                            (symbol? pattern) (str "'" (name pattern))
                                            (keyword? pattern) (str "'" (name pattern))
                                            (string? pattern) (pr-str pattern)
@@ -576,7 +579,6 @@
                                            ;; For list patterns like (or 'nil 'staged), (pred stringp), etc.
                                            ;; emit them raw
                                            (seq? pattern) (pr-str pattern)
-                                           (= pattern '_) "_"
                                            :else (str pattern))]
                              (format "(%s %s)" pat-str
                                      (str/join " " (map emit body)))))
@@ -630,9 +632,20 @@
       (format "(defvar %s)" elisp-name))))
 
 (defmethod emit-node :function-quote
-  [{:keys [symbol]}]
-  (format "#'%s" (or (get core-fn-mapping symbol)
-                     (mangle-name symbol))))
+  [{:keys [symbol env]}]
+  (let [defs     (get env :defs)
+        private? (get-in defs [symbol :private?])
+        resolved (cond
+                   (get core-fn-mapping symbol)
+                   (get core-fn-mapping symbol)
+
+                   ;; Symbol is a known def in the current namespace — qualify it
+                   (and env (contains? defs symbol))
+                   (ns-qualify-name symbol env (boolean private?))
+
+                   :else
+                   (mangle-name symbol))]
+    (format "#'%s" resolved)))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]

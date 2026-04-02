@@ -2307,3 +2307,50 @@
       (is (clojure.string/includes? code "nil"))
       (is (clojure.string/includes? code "(enter-degraded)"))
       (is (clojure.string/includes? code "(reconnect)")))))
+
+;; ============================================================================
+;; pcase — Regression tests for wildcard `_` pattern (GH: cljel-pcase-wildcard)
+;;
+;; Bug: `_` is a symbol, so `(symbol? pattern)` matched before
+;; `(= pattern '_)`, emitting `'_` (literal symbol match) instead of bare `_`
+;; (pcase wildcard). 40+ compiled .el files were affected.
+;; ============================================================================
+
+(deftest pcase-wildcard-emits-bare-underscore
+  (testing "pcase wildcard _ must emit as bare _ (not quoted '_)"
+    (let [code (analyze-and-emit '(pcase x
+                                    ('clj  "clojure")
+                                    ('cljs "shadow")
+                                    (_     "default")))]
+      ;; The wildcard branch must NOT be quoted
+      (is (clojure.string/includes? code "(_ \"default\")"))
+      ;; Must not contain the buggy quoted form
+      (is (not (clojure.string/includes? code "('_ \"default\")")))))
+
+  (testing "quoted symbols still emit as quoted"
+    (let [code (analyze-and-emit '(pcase x
+                                    ('foo "matched-foo")
+                                    (_    "fallback")))]
+      ;; Analyzer expands 'foo to (quote foo), emitter renders it back
+      (is (clojure.string/includes? code "(quote foo)"))
+      (is (clojure.string/includes? code "(_ \"fallback\")")))))
+
+(deftest pcase-wildcard-with-body-forms
+  (testing "wildcard branch with multiple body forms"
+    (let [code (analyze-and-emit '(pcase status
+                                    ('ok   (log "success"))
+                                    (_     (log "unknown") (error "bad"))))]
+      (is (clojure.string/includes? code "(_ (log \"unknown\") (error \"bad\"))")))))
+
+(deftest pcase-all-pattern-types
+  (testing "string, number, keyword, symbol, wildcard patterns coexist"
+    (let [code (analyze-and-emit '(pcase val
+                                    ("hello" 1)
+                                    (42      2)
+                                    ('ok     3)
+                                    (_       4)))]
+      (is (clojure.string/includes? code "(\"hello\" 1)"))
+      (is (clojure.string/includes? code "(42 2)"))
+      ;; Analyzer expands 'ok to (quote ok)
+      (is (clojure.string/includes? code "(quote ok)"))
+      (is (clojure.string/includes? code "(_ 4)")))))
