@@ -5,7 +5,8 @@
    We use a simplified approach rather than tools.analyzer for now,
    keeping it pragmatic and easy to understand."
   (:require [clojure-elisp.macros :as macros]
-            [clojure-elisp.destructure :as destructure]))
+            [clojure-elisp.destructure :as destructure]
+            [clojure-elisp.mappings :as mappings]))
 
 ;; ============================================================================
 ;; Environment
@@ -1632,11 +1633,23 @@
   [forms]
   (set (keys (pre-scan-defs forms))))
 
+(defn- warn-core-shadows
+  "Emit warnings for local definitions that shadow core-fn-mapping entries.
+   Mirrors Clojure's 'WARNING: X already refers to #'clojure.core/X' behavior."
+  [defs ns-name]
+  (doseq [[def-name _] defs]
+    (when-let [elisp-name (get mappings/core-fn-mapping def-name)]
+      (binding [*out* *err*]
+        (println (str "WARNING: " def-name " already mapped to Elisp \"" elisp-name
+                      "\" in core-fn-mapping — local definition in "
+                      ns-name " will shadow it"))))))
+
 (defn analyze-file-forms
   "Analyze a sequence of forms as they appear in a file.
    If the first form is (ns ...), it establishes the namespace context
    (current ns, aliases, refers) for all subsequent forms.
-   Pre-scans all top-level defs so same-namespace references resolve correctly."
+   Pre-scans all top-level defs so same-namespace references resolve correctly.
+   Warns when local definitions shadow core-fn-mapping entries."
   [forms]
   (if (and (seq forms)
            (seq? (first forms))
@@ -1644,6 +1657,7 @@
     (let [ns-ast (analyze (first forms))
           ns-env (build-ns-env (:requires ns-ast))
           defs   (pre-scan-defs (rest forms))]
+      (warn-core-shadows defs (:name ns-ast))
       (binding [*env* (merge *env* {:ns (:name ns-ast) :defs defs} ns-env)]
         (into [ns-ast] (mapv analyze (rest forms)))))
     (mapv analyze forms)))
