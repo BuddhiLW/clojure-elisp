@@ -1561,20 +1561,25 @@
       (ast-node :var :name form))))
 
 (defn- analyze-seq
-  "Analyze a seq form: dispatch to special form, macro, or invocation."
+  "Analyze a seq form: dispatch to special form, macro, or invocation.
+   An empty seq () is the empty-list literal, not an invocation — analyze it
+   as nil (Elisp's empty list) so it emits `nil`, not `(nil)`. Guards empty
+   arglist passthrough (ert-deftest name () ...), quoted empty lists, let-bound ()."
   [form]
-  (let [op (first form)]
-    (if-let [analyzer (get special-forms op)]
-      (analyzer form)
-      ;; Check ClojureElisp macro registry before treating as invoke
-      (if-let [macro-fn (when (symbol? op) (get-macro op))]
-        (try
-          (let [expanded (apply macro-fn (rest form))]
-            (analyze expanded))
-          (catch Exception _
-            ;; Macro expansion failed (arity mismatch, etc.) — treat as regular invocation
-            (analyze-invoke form)))
-        (analyze-invoke form)))))
+  (if (empty? form)
+    (ast-node :const :val nil :type :nil)
+    (let [op (first form)]
+      (if-let [analyzer (get special-forms op)]
+        (analyzer form)
+        ;; Check ClojureElisp macro registry before treating as invoke
+        (if-let [macro-fn (when (symbol? op) (get-macro op))]
+          (try
+            (let [expanded (apply macro-fn (rest form))]
+              (analyze expanded))
+            (catch Exception _
+              ;; Macro expansion failed (arity mismatch, etc.) — treat as regular invocation
+              (analyze-invoke form)))
+          (analyze-invoke form))))))
 
 (defn analyze
   "Analyze a Clojure form into an AST node.
