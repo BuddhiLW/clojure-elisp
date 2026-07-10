@@ -1370,12 +1370,34 @@
 ;; Invocation Analyzer
 ;; ============================================================================
 
+(defn- analyze-hof-args
+  "Analyze invocation args, function-quoting bare fn-name symbols in a
+   higher-order fn's function slot(s). `slots` is a set of 0-based indices,
+   :all, or nil (no function slots).
+
+   Only a non-local symbol is quoted — it names a function that must be
+   passed as #'f in Elisp (a Lisp-2). Locals, lambdas, explicit #'f and
+   compound forms are already function VALUES and pass through unchanged."
+  [args slots]
+  (vec
+   (map-indexed
+    (fn [idx arg]
+      (if (and slots
+               (or (= :all slots) (contains? slots idx))
+               (symbol? arg)
+               (not (contains? (:locals *env*) arg)))
+        (ast-node :function-quote :expr (analyze arg))
+        (analyze arg)))
+    args)))
+
 (defn analyze-invoke
   "Analyze function invocation (f args...).
    Detects Elisp interop patterns:
    - (.method args...) → :interop-call with :method stripped of leading dot
    - (.-field)         → :interop-call with :method stripped of leading .-
-   - (elisp/fn args..) → :elisp-call with :fn as raw Elisp name"
+   - (elisp/fn args..) → :elisp-call with :fn as raw Elisp name
+   For a known higher-order fn, bare fn-name symbols in its function slot(s)
+   are function-quoted (see analyze-hof-args) so Elisp receives #'f."
   [[f & args]]
   (let [f-name (when (symbol? f) (name f))
         f-ns   (when (symbol? f) (namespace f))]
@@ -1400,9 +1422,13 @@
 
       ;; Default invocation
       :else
-      (ast-node :invoke
-                :fn (analyze f)
-                :args (mapv analyze args)))))
+      (let [slots (when (and (symbol? f)
+                             (or (nil? f-ns) (= f-ns "clojure.core"))
+                             (not (contains? (:locals *env*) f)))
+                    (get mappings/higher-order-fn-arg-slots (symbol f-name)))]
+        (ast-node :invoke
+                  :fn (analyze f)
+                  :args (analyze-hof-args args slots))))))
 
 ;; ============================================================================
 ;; Main Analyzer

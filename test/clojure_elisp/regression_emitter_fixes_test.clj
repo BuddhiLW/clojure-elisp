@@ -90,7 +90,7 @@
   (testing "#() rest-arg gensym strips trailing # (else emits invalid-read-syntax \"#)\")"
     (let [out (emit-form (read-string "#(apply + %&)"))]
       (is (str/includes? out "&rest"))
-      (is (not (str/includes? out "#")))))
+      (is (not (re-find #"[0-9A-Za-z_]#" out)))))
   (testing "#() positional gensyms carry no #"
     (is (not (str/includes? (emit-form (read-string "#(+ %1 %2)")) "#")))))
 

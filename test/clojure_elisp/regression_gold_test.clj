@@ -235,7 +235,7 @@
 (deftest gold-atoms
   (testing "atom/deref" (is (= "(clel-deref (clel-atom 42))" (ae '(deref (atom 42))))))
   (testing "reset!"     (is (= "(clel-reset! a 10)"          (ae '(reset! a 10)))))
-  (testing "swap!"      (is (= "(clel-swap! a 1+)"           (ae '(swap! a inc))))))
+  (testing "swap!"      (is (= "(clel-swap! a #'1+)"           (ae '(swap! a inc))))))
 
 ;; ============================================================================
 ;; Gold: Predicates
@@ -253,13 +253,13 @@
 ;; ============================================================================
 
 (deftest gold-higher-order
-  (testing "map"         (is (= "(clel-map 1+ coll)"                         (ae '(map inc coll)))))
-  (testing "filter"      (is (= "(clel-filter cl-evenp coll)"                (ae '(filter even? coll)))))
-  (testing "reduce"      (is (= "(clel-reduce + 0 coll)"                     (ae '(reduce + 0 coll)))))
-  (testing "apply"       (is (= "(apply + args)"                             (ae '(apply + args)))))
-  (testing "partial"     (is (= "(apply-partially + 1)"                      (ae '(partial + 1)))))
-  (testing "comp"        (is (= "(clel-comp 1+ 1-)"                          (ae '(comp inc dec)))))
-  (testing "complement"  (is (= "(clel-complement null)"                     (ae '(complement nil?)))))
+  (testing "map"         (is (= "(clel-map #'1+ coll)"                         (ae '(map inc coll)))))
+  (testing "filter"      (is (= "(clel-filter #'cl-evenp coll)"                (ae '(filter even? coll)))))
+  (testing "reduce"      (is (= "(clel-reduce #'+ 0 coll)"                     (ae '(reduce + 0 coll)))))
+  (testing "apply"       (is (= "(apply #'+ args)"                             (ae '(apply + args)))))
+  (testing "partial"     (is (= "(apply-partially #'+ 1)"                      (ae '(partial + 1)))))
+  (testing "comp"        (is (= "(clel-comp #'1+ #'1-)"                          (ae '(comp inc dec)))))
+  (testing "complement"  (is (= "(clel-complement #'null)"                     (ae '(complement nil?)))))
   (testing "identity"    (is (= "(identity x)"                               (ae '(identity x))))))
 
 ;; ============================================================================
@@ -271,7 +271,7 @@
     (is (= "(* (+ x 1) 2)"
            (ae '(-> x (+ 1) (* 2))))))
   (testing "->> thread-last"
-    (is (= "(clel-filter cl-evenp (clel-map 1+ coll))"
+    (is (= "(clel-filter #'cl-evenp (clel-map #'1+ coll))"
            (ae '(->> coll (map inc) (filter even?)))))))
 
 ;; ============================================================================

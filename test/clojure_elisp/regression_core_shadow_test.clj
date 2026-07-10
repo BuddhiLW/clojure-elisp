@@ -104,11 +104,11 @@
 
 (deftest core-map-not-shadowed
   (testing "core `map` resolves correctly when not shadowed"
-    (is (= "(clel-map 1+ coll)" (ae '(map inc coll))))))
+    (is (= "(clel-map #'1+ coll)" (ae '(map inc coll))))))
 
 (deftest core-filter-not-shadowed
   (testing "core `filter` resolves correctly when not shadowed"
-    (is (= "(clel-filter cl-evenp coll)" (ae '(filter even? coll))))))
+    (is (= "(clel-filter #'cl-evenp coll)" (ae '(filter even? coll))))))
 
 (deftest core-cons-not-shadowed
   (testing "core `cons` resolves correctly when not shadowed"

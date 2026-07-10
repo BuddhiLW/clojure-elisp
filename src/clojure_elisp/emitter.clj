@@ -683,20 +683,24 @@
       (format "(defvar %s)" elisp-name))))
 
 (defmethod emit-node :function-quote
-  [{:keys [symbol env]}]
-  (let [defs     (get env :defs)
-        private? (get-in defs [symbol :private?])
-        resolved (cond
-                   (get core-fn-mapping symbol)
-                   (get core-fn-mapping symbol)
+  [{:keys [symbol expr env]}]
+  (if expr
+    ;; Analyzer-resolved reference (auto-quoted higher-order fn arg):
+    ;; reuse the inner :var/:local emit, just prefix the #' reader macro.
+    (str "#'" (emit expr))
+    (let [defs     (get env :defs)
+          private? (get-in defs [symbol :private?])
+          resolved (cond
+                     (get core-fn-mapping symbol)
+                     (get core-fn-mapping symbol)
 
-                   ;; Symbol is a known def in the current namespace — qualify it
-                   (and env (contains? defs symbol))
-                   (ns-qualify-name symbol env (boolean private?))
+                     ;; Symbol is a known def in the current namespace — qualify it
+                     (and env (contains? defs symbol))
+                     (ns-qualify-name symbol env (boolean private?))
 
-                   :else
-                   (mangle-name symbol))]
-    (format "#'%s" resolved)))
+                     :else
+                     (mangle-name symbol))]
+      (format "#'%s" resolved))))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]
