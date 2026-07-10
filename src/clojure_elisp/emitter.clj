@@ -18,6 +18,10 @@
   (-> (str sym)
       (str/replace "." "-")
       (str/replace "/" "-")
+      ;; #()-reader auto-gensyms (p1__N#, rest__N#) carry a trailing `#` that
+      ;; is invalid Elisp read syntax (e.g. `#)`); drop it — the numeric
+      ;; counter already makes the name unique.
+      (str/replace "#" "")
       (str/replace "?" "-p")
       (str/replace "!" "-bang")
       (str/replace ">" "-gt")
@@ -108,6 +112,44 @@
     :keyword (str ":" (name val))
     (str val)))
 
+(defn emit-literal
+  "Render a raw Clojure literal VALUE as *evaluated* Elisp source.
+   Unlike `emit-node :const' (which dispatches on an analyzer-supplied :type
+   keyword), this dispatches on the runtime value — safe for synthesized
+   literals such as defmethod dispatch values, where passing (type v) (a Java
+   Class) to the :const path silently fell through to (str v): strings lost
+   their quotes, nil became an empty string, true/false became unbound symbols."
+  [v]
+  (cond
+    (nil? v)     "nil"
+    (true? v)    "t"
+    (false? v)   "nil"
+    (string? v)  (pr-str v)
+    (char? v)    (pr-str (str v))
+    (keyword? v) (str v)
+    (symbol? v)  (str "'" v)
+    (number? v)  (str v)
+    (or (seq? v) (vector? v) (list? v)) (format "(list %s)" (str/join " " (map emit-literal v)))
+    :else        (str v)))
+
+(defn emit-case-pattern
+  "Render a raw Clojure `case' test key as an Elisp `pcase' PATTERN.
+   `pcase' matches strings/keywords/numbers by `equal' — the value semantics
+   Clojure `case' needs. `cl-case' uses `eql' and silently fails on strings,
+   nil, and booleans (its `t' clause is the else-marker)."
+  [v]
+  (cond
+    (nil? v)     "'nil"
+    (true? v)    "'t"
+    (false? v)   "'nil"
+    (string? v)  (pr-str v)
+    (char? v)    (pr-str (str v))
+    (keyword? v) (str v)
+    (symbol? v)  (str "'" v)
+    (number? v)  (str v)
+    (or (seq? v) (vector? v) (list? v)) (format "(or %s)" (str/join " " (map emit-case-pattern v)))
+    :else        (str v)))
+
 (defmethod emit-node :local
   [{:keys [name]}]
   (mangle-name name))
@@ -159,9 +201,14 @@
 
 (defmethod emit-node :map
   [{:keys [keys vals]}]
-  (let [pairs (map (fn [k v] (str "(" (emit k) " . " (emit v) ")"))
+  ;; Emit an *evaluating* alist constructor, not a quoted literal: a quote
+  ;; would suppress evaluation of every key and value, so {:a x} would carry
+  ;; the symbol `x` instead of its runtime value. (list (cons k v) ...) keeps
+  ;; the alist shape while evaluating keys/vals; self-evaluating keys
+  ;; (keywords, numbers) are unaffected.
+  (let [pairs (map (fn [k v] (str "(cons " (emit k) " " (emit v) ")"))
                    keys vals)]
-    (str "'(" (str/join " " pairs) ")")))
+    (str "(list " (str/join " " pairs) ")")))
 
 (defmethod emit-node :set
   [{:keys [items]}]
@@ -324,7 +371,11 @@
 
 (defmethod emit-node :fn
   [{:keys [params body]}]
-  (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
+  ;; The Clojure rest marker `&` must become Elisp's `&rest`; a bare `&` in a
+  ;; lambda arglist is an ordinary required parameter, so `(fn [x & xs] …)`
+  ;; would take the wrong arity and never bind the rest list.
+  (let [elisp-params (str "(" (emit-list (map (fn [p] (if (= '& p) "&rest" (mangle-name p)))
+                                              params)) ")")
         elisp-body   (str/join "\n    " (map emit body))]
     (format "(lambda %s\n    %s)" elisp-params elisp-body)))
 
@@ -569,6 +620,9 @@
         clause-strs (map (fn [{:keys [pattern body]}]
                            (let [;; Emit pattern - pass through raw for elisp patterns
                                  pat-str (cond
+                                           ;; Wildcard _ must be checked before symbol? — it's the
+                                           ;; pcase catch-all and must emit as bare _, not quoted '_
+                                           (= pattern '_) "_"
                                            (symbol? pattern) (str "'" (name pattern))
                                            (keyword? pattern) (str "'" (name pattern))
                                            (string? pattern) (pr-str pattern)
@@ -576,7 +630,6 @@
                                            ;; For list patterns like (or 'nil 'staged), (pred stringp), etc.
                                            ;; emit them raw
                                            (seq? pattern) (pr-str pattern)
-                                           (= pattern '_) "_"
                                            :else (str pattern))]
                              (format "(%s %s)" pat-str
                                      (str/join " " (map emit body)))))
@@ -630,9 +683,24 @@
       (format "(defvar %s)" elisp-name))))
 
 (defmethod emit-node :function-quote
-  [{:keys [symbol]}]
-  (format "#'%s" (or (get core-fn-mapping symbol)
-                     (mangle-name symbol))))
+  [{:keys [symbol expr env]}]
+  (if expr
+    ;; Analyzer-resolved reference (auto-quoted higher-order fn arg):
+    ;; reuse the inner :var/:local emit, just prefix the #' reader macro.
+    (str "#'" (emit expr))
+    (let [defs     (get env :defs)
+          private? (get-in defs [symbol :private?])
+          resolved (cond
+                     (get core-fn-mapping symbol)
+                     (get core-fn-mapping symbol)
+
+                     ;; Symbol is a known def in the current namespace — qualify it
+                     (and env (contains? defs symbol))
+                     (ns-qualify-name symbol env (boolean private?))
+
+                     :else
+                     (mangle-name symbol))]
+      (format "#'%s" resolved))))
 
 (defmethod emit-node :let
   [{:keys [bindings body]}]
@@ -674,7 +742,7 @@
         ;; Handle :default as 't' (catch-all in cl-defmethod)
         type-spec  (if (= :default dispatch-val)
                      "t"
-                     (format "(eql %s)" (emit {:op :const :val dispatch-val :type (type dispatch-val)})))
+                     (format "(eql %s)" (emit-literal dispatch-val)))
         ;; Emit params - first param gets the type specializer
         params-str (if (= 1 (count params))
                      (format "((%s %s))" (mangle-name (first params)) type-spec)
@@ -958,15 +1026,16 @@
 
 (defmethod emit-node :case
   [{:keys [expr clauses default]}]
+  ;; Use `pcase' (not `cl-case'): Clojure `case' dispatches by value, and
+  ;; `pcase' matches strings/keywords/numbers by `equal'. `cl-case' uses `eql'
+  ;; and silently mis-dispatches strings, nil, and booleans.
   (let [clause-strs (map (fn [{:keys [test expr]}]
-                           (format "(%s %s)"
-                                   (emit {:op :const :val test :type (type test)})
-                                   (emit expr)))
+                           (format "(%s %s)" (emit-case-pattern test) (emit expr)))
                          clauses)
         all-clauses (if default
-                      (conj (vec clause-strs) (format "(t %s)" (emit default)))
+                      (conj (vec clause-strs) (format "(_ %s)" (emit default)))
                       clause-strs)]
-    (format "(cl-case %s\n  %s)"
+    (format "(pcase %s\n  %s)"
             (emit expr)
             (str/join "\n  " all-clauses))))
 

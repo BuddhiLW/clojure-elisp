@@ -94,7 +94,7 @@
    'cons "cons"
    'conj "clel-conj"
    'count "length"
-   'nth "nth"
+   'nth "clel-nth"
    'get "clel-get"
    'contains? "clel-contains-p"
    'assoc "clel-assoc"
@@ -551,3 +551,51 @@
          elisp-passthrough-mappings
          elisp-builtin-mappings
          elisp-conflict-mappings))
+
+(def higher-order-fn-arg-slots
+  "Higher-order Clojure fns -> the 0-based arg indices that are FUNCTION
+   positions (or :all). The analyzer uses this to auto function-quote a bare
+   fn-name symbol passed as a value, so Elisp (a Lisp-2) receives #'f instead
+   of a bare symbol that would raise (void-variable f) at call time.
+
+   Only arity-unambiguous slots are listed; arity-dependent HOFs (e.g. sort,
+   repeatedly) are intentionally omitted."
+  {'map          #{0}
+   'mapv         #{0}
+   'mapcat       #{0}
+   'map-indexed  #{0}
+   'keep         #{0}
+   'keep-indexed #{0}
+   'filter       #{0}
+   'filterv      #{0}
+   'remove       #{0}
+   'take-while   #{0}
+   'drop-while   #{0}
+   'split-with   #{0}
+   'group-by     #{0}
+   'sort-by      #{0}
+   'partition-by #{0}
+   'some         #{0}
+   'every?       #{0}
+   'not-any?     #{0}
+   'not-every?   #{0}
+   'reduce       #{0}
+   'reductions   #{0}
+   'reduce-kv    #{0}
+   'apply        #{0}
+   'partial      #{0}
+   'fnil         #{0}
+   'complement   #{0}
+   'iterate      #{0}
+   'trampoline   #{0}
+   'run!         #{0}
+   'max-key      #{0}
+   'min-key      #{0}
+   'update       #{2}
+   'update-in    #{2}
+   'swap!        #{1}
+   'swap-vals!   #{1}
+   'comp         :all
+   'juxt         :all
+   'every-pred   :all
+   'some-fn      :all})

@@ -320,7 +320,7 @@
       (is (str/includes? code "lambda"))))
 
   (testing "map preserves argument order"
-    (is (re-find #"clel-map\s+f\s+coll" (clel/emit '(map f coll))))))
+    (is (re-find #"clel-map\s+#'f\s+coll" (clel/emit '(map f coll))))))
 
 (deftest seq-filter-compilation-test
   (testing "filter compiles to clel-filter"
@@ -328,7 +328,7 @@
     (is (str/includes? (clel/emit '(filter pred coll)) "clel-filter")))
 
   (testing "filter preserves argument order"
-    (is (re-find #"clel-filter\s+pred\s+items" (clel/emit '(filter pred items))))))
+    (is (re-find #"clel-filter\s+#'pred\s+items" (clel/emit '(filter pred items))))))
 
 (deftest seq-take-compilation-test
   (testing "take compiles to clel-take"
@@ -349,14 +349,14 @@
     (is (str/includes? (clel/emit '(take-while pos? xs)) "clel-take-while")))
 
   (testing "take-while preserves argument order"
-    (is (re-find #"clel-take-while\s+pred\s+coll" (clel/emit '(take-while pred coll))))))
+    (is (re-find #"clel-take-while\s+#'pred\s+coll" (clel/emit '(take-while pred coll))))))
 
 (deftest seq-drop-while-compilation-test
   (testing "drop-while compiles to clel-drop-while"
     (is (str/includes? (clel/emit '(drop-while neg? xs)) "clel-drop-while")))
 
   (testing "drop-while preserves argument order"
-    (is (re-find #"clel-drop-while\s+pred\s+items" (clel/emit '(drop-while pred items))))))
+    (is (re-find #"clel-drop-while\s+#'pred\s+items" (clel/emit '(drop-while pred items))))))
 
 (deftest seq-concat-compilation-test
   (testing "concat compiles to clel-concat"
@@ -370,7 +370,7 @@
     (is (str/includes? (clel/emit '(mapcat f xs)) "clel-mapcat")))
 
   (testing "mapcat preserves argument order"
-    (is (re-find #"clel-mapcat\s+f\s+coll" (clel/emit '(mapcat f coll))))))
+    (is (re-find #"clel-mapcat\s+#'f\s+coll" (clel/emit '(mapcat f coll))))))
 
 (deftest seq-interleave-compilation-test
   (testing "interleave compiles to clel-interleave"
@@ -394,10 +394,10 @@
     (is (str/includes? (clel/emit '(reduce + 0 xs)) "clel-reduce")))
 
   (testing "reduce preserves argument order (no init)"
-    (is (re-find #"clel-reduce\s+\+\s+coll" (clel/emit '(reduce + coll)))))
+    (is (re-find #"clel-reduce\s+#'\+\s+coll" (clel/emit '(reduce + coll)))))
 
   (testing "reduce preserves argument order (with init)"
-    (is (re-find #"clel-reduce\s+\+\s+0\s+coll" (clel/emit '(reduce + 0 coll))))))
+    (is (re-find #"clel-reduce\s+#'\+\s+0\s+coll" (clel/emit '(reduce + 0 coll))))))
 
 (deftest seq-sort-compilation-test
   (testing "sort compiles to clel-sort"
@@ -411,14 +411,14 @@
     (is (str/includes? (clel/emit '(sort-by :name users)) "clel-sort-by")))
 
   (testing "sort-by preserves argument order"
-    (is (re-find #"clel-sort-by\s+keyfn\s+coll" (clel/emit '(sort-by keyfn coll))))))
+    (is (re-find #"clel-sort-by\s+#'keyfn\s+coll" (clel/emit '(sort-by keyfn coll))))))
 
 (deftest seq-group-by-compilation-test
   (testing "group-by compiles to clel-group-by"
     (is (str/includes? (clel/emit '(group-by :type items)) "clel-group-by")))
 
   (testing "group-by preserves argument order"
-    (is (re-find #"clel-group-by\s+f\s+coll" (clel/emit '(group-by f coll))))))
+    (is (re-find #"clel-group-by\s+#'f\s+coll" (clel/emit '(group-by f coll))))))
 
 (deftest seq-frequencies-compilation-test
   (testing "frequencies compiles to clel-frequencies"
@@ -434,28 +434,28 @@
     (is (str/includes? (clel/emit '(every? pos? xs)) "clel-every-p")))
 
   (testing "every? preserves argument order"
-    (is (re-find #"clel-every-p\s+pred\s+coll" (clel/emit '(every? pred coll))))))
+    (is (re-find #"clel-every-p\s+#'pred\s+coll" (clel/emit '(every? pred coll))))))
 
 (deftest seq-some-compilation-test
   (testing "some compiles to clel-some"
     (is (str/includes? (clel/emit '(some pos? xs)) "clel-some")))
 
   (testing "some preserves argument order"
-    (is (re-find #"clel-some\s+pred\s+coll" (clel/emit '(some pred coll))))))
+    (is (re-find #"clel-some\s+#'pred\s+coll" (clel/emit '(some pred coll))))))
 
 (deftest seq-not-every-p-compilation-test
   (testing "not-every? compiles to clel-not-every-p"
     (is (str/includes? (clel/emit '(not-every? even? xs)) "clel-not-every-p")))
 
   (testing "not-every? preserves argument order"
-    (is (re-find #"clel-not-every-p\s+pred\s+coll" (clel/emit '(not-every? pred coll))))))
+    (is (re-find #"clel-not-every-p\s+#'pred\s+coll" (clel/emit '(not-every? pred coll))))))
 
 (deftest seq-not-any-p-compilation-test
   (testing "not-any? compiles to clel-not-any-p"
     (is (str/includes? (clel/emit '(not-any? neg? xs)) "clel-not-any-p")))
 
   (testing "not-any? preserves argument order"
-    (is (re-find #"clel-not-any-p\s+pred\s+coll" (clel/emit '(not-any? pred coll))))))
+    (is (re-find #"clel-not-any-p\s+#'pred\s+coll" (clel/emit '(not-any? pred coll))))))
 
 (deftest seq-empty-p-compilation-test
   (testing "empty? compiles to clel-empty-p"
@@ -892,7 +892,7 @@
 
   (testing "update preserves argument order"
     (let [code (clel/emit '(update my-map my-key my-fn))]
-      (is (re-find #"clel-update\s+my-map\s+my-key\s+my-fn" code))))
+      (is (re-find #"clel-update\s+my-map\s+my-key\s+#'my-fn" code))))
 
   (testing "update in let binding"
     (let [code (clel/emit '(let [m2 (update m :x inc)] m2))]
@@ -1467,7 +1467,7 @@
     (is (str/includes? (clel/emit '(partition-by odd? xs)) "clel-partition-by")))
 
   (testing "partition-by preserves argument order"
-    (is (re-find #"clel-partition-by\s+f\s+coll" (clel/emit '(partition-by f coll)))))
+    (is (re-find #"clel-partition-by\s+#'f\s+coll" (clel/emit '(partition-by f coll)))))
 
   (testing "partition-by with keyword function"
     (let [code (clel/emit '(partition-by :type items))]
@@ -1567,7 +1567,7 @@
     (is (str/includes? (clel/emit '(split-with pos? xs)) "clel-split-with")))
 
   (testing "split-with preserves argument order"
-    (is (re-find #"clel-split-with\s+pred\s+coll" (clel/emit '(split-with pred coll)))))
+    (is (re-find #"clel-split-with\s+#'pred\s+coll" (clel/emit '(split-with pred coll)))))
 
   (testing "split-with with inline predicate"
     (let [code (clel/emit '(split-with (fn [x] (< x 5)) nums))]

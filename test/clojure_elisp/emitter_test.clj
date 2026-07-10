@@ -109,7 +109,7 @@
 
 (deftest emit-map-test
   (testing "empty map"
-    (is (= "'()" (analyze-and-emit {}))))
+    (is (= "(list )" (analyze-and-emit {}))))
   (testing "map with entries"
     (let [result (analyze-and-emit {:a 1})]
       (is (clojure.string/includes? result ":a"))
@@ -277,20 +277,20 @@
 (deftest emit-case-test
   (testing "case without default"
     (let [result (analyze-and-emit '(case x :a 1 :b 2))]
-      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "pcase"))
       (is (clojure.string/includes? result ":a"))
       (is (clojure.string/includes? result ":b"))))
 
   (testing "case with default"
     (let [result (analyze-and-emit '(case x :a 1 :b 2 :default-val))]
-      (is (clojure.string/includes? result "cl-case"))
-      (is (clojure.string/includes? result "(t :default-val)"))))
+      (is (clojure.string/includes? result "pcase"))
+      (is (clojure.string/includes? result "(_ :default-val)"))))
 
   (testing "case with numeric tests"
     (let [result (analyze-and-emit '(case n 1 "one" 2 "two" "other"))]
-      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "pcase"))
       (is (clojure.string/includes? result "(1 \"one\")"))
-      (is (clojure.string/includes? result "(t \"other\")")))))
+      (is (clojure.string/includes? result "(_ \"other\")")))))
 
 ;; ============================================================================
 ;; do
@@ -453,7 +453,7 @@
   (testing "string functions"
     (is (= "(clel-str a b)" (analyze-and-emit '(str a b)))))
   (testing "higher-order functions"
-    (is (= "(clel-map f xs)" (analyze-and-emit '(map f xs))))))
+    (is (= "(clel-map #'f xs)" (analyze-and-emit '(map f xs))))))
 
 ;; ============================================================================
 ;; Sequence Functions (clel-029)
@@ -461,31 +461,31 @@
 
 (deftest emit-seq-map-test
   (testing "map with function and collection"
-    (is (= "(clel-map f xs)" (analyze-and-emit '(map f xs)))))
+    (is (= "(clel-map #'f xs)" (analyze-and-emit '(map f xs)))))
   (testing "map with lambda"
     (let [result (analyze-and-emit '(map (fn [x] (+ x 1)) xs))]
       (is (clojure.string/includes? result "clel-map"))
       (is (clojure.string/includes? result "lambda"))))
   (testing "map with core function"
-    (is (= "(clel-map 1+ xs)" (analyze-and-emit '(map inc xs))))))
+    (is (= "(clel-map #'1+ xs)" (analyze-and-emit '(map inc xs))))))
 
 (deftest emit-seq-filter-test
   (testing "filter with predicate and collection"
-    (is (= "(clel-filter pred xs)" (analyze-and-emit '(filter pred xs)))))
+    (is (= "(clel-filter #'pred xs)" (analyze-and-emit '(filter pred xs)))))
   (testing "filter with lambda"
     (let [result (analyze-and-emit '(filter (fn [x] (> x 0)) xs))]
       (is (clojure.string/includes? result "clel-filter"))
       (is (clojure.string/includes? result "lambda"))))
   (testing "filter with core predicate"
-    (is (= "(clel-filter cl-evenp nums)" (analyze-and-emit '(filter even? nums))))))
+    (is (= "(clel-filter #'cl-evenp nums)" (analyze-and-emit '(filter even? nums))))))
 
 (deftest emit-seq-reduce-test
   (testing "reduce with function and collection"
-    (is (= "(clel-reduce f xs)" (analyze-and-emit '(reduce f xs)))))
+    (is (= "(clel-reduce #'f xs)" (analyze-and-emit '(reduce f xs)))))
   (testing "reduce with initial value"
-    (is (= "(clel-reduce f 0 xs)" (analyze-and-emit '(reduce f 0 xs)))))
+    (is (= "(clel-reduce #'f 0 xs)" (analyze-and-emit '(reduce f 0 xs)))))
   (testing "reduce with + function"
-    (is (= "(clel-reduce + xs)" (analyze-and-emit '(reduce + xs)))))
+    (is (= "(clel-reduce #'+ xs)" (analyze-and-emit '(reduce + xs)))))
   (testing "reduce with lambda"
     (let [result (analyze-and-emit '(reduce (fn [acc x] (+ acc x)) 0 xs))]
       (is (clojure.string/includes? result "clel-reduce"))
@@ -511,23 +511,23 @@
 
 (deftest emit-seq-take-while-test
   (testing "take-while with predicate"
-    (is (= "(clel-take-while pred xs)" (analyze-and-emit '(take-while pred xs)))))
+    (is (= "(clel-take-while #'pred xs)" (analyze-and-emit '(take-while pred xs)))))
   (testing "take-while with lambda"
     (let [result (analyze-and-emit '(take-while (fn [x] (< x 10)) xs))]
       (is (clojure.string/includes? result "clel-take-while"))
       (is (clojure.string/includes? result "lambda"))))
   (testing "take-while with core predicate"
-    (is (= "(clel-take-while cl-plusp nums)" (analyze-and-emit '(take-while pos? nums))))))
+    (is (= "(clel-take-while #'cl-plusp nums)" (analyze-and-emit '(take-while pos? nums))))))
 
 (deftest emit-seq-drop-while-test
   (testing "drop-while with predicate"
-    (is (= "(clel-drop-while pred xs)" (analyze-and-emit '(drop-while pred xs)))))
+    (is (= "(clel-drop-while #'pred xs)" (analyze-and-emit '(drop-while pred xs)))))
   (testing "drop-while with lambda"
     (let [result (analyze-and-emit '(drop-while (fn [x] (< x 5)) xs))]
       (is (clojure.string/includes? result "clel-drop-while"))
       (is (clojure.string/includes? result "lambda"))))
   (testing "drop-while with core predicate"
-    (is (= "(clel-drop-while cl-minusp nums)" (analyze-and-emit '(drop-while neg? nums))))))
+    (is (= "(clel-drop-while #'cl-minusp nums)" (analyze-and-emit '(drop-while neg? nums))))))
 
 ;; ============================================================================
 ;; Full Pipeline Tests
@@ -2307,3 +2307,89 @@
       (is (clojure.string/includes? code "nil"))
       (is (clojure.string/includes? code "(enter-degraded)"))
       (is (clojure.string/includes? code "(reconnect)")))))
+
+;; ============================================================================
+;; pcase — Regression tests for wildcard `_` pattern (GH: cljel-pcase-wildcard)
+;;
+;; Bug: `_` is a symbol, so `(symbol? pattern)` matched before
+;; `(= pattern '_)`, emitting `'_` (literal symbol match) instead of bare `_`
+;; (pcase wildcard). 40+ compiled .el files were affected.
+;; ============================================================================
+
+(deftest pcase-wildcard-emits-bare-underscore
+  (testing "pcase wildcard _ must emit as bare _ (not quoted '_)"
+    (let [code (analyze-and-emit '(pcase x
+                                    ('clj  "clojure")
+                                    ('cljs "shadow")
+                                    (_     "default")))]
+      ;; The wildcard branch must NOT be quoted
+      (is (clojure.string/includes? code "(_ \"default\")"))
+      ;; Must not contain the buggy quoted form
+      (is (not (clojure.string/includes? code "('_ \"default\")")))))
+
+  (testing "quoted symbols still emit as quoted"
+    (let [code (analyze-and-emit '(pcase x
+                                    ('foo "matched-foo")
+                                    (_    "fallback")))]
+      ;; Analyzer expands 'foo to (quote foo), emitter renders it back
+      (is (clojure.string/includes? code "(quote foo)"))
+      (is (clojure.string/includes? code "(_ \"fallback\")")))))
+
+(deftest pcase-wildcard-with-body-forms
+  (testing "wildcard branch with multiple body forms"
+    (let [code (analyze-and-emit '(pcase status
+                                    ('ok   (log "success"))
+                                    (_     (log "unknown") (error "bad"))))]
+      (is (clojure.string/includes? code "(_ (log \"unknown\") (error \"bad\"))")))))
+
+(deftest pcase-all-pattern-types
+  (testing "string, number, keyword, symbol, wildcard patterns coexist"
+    (let [code (analyze-and-emit '(pcase val
+                                    ("hello" 1)
+                                    (42      2)
+                                    ('ok     3)
+                                    (_       4)))]
+      (is (clojure.string/includes? code "(\"hello\" 1)"))
+      (is (clojure.string/includes? code "(42 2)"))
+      ;; Analyzer expands 'ok to (quote ok)
+      (is (clojure.string/includes? code "(quote ok)"))
+      (is (clojure.string/includes? code "(_ 4)")))))
+
+;; ============================================================================
+;; Higher-Order Fn Auto Function-Quote (Lisp-2)
+;; ============================================================================
+;;
+;; Elisp is a Lisp-2: a function passed as a VALUE must be #'-quoted, else the
+;; call raises (void-variable f). The analyzer function-quotes bare fn-name
+;; symbols that land in a known higher-order fn's function slot(s). Locals,
+;; lambdas, explicit #'f and compound forms are already function VALUES and
+;; must pass through UNquoted.
+
+(deftest emit-hof-function-quote-test
+  (testing "core fns in a HOF function slot are #'-quoted"
+    (is (= "(apply #'+ (list 1 2 3))"        (analyze-and-emit '(apply + [1 2 3]))))
+    (is (= "(clel-map #'1+ (list 1 2 3))"    (analyze-and-emit '(map inc [1 2 3]))))
+    (is (= "(clel-reduce #'+ 0 (list 1 2 3))" (analyze-and-emit '(reduce + 0 [1 2 3]))))
+    (is (= "(clel-filter #'cl-evenp (list 1 2 3 4))" (analyze-and-emit '(filter even? [1 2 3 4])))))
+
+  (testing ":all-slot HOFs quote every fn arg"
+    (is (= "(clel-comp #'1+ #'clel-str)"     (analyze-and-emit '(comp inc str)))))
+
+  (testing "non-zero fn slots (swap! arg1, update arg2)"
+    (is (= "(clel-swap! a #'1+)"             (analyze-and-emit '(swap! a inc))))
+    (is (= "(clel-update m :k #'1+)"         (analyze-and-emit '(update m :k inc)))))
+
+  (testing "already-a-value args are NOT quoted"
+    ;; lambda
+    (is (clojure.string/includes? (analyze-and-emit '(map (fn [x] (inc x)) xs)) "(lambda"))
+    (is (not (clojure.string/includes? (analyze-and-emit '(map (fn [x] (inc x)) xs)) "#'")))
+    ;; local holding a fn value
+    (is (not (clojure.string/includes? (analyze-and-emit '(let [f inc] (map f xs))) "#'f")))
+    ;; compound fn expression (partial call) stays a value; its own fn arg is quoted
+    (is (= "(clel-map (apply-partially #'+ 1) xs)" (analyze-and-emit '(map (partial + 1) xs)))))
+
+  (testing "explicit #'f is not double-quoted"
+    (is (= "(clel-map #'1+ xs)"              (analyze-and-emit '(map #'inc xs)))))
+
+  (testing "non-HOF invocations leave symbol args bare"
+    (is (= "(foo 1+ bar)"                    (analyze-and-emit '(foo inc bar))))))
