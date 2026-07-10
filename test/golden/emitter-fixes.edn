@@ -1,0 +1,7 @@
+{:case-kw "(pcase x\n  (:a 1)\n  (:b 2)\n  (_ :d))",
+ :case-num "(pcase n\n  (1 :one)\n  (2 :two)\n  (_ :other))",
+ :case-str "(pcase s\n  (\"foo\" 1)\n  (\"bar\" 2)\n  (_ :none))",
+ :map-basic "(list (cons :a 1) (cons :b 2))",
+ :map-empty "(list )",
+ :map-expr "(list (cons :a (+ 1 2)))",
+ :nth "(clel-nth coll 2)"}

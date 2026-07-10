@@ -109,7 +109,7 @@
 
 (deftest emit-map-test
   (testing "empty map"
-    (is (= "'()" (analyze-and-emit {}))))
+    (is (= "(list )" (analyze-and-emit {}))))
   (testing "map with entries"
     (let [result (analyze-and-emit {:a 1})]
       (is (clojure.string/includes? result ":a"))
@@ -277,20 +277,20 @@
 (deftest emit-case-test
   (testing "case without default"
     (let [result (analyze-and-emit '(case x :a 1 :b 2))]
-      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "pcase"))
       (is (clojure.string/includes? result ":a"))
       (is (clojure.string/includes? result ":b"))))
 
   (testing "case with default"
     (let [result (analyze-and-emit '(case x :a 1 :b 2 :default-val))]
-      (is (clojure.string/includes? result "cl-case"))
-      (is (clojure.string/includes? result "(t :default-val)"))))
+      (is (clojure.string/includes? result "pcase"))
+      (is (clojure.string/includes? result "(_ :default-val)"))))
 
   (testing "case with numeric tests"
     (let [result (analyze-and-emit '(case n 1 "one" 2 "two" "other"))]
-      (is (clojure.string/includes? result "cl-case"))
+      (is (clojure.string/includes? result "pcase"))
       (is (clojure.string/includes? result "(1 \"one\")"))
-      (is (clojure.string/includes? result "(t \"other\")")))))
+      (is (clojure.string/includes? result "(_ \"other\")")))))
 
 ;; ============================================================================
 ;; do

@@ -11,12 +11,12 @@
                      cider/cider-nrepl {:mvn/version "0.58.0"}
                      org.clojure/test.check {:mvn/version "1.1.1"}
                      io.github.hive-agi/hive-test
-                     {:git/tag "v0.1.2" :git/sha "8894fa1"}}}
+                     {:git/tag "v0.3.0" :git/sha "763e4bc"}}}
   :test {:extra-paths ["test"]
          :extra-deps {lambdaisland/kaocha {:mvn/version "1.91.1392"}
                       org.clojure/test.check {:mvn/version "1.1.1"}
                       io.github.hive-agi/hive-test
-                      {:git/tag "v0.1.2" :git/sha "8894fa1"}}
+                      {:git/tag "v0.3.0" :git/sha "763e4bc"}}
          :main-opts ["-m" "kaocha.runner"]}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.9"}}
           :ns-default build}

@@ -39,7 +39,7 @@
   (testing "keyword"     (is (= ":foo"             (ae :foo))))
   (testing "ns keyword"  (is (= ":bar"             (ae :my.ns/bar))))
   (testing "vector"      (is (= "(list 1 2 3)"     (ae '[1 2 3]))))
-  (testing "map"         (is (= "'((:a . 1) (:b . 2))" (ae '{:a 1 :b 2}))))
+  (testing "map"         (is (= "(list (cons :a 1) (cons :b 2))" (ae '{:a 1 :b 2}))))
   (testing "quoted list" (is (= "'(1 2 3)"         (ae '(quote (1 2 3)))))))
 
 ;; ============================================================================
