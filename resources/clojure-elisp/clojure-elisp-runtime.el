@@ -148,6 +148,18 @@
   ((vectorp coll) (when (> (length coll) 0) (aref coll (1- (length coll)))))
   (t nil)))
 
+(cl-defun clel-nth (coll n &optional (not-found nil not-found-p))
+  "Clojure-style nth: the N-th element of COLL, coll FIRST and 0-indexed.
+Elisp `nth' is (nth N LIST) — index first — so a bare mapping reversed the
+args. With NOT-FOUND supplied, return it for an out-of-range index instead
+of signalling, matching clojure.core/nth's 3-arity."
+  (let ((len (if (sequencep coll) (length coll) 0)))
+    (if (and (integerp n) (>= n 0) (< n len))
+        (elt coll n)
+      (if not-found-p
+          not-found
+        (error "clel-nth: index %s out of bounds (length %d)" n len)))))
+
 (defun clel-contains-p (coll key)
   "Return t if KEY exists in COLL.\nFor maps/alists, checks if key is present.\nFor sets (represented as lists), checks if element is present.\nFor vectors, checks if index is valid."
   (cond

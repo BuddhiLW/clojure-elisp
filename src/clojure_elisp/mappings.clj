@@ -94,7 +94,7 @@
    'cons "cons"
    'conj "clel-conj"
    'count "length"
-   'nth "nth"
+   'nth "clel-nth"
    'get "clel-get"
    'contains? "clel-contains-p"
    'assoc "clel-assoc"

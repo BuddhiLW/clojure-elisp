@@ -50,8 +50,12 @@
       (= '& (first items))
       (let [rest-sym     (second items)
             remaining    (drop 2 items)
+            ;; Elisp `nthcdr` is (nthcdr N LIST) — coll SECOND — and returns
+            ;; the remaining sublist, exactly Clojure rest-destructuring. The
+            ;; old (nthrest coll idx) emitted a void function AND had the args
+            ;; reversed.
             rest-binding (when (and rest-sym (not= rest-sym '_))
-                           [rest-sym (list 'nthrest coll-sym idx)])]
+                           [rest-sym (list 'nthcdr idx coll-sym)])]
         (recur remaining idx
                (if rest-binding (conj bindings rest-binding) bindings)
                as-binding))
