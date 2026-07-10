@@ -104,6 +104,61 @@
       (is (str/includes? out "(args (nthcdr 1 clel--args))"))
       (is (not (str/includes? out "(&rest args)"))))))
 
+(deftest cond-list-test-and-result
+  ;; Regression for kanban 20260710133453-372031e6:
+  ;; bare Clojure `cond` is ALWAYS flat test/expr pairs. The old analyzer
+  ;; auto-detected "Elisp-style pre-grouped" via (every? seq? clauses), so a
+  ;; flat cond whose tests AND results were all lists mis-compiled into
+  ;; spurious (progn) clauses with broken pairing.
+  (testing "flat cond with list test AND list result pairs correctly (no spurious progn)"
+    (let [out (emit-form '(cond (pred x) (f) (pred2 y) (g)))]
+      (is (str/includes? out "((pred x) (f))"))
+      (is (str/includes? out "((pred2 y) (g))"))
+      (is (not (str/includes? out "(progn")))))
+  (testing "runtime-shaped nested cond (clel-merge) nests instead of flattening into progn"
+    (let [out (emit-form '(cond (hash-table-p r)
+                                (cond (hash-table-p m) (a) (listp m) (b))
+                                (listp r) (c)))]
+      (is (str/includes? out "((hash-table-p r) (cond"))
+      (is (str/includes? out "((hash-table-p m) (a))"))
+      (is (str/includes? out "((listp m) (b))"))
+      (is (str/includes? out "((listp r) (c))"))))
+  (testing "flat cond regressions: atoms, :else, list-test+atom-result still correct"
+    (is (str/includes? (emit-form '(cond true 1 false 2)) "(t 1)"))
+    (is (str/includes? (emit-form '(cond (> x 0) "pos" :else "zero")) "(t \"zero\")"))
+    (is (str/includes? (emit-form '(cond (pred x) 1 (pred2 y) 2)) "((pred x) 1)")))
+  (testing "elisp-cond STILL accepts the pre-grouped Elisp clause shape (desugars to flat)"
+    (let [single (emit-form '(elisp-cond ((string= x "a") (do-a)) (t (default-action))))
+          multi  (emit-form '(elisp-cond ((test-fn x) (setq r 1) (msg)) (t (other))))]
+      (is (str/includes? single "((string= x \"a\") (do-a))"))
+      (is (str/includes? single "(t (default-action))"))
+      (is (str/includes? multi "progn")))))
+
+(deftest multi-arity-fn-and-defmethod-rest
+  ;; Regression for kanban 20260710134255-3ce11ce0:
+  ;;  (1) multi-arity anonymous fn silently dropped all but the first arity.
+  ;;  (2) defmethod variadic emitted a bare `&` instead of Elisp `&rest`.
+  (testing "multi-arity fn literal dispatches on arg count (no dropped arities)"
+    (let [out (emit-form '(fn ([x] x) ([x y] (+ x y))))]
+      (is (str/includes? out "(lambda (&rest clel--args)"))
+      (is (str/includes? out "(cl-case (length clel--args)"))
+      (is (str/includes? out "(1 (let ((x (car clel--args))) x))"))
+      (is (str/includes? out "(2 (let ((x (car clel--args)) (y (cadr clel--args))) (+ x y)))"))))
+  (testing "multi-arity fn literal with a variadic arity uses t catch-all"
+    (let [out (emit-form '(fn ([x] x) ([x & more] more)))]
+      (is (str/includes? out "(1 (let"))
+      (is (str/includes? out "(t (let"))
+      (is (str/includes? out "(more (nthcdr 1 clel--args))"))))
+  (testing "single-arity fn is unchanged (plain lambda, no dispatch)"
+    (is (= "(lambda (x)\n    x)" (emit-form '(fn [x] x))))
+    (is (str/includes? (emit-form '(fn [a & xs] xs)) "(lambda (a &rest xs)")))
+  (testing "one wrapped arity stays a plain lambda (count-1 guard)"
+    (is (= "(lambda (x)\n    x)" (emit-form '(fn ([x] x))))))
+  (testing "defmethod variadic emits &rest, not bare &"
+    (let [out (emit-form '(defmethod area :k [a & args] (list a args)))]
+      (is (str/includes? out "&rest args"))
+      (is (not (str/includes? out "(eql :k)) & args"))))))
+
 ;; ============================================================================
 ;; Fix 4: #() reader-gensym trailing # stripped
 ;; ============================================================================

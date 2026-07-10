@@ -9,6 +9,13 @@
 
 ;;; Persistent-ish Data Structures
 
+;; Elisp-2 compatibility: defvars bridge function-slot names to value-slot.
+;; CLJEL-compiled defmacro bodies reference these at macro-expansion time.
+(defvar clojure-core-vector #'vector
+  "Function-slot bridge for `vector' (Elisp-2 compatibility).")
+(defvar clojure-core-list #'list
+  "Function-slot bridge for `list' (Elisp-2 compatibility).")
+
 (defn clel-vector [& items]
   "Create a vector from ITEMS."
   (apply #'vector items))
@@ -42,7 +49,7 @@
     (nil? coll) default
     (list? coll)
     (if (number? key)
-      (or (nth key coll) default)
+      (or (elisp/nth key coll) default)
       (or (alist-get key coll nil nil 'equal) default))
     (vector? coll)
     (if (and (number? key) (< key (count coll)))
@@ -162,11 +169,23 @@ Later values override earlier. Returns alist or hash-table depending on first ma
 Unlike Elisp `last' which returns a cons cell, this returns the element itself."
   (cond
     (nil? coll) nil
-    (list? coll) (car (last coll))
+    (list? coll) (car (elisp/last coll))
     (vector? coll) (if (> (count coll) 0)
                      (aref coll (dec (count coll)))
                      nil)
     :else nil))
+
+(cl-defun clel-nth (coll n &optional (not-found nil not-found-p))
+  "Clojure-style nth: the N-th element of COLL, coll FIRST and 0-indexed.
+Elisp `nth' is (nth N LIST) — index first — so a bare mapping reversed the
+args. With NOT-FOUND supplied, return it for an out-of-range index instead
+of signalling, matching clojure.core/nth's 3-arity."
+  (let [len (if (sequencep coll) (count coll) 0)]
+    (if (and (integerp n) (>= n 0) (< n len))
+      (elt coll n)
+      (if not-found-p
+        not-found
+        (error "clel-nth: index %s out of bounds (length %d)" n len)))))
 
 (defn clel-contains-p [coll key]
   "Return t if KEY exists in COLL.
@@ -439,11 +458,11 @@ Optional FROM-INDEX specifies starting position."
 
 (defn clel-deref [atom]
   "Get the value of ATOM."
-  (nth 1 atom))
+  (elisp/nth 1 atom))
 
 (defn clel--notify-watchers [atom old-val new-val]
   "Call all watchers on ATOM with OLD-VAL and NEW-VAL."
-  (let [watchers (nth 2 atom)]
+  (let [watchers (elisp/nth 2 atom)]
     (dolist [watcher watchers]
       (let [key (car watcher)
             f (cdr watcher)]
@@ -451,7 +470,7 @@ Optional FROM-INDEX specifies starting position."
 
 (defn clel-reset-bang [atom val]
   "Reset ATOM to VAL, calling watchers."
-  (let [old-val (nth 1 atom)]
+  (let [old-val (elisp/nth 1 atom)]
     (setcar (nthcdr 1 atom) val)
     (clel--notify-watchers atom old-val val)
     val))
@@ -472,7 +491,7 @@ Optional FROM-INDEX specifies starting position."
   "Add watcher F to ATOM under KEY.
 F will be called with (key atom old-val new-val) when atom changes.
 Returns ATOM."
-  (let [watchers (nth 2 atom)]
+  (let [watchers (elisp/nth 2 atom)]
     ;; Remove existing watcher with same key if present
     (setq watchers (cl-remove-if (fn [w] (= (car w) key)) watchers))
     ;; Add new watcher
@@ -482,7 +501,7 @@ Returns ATOM."
 (defn clel-remove-watch [atom key]
   "Remove watcher with KEY from ATOM.
 Returns ATOM."
-  (let [watchers (nth 2 atom)]
+  (let [watchers (elisp/nth 2 atom)]
     (setcar (nthcdr 2 atom)
             (cl-remove-if (fn [w] (= (car w) key)) watchers)))
   atom)
@@ -503,16 +522,16 @@ Returns ATOM."
 
 (defn clel-lazy-seq-force [lseq]
   "Force lazy sequence LSEQ, memoizing the result."
-  (if (nth 3 lseq)
-    (nth 2 lseq)
-    (let [result (funcall (nth 1 lseq))]
+  (if (elisp/nth 3 lseq)
+    (elisp/nth 2 lseq)
+    (let [result (funcall (elisp/nth 1 lseq))]
       (setcar (nthcdr 2 lseq) result)
       (setcar (nthcdr 3 lseq) true)
       result)))
 
 (defn clel-realized-p [x]
   "Return t if X is realized (not a pending lazy seq)."
-  (if (clel-lazy-seq-p x) (nth 3 x) true))
+  (if (clel-lazy-seq-p x) (elisp/nth 3 x) true))
 
 (defn clel-doall [seq]
   "Force entire lazy SEQ, returning it."
@@ -1682,7 +1701,7 @@ With one argument, returns a transducer."
 (defn clel-rand-nth [coll]
   "Return a random element from COLL."
   (let [s (clel-seq-force coll)]
-    (nth (random (count s)) s)))
+    (elisp/nth (random (count s)) s)))
 
 (defn clel-slurp [path]
   "Read the entire contents of file at PATH as a string."

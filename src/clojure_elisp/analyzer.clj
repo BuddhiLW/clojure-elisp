@@ -52,9 +52,23 @@
 ;; ============================================================================
 
 (defn- elisp-cond-expand
-  "Transform elisp-cond into cond (now a no-op alias since cond handles Elisp-style)."
+  "Desugar Elisp-style pre-grouped clauses into a Clojure flat `cond`.
+
+   (elisp-cond (test body...) ...) -> (cond test <expr> test <expr> ...)
+   where <expr> is the single body form, or (do body...) for multi-body, or
+   the test itself for an empty body (Elisp `(test)` returns the test value).
+
+   This keeps `elisp-cond` as the ONLY surface that accepts the pre-grouped
+   Elisp clause shape; bare `cond` is always flat (see `analyze-cond`)."
   [& clauses]
-  (cons 'cond clauses))
+  (cons 'cond
+        (mapcat (fn [clause]
+                  (let [[test & body] clause]
+                    [test (cond
+                            (empty? body)      test
+                            (= 1 (count body)) (first body)
+                            :else              (cons 'do body))]))
+                clauses)))
 
 (register-builtin-macro! 'elisp-cond elisp-cond-expand)
 
@@ -114,30 +128,37 @@
               :docstring docstring
               :init (when init (analyze init)))))
 
+(defn- analyze-arity-clauses
+  "Build arity maps from ([params] body...) clauses — shared by multi-arity
+   defn and multi-arity fn. Each map has :params/:fixed-params/:rest-param/
+   :variadic?/:arity/:body, with the param symbols bound as locals while the
+   body is analyzed. Params are NOT destructured (matching the emitter's
+   arity-dispatch codegen, which binds fixed-params positionally)."
+  [clauses]
+  (vec (for [arity clauses]
+         (let [[params & body] arity
+               variadic?       (some #{'&} params)
+               fixed-params    (if variadic?
+                                 (vec (take-while #(not= '& %) params))
+                                 params)
+               rest-param      (when variadic? (last params))
+               all-param-syms  (set (remove #{'&} params))]
+           {:params params
+            :fixed-params fixed-params
+            :rest-param rest-param
+            :variadic? (boolean variadic?)
+            :arity (if variadic? :variadic (count params))
+            :body (binding [*env* (with-locals *env* all-param-syms)]
+                    (mapv analyze body))}))))
+
 (defn- analyze-multi-arity-defn
   "Analyze multi-arity defn: (defn foo ([x] x) ([x y] (+ x y)))."
   [name docstring fdecl]
-  (let [arities (for [arity fdecl]
-                  (let [[params & body] arity
-                        variadic?       (some #{'&} params)
-                        fixed-params    (if variadic?
-                                          (vec (take-while #(not= '& %) params))
-                                          params)
-                        rest-param      (when variadic?
-                                          (last params))
-                        all-param-syms  (set (remove #{'&} params))]
-                    {:params params
-                     :fixed-params fixed-params
-                     :rest-param rest-param
-                     :variadic? (boolean variadic?)
-                     :arity (if variadic? :variadic (count params))
-                     :body (binding [*env* (with-locals *env* all-param-syms)]
-                             (mapv analyze body))}))]
-    (ast-node :defn
-              :name name
-              :docstring docstring
-              :multi-arity? true
-              :arities (vec arities))))
+  (ast-node :defn
+            :name name
+            :docstring docstring
+            :multi-arity? true
+            :arities (analyze-arity-clauses fdecl)))
 
 (defn- analyze-single-arity-defn
   "Analyze single-arity defn: (defn foo [x] body)."
@@ -188,35 +209,40 @@
       base-node)))
 
 (defn analyze-fn
-  "Analyze (fn [args] body) forms.
-   Supports destructuring patterns and & rest args in parameters."
+  "Analyze (fn [args] body) and multi-arity (fn ([x] a) ([x y] b)) forms.
+   Single-arity supports destructuring patterns and & rest args in params.
+   Multi-arity fn literals (2+ arity clauses) dispatch on arg count like
+   multi-arity defn; their params are not destructured."
   [[_ & fdecl]]
-  (let [[params & body]                                                                      (if (vector? (first fdecl))
-                                                                                               fdecl
-                                                                                               (first fdecl))
-        {:keys [simple-params rest-param destructure-bindings all-locals]}
-        (destructure/process-fn-params params)
-
-        ;; Build the effective params for the AST
-        effective-params                                                                     (if rest-param
-                                                                                               (conj simple-params '& rest-param)
-                                                                                               simple-params)
-
-        ;; If there are destructuring bindings, wrap body in a let
-        effective-body
-        (if (seq destructure-bindings)
-          ;; Create a let form with all the destructure bindings
-          (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
-                                            (destructure/expand-destructuring pattern gsym))
-                                          destructure-bindings))]
-            [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
-                   (cons 'do body))])
-          body)]
+  (if (and (seq? (first fdecl)) (vector? (ffirst fdecl)) (> (count fdecl) 1))
+    ;; Multi-arity: (fn ([params] body...) ([params] body...) ...)
     (ast-node :fn
-              :params effective-params
-              :rest-param rest-param
-              :body (binding [*env* (with-locals *env* all-locals)]
-                      (mapv analyze effective-body)))))
+              :multi-arity? true
+              :arities (analyze-arity-clauses fdecl))
+    ;; Single-arity: (fn [params] body...) or (fn ([params] body...))
+    (let [[params & body]  (if (vector? (first fdecl))
+                             fdecl
+                             (first fdecl))
+          {:keys [simple-params rest-param destructure-bindings all-locals]}
+          (destructure/process-fn-params params)
+
+          effective-params (if rest-param
+                             (conj simple-params '& rest-param)
+                             simple-params)
+
+          effective-body
+          (if (seq destructure-bindings)
+            (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
+                                              (destructure/expand-destructuring pattern gsym))
+                                            destructure-bindings))]
+              [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
+                     (cons 'do body))])
+            body)]
+      (ast-node :fn
+                :params effective-params
+                :rest-param rest-param
+                :body (binding [*env* (with-locals *env* all-locals)]
+                        (mapv analyze effective-body))))))
 
 (defn analyze-lambda
   "Analyze (lambda (args) body) forms — Elisp-style lambda with list params.
@@ -270,27 +296,21 @@
             :body (mapv analyze body)))
 
 (defn analyze-cond
-  "Analyze (cond clause...) forms.
-   Auto-detects style:
-   - Elisp-style: (cond (test body...) ...) — all args are lists
-   - Clojure-style: (cond test expr test expr ...) — flat pairs, has non-list args"
+  "Analyze (cond test expr test expr ...) — Clojure flat test/expr pairs.
+
+   Clojure `cond` is ALWAYS flat: there is no pre-grouped clause form, so we
+   never inspect clause shape. The Elisp-style pre-grouped shape
+   (cond (test body...) ...) is provided ONLY by the `elisp-cond` macro, which
+   desugars to this flat form (see `elisp-cond-expand`). Auto-detecting by
+   `(every? seq? clauses)` was wrong: a flat cond whose tests AND exprs are all
+   lists — e.g. (cond (hash-table-p m) (maphash ...) (listp m) (dolist ...)) —
+   was mis-read as pre-grouped and mis-compiled."
   [[_ & clauses]]
-  (if (every? seq? clauses)
-    ;; Elisp-style: each arg is a clause (test body...)
-    (ast-node :cond
-              :clauses (mapv (fn [clause]
-                               (let [[test & body] clause]
-                                 {:test (analyze test)
-                                  :expr (if (= 1 (count body))
-                                          (analyze (first body))
-                                          (analyze (cons 'do body)))}))
-                             clauses))
-    ;; Clojure-style: flat pairs
-    (ast-node :cond
-              :clauses (->> (partition 2 clauses)
-                            (mapv (fn [[test expr]]
-                                    {:test (analyze test)
-                                     :expr (analyze expr)}))))))
+  (ast-node :cond
+            :clauses (->> (partition 2 clauses)
+                          (mapv (fn [[test expr]]
+                                  {:test (analyze test)
+                                   :expr (analyze expr)})))))
 
 (defn analyze-case
   "Analyze (case expr clause...) forms.
