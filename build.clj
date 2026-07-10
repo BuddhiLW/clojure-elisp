@@ -8,11 +8,20 @@
 (def uber-file (format "target/clel-%s.jar" version))
 (def basis (delay (b/create-basis {:project "deps.edn"})))
 
+(def version-resource "resources/clojure-elisp/VERSION")
+
 (defn clean [_]
   (b/delete {:path "target"}))
 
+(defn sync-version
+  "Regenerate the classpath VERSION resource from the canonical top-level VERSION."
+  [_]
+  (spit version-resource (slurp "VERSION"))
+  (println (str "Synced " version-resource " -> " version)))
+
 (defn uber [_]
   (clean nil)
+  (sync-version nil)
   (b/copy-dir {:src-dirs ["src" "resources"]
                :target-dir class-dir})
   (b/compile-clj {:basis @basis
