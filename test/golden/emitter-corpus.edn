@@ -1,0 +1,54 @@
+{:and "(and a b)",
+ :assoc "(clel-assoc m :k v)",
+ :atom "(clel-atom 0)",
+ :call "(+ 1 2 3)",
+ :case "(pcase x\n  (1 :one)\n  (2 :two)\n  (_ :other))",
+ :cond "(cond\n  (p1 a)\n  (t b))",
+ :const-bool "t",
+ :const-kw ":kw",
+ :const-nil "nil",
+ :const-num "42",
+ :const-str "\"hi\"",
+ :defmulti
+ "(cl-defgeneric area (arg)\n  \"Multimethod with dispatch: :shape\")",
+ :defn "(defun foo (x)\n  (+ x 1))",
+ :defn-bang "(defun go-bang ()\n  1)",
+ :defn-multi
+ "(defun bar (&rest clel--args)\n  (cl-case (length clel--args)\n    (1 (let ((x (car clel--args))) x))\n    (2 (let ((x (car clel--args)) (y (cadr clel--args))) (+ x y)))))",
+ :defn-pred "(defun valid-p (x)\n  x)",
+ :defn-vararg
+ "(defun baz (&rest clel--args)\n  (let ((xs (nthcdr 0 clel--args)))\n    xs))",
+ :defprotocol "(cl-defgeneric m (this))",
+ :defrecord
+ "(cl-defstruct (R (:constructor R--create)\n               (:copier nil))\n  a\n  b)\n\n(defun ->R (a b)\n  (R--create :a a :b b))\n\n(defun map->R (m)\n  (R--create :a (clel-get m :a) :b (clel-get m :b)))",
+ :deftype
+ "(cl-defstruct (T (:constructor T--create)\n               (:copier nil))\n  x)\n\n(defun ->T (x)\n  (T--create :x x))",
+ :deref "(clel-deref a)",
+ :do "(progn\n  a\n  b)",
+ :first "(clel-first xs)",
+ :fn "(lambda (x)\n    (* x x))",
+ :if "(if p a b)",
+ :inc "(1+ x)",
+ :let "(let* ((a 1)\n        (b 2))\n    (+ a b))",
+ :let-map
+ "(let* ((map__N m)\n        (x (clel-get map__N :x))\n        (y (clel-get map__N :y)))\n    (+ x y))",
+ :let-vec
+ "(let* ((vec__N xs)\n        (a (clel-nth vec__N 0))\n        (b (clel-nth vec__N 1)))\n    (+ a b))",
+ :loop
+ "(cl-labels ((recur (i)\n      (if (< i 10) (recur (1+ i)) i)))\n    (recur 0))",
+ :map "(clel-map #'f xs)",
+ :or "(or a b)",
+ :reify
+ "(cl-defstruct (clel--reify-N (:constructor clel--reify-N--create)\n               (:copier nil)))\n\n(cl-defmethod m ((this clel--reify-N))\n  1)\n\n(clel--reify-N--create)",
+ :reset "(clel-reset! a 1)",
+ :save-excursion "(save-excursion\n    a\n    b)",
+ :save-restriction "(save-restriction\n    a)",
+ :str "(clel-str \"a\" b)",
+ :swap "(clel-swap! a #'1+)",
+ :thread "(g (f x))",
+ :throw "(signal 'error (list \"m\" (list )))",
+ :try
+ "(condition-case e\n    (unwind-protect\n    a\n  c)\n  (error e))",
+ :when "(when p\n    a\n    b)",
+ :with-current-buffer "(with-current-buffer buf\n    a)",
+ :with-temp-buffer "(with-temp-buffer\n    a)"}

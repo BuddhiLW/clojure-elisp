@@ -1,0 +1,5 @@
+{:arrow "next--gt",
+ :bang "go-bang",
+ :plain "plain-name",
+ :pred "valid-p",
+ :star "foo-star"}
