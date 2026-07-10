@@ -292,6 +292,13 @@
     3 "(cadddr clel--args)"
     (format "(nth %d clel--args)" n)))
 
+(defn- mangle-param
+  "Mangle a parameter symbol, translating the Clojure rest marker `&` into
+   Elisp's `&rest`. A bare `&` in an Elisp arglist is an ordinary required
+   parameter, so `[x & xs]` must emit `(x &rest xs)`, not `(x & xs)`."
+  [p]
+  (if (= '& p) "&rest" (mangle-name p)))
+
 (defn- emit-arity-param-bindings
   "Emit let-binding string for an arity's params from an args list."
   [{:keys [params fixed-params rest-param variadic?]}]
@@ -309,32 +316,36 @@
                      (format "(%s %s)" (mangle-name p) (nth-accessor i)))
                    params))))
 
+(defn- emit-arity-cl-case
+  "Emit the `(cl-case (length clel--args) ...)` arity-dispatch body shared by
+   multi-arity defn and multi-arity fn. Fixed arities dispatch on arg count;
+   the variadic arity (if any) is the `t` catch-all."
+  [arities]
+  (let [fixed-arities      (filter #(not= :variadic (:arity %)) arities)
+        variadic-arity     (first (filter #(= :variadic (:arity %)) arities))
+        emit-arity-case    (fn [{:keys [arity body] :as arity-node}]
+                             (format "(%d (let (%s) %s))"
+                                     arity
+                                     (emit-arity-param-bindings arity-node)
+                                     (str/join " " (map emit body))))
+        emit-variadic-case (fn [arity-node]
+                             (format "(t (let (%s) %s))"
+                                     (emit-arity-param-bindings arity-node)
+                                     (str/join " " (map emit (:body arity-node)))))
+        case-clauses       (concat (map emit-arity-case fixed-arities)
+                                   (when variadic-arity
+                                     [(emit-variadic-case variadic-arity)]))]
+    (format "(cl-case (length clel--args)\n    %s)" (str/join "\n    " case-clauses))))
+
 (defn- emit-multi-arity-defn
   "Emit a multi-arity defun with cl-case dispatch on arg count."
   [elisp-name docstring arities]
-  (let [fixed-arities      (filter #(not= :variadic (:arity %)) arities)
-        variadic-arity     (first (filter #(= :variadic (:arity %)) arities))
-
-        emit-arity-case    (fn [{:keys [arity body] :as arity-node}]
-                             (let [bindings (emit-arity-param-bindings arity-node)
-                                   body-str (str/join " " (map emit body))]
-                               (format "(%d (let (%s) %s))" arity bindings body-str)))
-
-        emit-variadic-case (fn [arity-node]
-                             (let [bindings (emit-arity-param-bindings arity-node)
-                                   body-str (str/join " " (map emit (:body arity-node)))]
-                               (format "(t (let (%s) %s))" bindings body-str)))
-
-        case-clauses       (concat
-                            (map emit-arity-case fixed-arities)
-                            (when variadic-arity
-                              [(emit-variadic-case variadic-arity)]))
-        case-body          (str/join "\n    " case-clauses)]
+  (let [dispatch (emit-arity-cl-case arities)]
     (if docstring
-      (format "(defun %s (&rest clel--args)\n  %s\n  (cl-case (length clel--args)\n    %s))"
-              elisp-name (pr-str docstring) case-body)
-      (format "(defun %s (&rest clel--args)\n  (cl-case (length clel--args)\n    %s))"
-              elisp-name case-body))))
+      (format "(defun %s (&rest clel--args)\n  %s\n  %s)"
+              elisp-name (pr-str docstring) dispatch)
+      (format "(defun %s (&rest clel--args)\n  %s)"
+              elisp-name dispatch))))
 
 (defn- emit-single-arity-defn
   "Emit a single-arity defun (variadic or simple)."
@@ -370,14 +381,15 @@
       (emit-single-arity-defn elisp-name docstring params body variadic? fixed-params rest-param))))
 
 (defmethod emit-node :fn
-  [{:keys [params body]}]
-  ;; The Clojure rest marker `&` must become Elisp's `&rest`; a bare `&` in a
-  ;; lambda arglist is an ordinary required parameter, so `(fn [x & xs] …)`
-  ;; would take the wrong arity and never bind the rest list.
-  (let [elisp-params (str "(" (emit-list (map (fn [p] (if (= '& p) "&rest" (mangle-name p)))
-                                              params)) ")")
-        elisp-body   (str/join "\n    " (map emit body))]
-    (format "(lambda %s\n    %s)" elisp-params elisp-body)))
+  [{:keys [params body multi-arity? arities]}]
+  (if multi-arity?
+    ;; Multi-arity fn literal: dispatch on arg count like multi-arity defn,
+    ;; but as an anonymous lambda over the synthetic clel--args arglist.
+    (format "(lambda (&rest clel--args)\n    %s)" (emit-arity-cl-case arities))
+    ;; Single arity: `&` -> `&rest` so (fn [x & xs] ...) binds the rest list.
+    (let [elisp-params (str "(" (emit-list (map mangle-param params)) ")")
+          elisp-body   (str/join "\n    " (map emit body))]
+      (format "(lambda %s\n    %s)" elisp-params elisp-body))))
 
 (defmethod emit-node :lazy-seq
   [{:keys [body]}]
@@ -743,13 +755,14 @@
         type-spec  (if (= :default dispatch-val)
                      "t"
                      (format "(eql %s)" (emit-literal dispatch-val)))
-        ;; Emit params - first param gets the type specializer
+        ;; Emit params - first param gets the type specializer. Remaining params
+        ;; use mangle-param so a Clojure rest marker `&` becomes Elisp `&rest`.
         params-str (if (= 1 (count params))
                      (format "((%s %s))" (mangle-name (first params)) type-spec)
                      (format "((%s %s) %s)"
                              (mangle-name (first params))
                              type-spec
-                             (str/join " " (map mangle-name (rest params)))))
+                             (str/join " " (map mangle-param (rest params)))))
         ;; Emit body with potential destructuring
         body-str   (if destructure-bindings
                    ;; Wrap body in let* for destructuring (bindings are already analyzed)

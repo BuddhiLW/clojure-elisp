@@ -128,30 +128,37 @@
               :docstring docstring
               :init (when init (analyze init)))))
 
+(defn- analyze-arity-clauses
+  "Build arity maps from ([params] body...) clauses — shared by multi-arity
+   defn and multi-arity fn. Each map has :params/:fixed-params/:rest-param/
+   :variadic?/:arity/:body, with the param symbols bound as locals while the
+   body is analyzed. Params are NOT destructured (matching the emitter's
+   arity-dispatch codegen, which binds fixed-params positionally)."
+  [clauses]
+  (vec (for [arity clauses]
+         (let [[params & body] arity
+               variadic?       (some #{'&} params)
+               fixed-params    (if variadic?
+                                 (vec (take-while #(not= '& %) params))
+                                 params)
+               rest-param      (when variadic? (last params))
+               all-param-syms  (set (remove #{'&} params))]
+           {:params params
+            :fixed-params fixed-params
+            :rest-param rest-param
+            :variadic? (boolean variadic?)
+            :arity (if variadic? :variadic (count params))
+            :body (binding [*env* (with-locals *env* all-param-syms)]
+                    (mapv analyze body))}))))
+
 (defn- analyze-multi-arity-defn
   "Analyze multi-arity defn: (defn foo ([x] x) ([x y] (+ x y)))."
   [name docstring fdecl]
-  (let [arities (for [arity fdecl]
-                  (let [[params & body] arity
-                        variadic?       (some #{'&} params)
-                        fixed-params    (if variadic?
-                                          (vec (take-while #(not= '& %) params))
-                                          params)
-                        rest-param      (when variadic?
-                                          (last params))
-                        all-param-syms  (set (remove #{'&} params))]
-                    {:params params
-                     :fixed-params fixed-params
-                     :rest-param rest-param
-                     :variadic? (boolean variadic?)
-                     :arity (if variadic? :variadic (count params))
-                     :body (binding [*env* (with-locals *env* all-param-syms)]
-                             (mapv analyze body))}))]
-    (ast-node :defn
-              :name name
-              :docstring docstring
-              :multi-arity? true
-              :arities (vec arities))))
+  (ast-node :defn
+            :name name
+            :docstring docstring
+            :multi-arity? true
+            :arities (analyze-arity-clauses fdecl)))
 
 (defn- analyze-single-arity-defn
   "Analyze single-arity defn: (defn foo [x] body)."
@@ -202,35 +209,40 @@
       base-node)))
 
 (defn analyze-fn
-  "Analyze (fn [args] body) forms.
-   Supports destructuring patterns and & rest args in parameters."
+  "Analyze (fn [args] body) and multi-arity (fn ([x] a) ([x y] b)) forms.
+   Single-arity supports destructuring patterns and & rest args in params.
+   Multi-arity fn literals (2+ arity clauses) dispatch on arg count like
+   multi-arity defn; their params are not destructured."
   [[_ & fdecl]]
-  (let [[params & body]                                                                      (if (vector? (first fdecl))
-                                                                                               fdecl
-                                                                                               (first fdecl))
-        {:keys [simple-params rest-param destructure-bindings all-locals]}
-        (destructure/process-fn-params params)
-
-        ;; Build the effective params for the AST
-        effective-params                                                                     (if rest-param
-                                                                                               (conj simple-params '& rest-param)
-                                                                                               simple-params)
-
-        ;; If there are destructuring bindings, wrap body in a let
-        effective-body
-        (if (seq destructure-bindings)
-          ;; Create a let form with all the destructure bindings
-          (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
-                                            (destructure/expand-destructuring pattern gsym))
-                                          destructure-bindings))]
-            [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
-                   (cons 'do body))])
-          body)]
+  (if (and (seq? (first fdecl)) (vector? (ffirst fdecl)) (> (count fdecl) 1))
+    ;; Multi-arity: (fn ([params] body...) ([params] body...) ...)
     (ast-node :fn
-              :params effective-params
-              :rest-param rest-param
-              :body (binding [*env* (with-locals *env* all-locals)]
-                      (mapv analyze effective-body)))))
+              :multi-arity? true
+              :arities (analyze-arity-clauses fdecl))
+    ;; Single-arity: (fn [params] body...) or (fn ([params] body...))
+    (let [[params & body]  (if (vector? (first fdecl))
+                             fdecl
+                             (first fdecl))
+          {:keys [simple-params rest-param destructure-bindings all-locals]}
+          (destructure/process-fn-params params)
+
+          effective-params (if rest-param
+                             (conj simple-params '& rest-param)
+                             simple-params)
+
+          effective-body
+          (if (seq destructure-bindings)
+            (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
+                                              (destructure/expand-destructuring pattern gsym))
+                                            destructure-bindings))]
+              [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
+                     (cons 'do body))])
+            body)]
+      (ast-node :fn
+                :params effective-params
+                :rest-param rest-param
+                :body (binding [*env* (with-locals *env* all-locals)]
+                        (mapv analyze effective-body))))))
 
 (defn analyze-lambda
   "Analyze (lambda (args) body) forms — Elisp-style lambda with list params.
