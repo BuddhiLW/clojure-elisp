@@ -52,9 +52,23 @@
 ;; ============================================================================
 
 (defn- elisp-cond-expand
-  "Transform elisp-cond into cond (now a no-op alias since cond handles Elisp-style)."
+  "Desugar Elisp-style pre-grouped clauses into a Clojure flat `cond`.
+
+   (elisp-cond (test body...) ...) -> (cond test <expr> test <expr> ...)
+   where <expr> is the single body form, or (do body...) for multi-body, or
+   the test itself for an empty body (Elisp `(test)` returns the test value).
+
+   This keeps `elisp-cond` as the ONLY surface that accepts the pre-grouped
+   Elisp clause shape; bare `cond` is always flat (see `analyze-cond`)."
   [& clauses]
-  (cons 'cond clauses))
+  (cons 'cond
+        (mapcat (fn [clause]
+                  (let [[test & body] clause]
+                    [test (cond
+                            (empty? body)      test
+                            (= 1 (count body)) (first body)
+                            :else              (cons 'do body))]))
+                clauses)))
 
 (register-builtin-macro! 'elisp-cond elisp-cond-expand)
 
@@ -270,27 +284,21 @@
             :body (mapv analyze body)))
 
 (defn analyze-cond
-  "Analyze (cond clause...) forms.
-   Auto-detects style:
-   - Elisp-style: (cond (test body...) ...) — all args are lists
-   - Clojure-style: (cond test expr test expr ...) — flat pairs, has non-list args"
+  "Analyze (cond test expr test expr ...) — Clojure flat test/expr pairs.
+
+   Clojure `cond` is ALWAYS flat: there is no pre-grouped clause form, so we
+   never inspect clause shape. The Elisp-style pre-grouped shape
+   (cond (test body...) ...) is provided ONLY by the `elisp-cond` macro, which
+   desugars to this flat form (see `elisp-cond-expand`). Auto-detecting by
+   `(every? seq? clauses)` was wrong: a flat cond whose tests AND exprs are all
+   lists — e.g. (cond (hash-table-p m) (maphash ...) (listp m) (dolist ...)) —
+   was mis-read as pre-grouped and mis-compiled."
   [[_ & clauses]]
-  (if (every? seq? clauses)
-    ;; Elisp-style: each arg is a clause (test body...)
-    (ast-node :cond
-              :clauses (mapv (fn [clause]
-                               (let [[test & body] clause]
-                                 {:test (analyze test)
-                                  :expr (if (= 1 (count body))
-                                          (analyze (first body))
-                                          (analyze (cons 'do body)))}))
-                             clauses))
-    ;; Clojure-style: flat pairs
-    (ast-node :cond
-              :clauses (->> (partition 2 clauses)
-                            (mapv (fn [[test expr]]
-                                    {:test (analyze test)
-                                     :expr (analyze expr)}))))))
+  (ast-node :cond
+            :clauses (->> (partition 2 clauses)
+                          (mapv (fn [[test expr]]
+                                  {:test (analyze test)
+                                   :expr (analyze expr)})))))
 
 (defn analyze-case
   "Analyze (case expr clause...) forms.
