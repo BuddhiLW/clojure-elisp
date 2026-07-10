@@ -4,7 +4,7 @@
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.5.0
+;; Version: 0.5.5
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
@@ -20,10 +20,9 @@
 (require 'cl-lib)
 (require 'seq)
 
-;; Elisp-2 compatibility: defvars bridge function-slot names to value-slot.
-;; CLJEL-compiled defmacro bodies reference these at macro-expansion time.
 (defvar clojure-core-vector #'vector
   "Function-slot bridge for `vector' (Elisp-2 compatibility).")
+
 (defvar clojure-core-list #'list
   "Function-slot bridge for `list' (Elisp-2 compatibility).")
 
@@ -149,16 +148,9 @@
   (t nil)))
 
 (cl-defun clel-nth (coll n &optional (not-found nil not-found-p))
-  "Clojure-style nth: the N-th element of COLL, coll FIRST and 0-indexed.
-Elisp `nth' is (nth N LIST) — index first — so a bare mapping reversed the
-args. With NOT-FOUND supplied, return it for an out-of-range index instead
-of signalling, matching clojure.core/nth's 3-arity."
-  (let ((len (if (sequencep coll) (length coll) 0)))
-    (if (and (integerp n) (>= n 0) (< n len))
-        (elt coll n)
-      (if not-found-p
-          not-found
-        (error "clel-nth: index %s out of bounds (length %d)" n len)))))
+  "Clojure-style nth: the N-th element of COLL, coll FIRST and 0-indexed.\nElisp `nth' is (nth N LIST) — index first — so a bare mapping reversed the\nargs. With NOT-FOUND supplied, return it for an out-of-range index instead\nof signalling, matching clojure.core/nth's 3-arity."
+  (let* ((len (if (sequencep coll) (length coll) 0)))
+    (if (and (integerp n) (>= n 0) (< n len)) (elt coll n) (if not-found-p not-found (error "clel-nth: index %s out of bounds (length %d)" n len)))))
 
 (defun clel-contains-p (coll key)
   "Return t if KEY exists in COLL.\nFor maps/alists, checks if key is present.\nFor sets (represented as lists), checks if element is present.\nFor vectors, checks if index is valid."
@@ -347,14 +339,14 @@ of signalling, matching clojure.core/nth's 3-arity."
         (sublen (length substr))
         (limit (or from-index len))
         (result nil))
-    (cl-dotimes (i (cl-min (1+ limit) (- len sublen -1)))
+    (cl-dotimes (i (min (1+ limit) (- len sublen -1)))
     (when (and (<= (+ i sublen) len) (string= substr (substring s i (+ i sublen))))
     (setq result i)))
     result)))
 
 (defun clel-constantly (x)
   "Return a function that always returns X."
-  (lambda (& _)
+  (lambda (&rest _)
     x))
 
 (defun clel-comp (&rest clel--args)
@@ -698,7 +690,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   (0 nil)
   (1 (setq end (car args)))
   (2 (setq start (car args) end (cadr args)))
-  ('_ (setq start (car args) end (cadr args) step (caddr args))))
+  (_ (setq start (car args) end (cadr args) step (caddr args))))
     (when end
     (let* ((result nil)
         (i start))
@@ -1009,17 +1001,17 @@ of signalling, matching clojure.core/nth's 3-arity."
 (defun clel-into-xform (to xform from)
   "Add all items FROM into TO, transformed by XFORM."
   (let* ((rf (cond
-  ((vectorp to) (lambda (& args)
+  ((vectorp to) (lambda (&rest args)
     (pcase (length args)
   (0 (vector))
   (1 (car args))
   (2 (vconcat (car args) (vector (cadr args)))))))
-  ((listp to) (lambda (& args)
+  ((listp to) (lambda (&rest args)
     (pcase (length args)
   (0 nil)
   (1 (nreverse (car args)))
   (2 (cons (cadr args) (car args))))))
-  ((hash-table-p to) (lambda (& args)
+  ((hash-table-p to) (lambda (&rest args)
     (pcase (length args)
   (0 (make-hash-table :test 'equal))
   (1 (car args))
@@ -1036,7 +1028,7 @@ of signalling, matching clojure.core/nth's 3-arity."
 
 (defun clel-sequence-xform (xform coll)
   "Apply transducer XFORM to COLL, returning a lazy sequence."
-  (clel-transduce xform (lambda (& args)
+  (clel-transduce xform (lambda (&rest args)
     (pcase (length args)
   (0 nil)
   (1 (nreverse (car args)))
@@ -1053,7 +1045,7 @@ of signalling, matching clojure.core/nth's 3-arity."
 (defun clel-map-xf (f)
   "Return a mapping transducer that applies F to each element."
   (lambda (rf)
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1062,7 +1054,7 @@ of signalling, matching clojure.core/nth's 3-arity."
 (defun clel-filter-xf (pred)
   "Return a filtering transducer that keeps elements where PRED is true."
   (lambda (rf)
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1076,7 +1068,7 @@ of signalling, matching clojure.core/nth's 3-arity."
 (defun clel-keep-xf (f)
   "Return a transducer that keeps non-nil results of (F item)."
   (lambda (rf)
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1087,7 +1079,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that keeps non-nil results of (F index item)."
   (lambda (rf)
     (let* ((idx -1))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1098,7 +1090,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that takes first N elements."
   (lambda (rf)
     (let* ((remaining n))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1110,7 +1102,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that drops first N elements."
   (lambda (rf)
     (let* ((remaining n))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1122,7 +1114,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that takes elements while PRED is true."
   (lambda (rf)
     (let* ((taking t))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1134,7 +1126,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that drops elements while PRED is true."
   (lambda (rf)
     (let* ((dropping t))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1146,7 +1138,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that partitions into groups of N elements."
   (lambda (rf)
     (let* ((buffer nil))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (let* ((result (car args)))
@@ -1162,7 +1154,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   (lambda (rf)
     (let* ((buffer nil)
         (prev-val 'clel--none))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (let* ((result (car args)))
@@ -1182,7 +1174,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that removes consecutive duplicates."
   (lambda (rf)
     (let* ((prev 'clel--none))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1195,7 +1187,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that removes all duplicates (not just consecutive)."
   (lambda (rf)
     (let* ((seen (make-hash-table :test 'equal)))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1208,7 +1200,7 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return a transducer that interposes SEP between elements."
   (lambda (rf)
     (let* ((started nil))
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1220,7 +1212,7 @@ of signalling, matching clojure.core/nth's 3-arity."
 (defun clel-cat-xf ()
   "Return a transducer that concatenates nested collections."
   (lambda (rf)
-    (lambda (& args)
+    (lambda (&rest args)
     (pcase (length args)
   (0 (funcall rf))
   (1 (funcall rf (car args)))
@@ -1336,13 +1328,13 @@ of signalling, matching clojure.core/nth's 3-arity."
 
 (defun clel-complement (f)
   "Return a function that is the boolean complement of F."
-  (lambda (& args)
+  (lambda (&rest args)
     (not (apply f args))))
 
 (defun clel-juxt (&rest clel--args)
   (let ((fns (nthcdr 0 clel--args)))
     "Return a function that applies each of FNS to its args, returning a list of results."
-  (lambda (& args)
+  (lambda (&rest args)
     (mapcar (lambda (f)
     (apply f args)) fns))))
 
