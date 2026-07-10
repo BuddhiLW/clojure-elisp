@@ -27,13 +27,13 @@
 (defvar clojure-core-list #'list
   "Function-slot bridge for `list' (Elisp-2 compatibility).")
 
-(defun clel-vector (&rest args)
-  (let ((items (nthcdr 0 args)))
+(defun clel-vector (&rest clel--args)
+  (let ((items (nthcdr 0 clel--args)))
     "Create a vector from ITEMS."
   (apply #'vector items)))
 
-(defun clel-hash-map (&rest args)
-  (let ((kvs (nthcdr 0 args)))
+(defun clel-hash-map (&rest clel--args)
+  (let ((kvs (nthcdr 0 clel--args)))
     "Create a hash-table from key-value pairs KVS."
   (let* ((ht (make-hash-table :test 'equal))
         (rest kvs))
@@ -103,21 +103,21 @@
     (setq keys (if (vectorp keys) (append keys nil) (clel-seq-force keys))))
     (if (null keys) m (if (= 1 (length keys)) (clel-assoc m (car keys) v) (clel-assoc m (car keys) (clel-assoc-in (clel-get m (car keys)) (cdr keys) v))))))
 
-(defun clel-update (&rest args)
-  (let ((m (nth 0 args)) (k (nth 1 args)) (f (nth 2 args)) (args (nthcdr 3 args)))
+(defun clel-update (&rest clel--args)
+  (let ((m (nth 0 clel--args)) (k (nth 1 clel--args)) (f (nth 2 clel--args)) (args (nthcdr 3 clel--args)))
     "Update value at K in M by applying F to old value and ARGS."
   (clel-assoc m k (apply f (clel-get m k) args))))
 
-(defun clel-update-in (&rest args)
-  (let ((m (nth 0 args)) (ks (nth 1 args)) (f (nth 2 args)) (args (nthcdr 3 args)))
+(defun clel-update-in (&rest clel--args)
+  (let ((m (nth 0 clel--args)) (ks (nth 1 clel--args)) (f (nth 2 clel--args)) (args (nthcdr 3 clel--args)))
     "Update value at nested path KS in M by applying F to old value and ARGS."
   (let* ((keys ks))
     (when (or (vectorp keys) (and (listp keys) (eq (car-safe keys) 'clel-lazy-seq)))
     (setq keys (if (vectorp keys) (append keys nil) (clel-seq-force keys))))
     (if (null keys) m (if (= 1 (length keys)) (apply #'clel-update m (car keys) f args) (clel-assoc m (car keys) (apply #'clel-update-in (clel-get m (car keys)) (cdr keys) f args)))))))
 
-(defun clel-merge (&rest args)
-  (let ((maps (nthcdr 0 args)))
+(defun clel-merge (&rest clel--args)
+  (let ((maps (nthcdr 0 clel--args)))
     "Merge MAPS left to right.\nLater values override earlier. Returns alist or hash-table depending on first map."
   (if (null maps) nil (let* ((first-map (car maps))
         (result (cond
@@ -233,8 +233,8 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return t if X is exactly nil."
   (null x))
 
-(defun clel-str (&rest args)
-  (let ((args (nthcdr 0 args)))
+(defun clel-str (&rest clel--args)
+  (let ((args (nthcdr 0 clel--args)))
     "Concatenate ARGS as strings."
   (mapconcat (lambda (x)
     (cond
@@ -357,8 +357,8 @@ of signalling, matching clojure.core/nth's 3-arity."
   (lambda (& _)
     x))
 
-(defun clel-comp (&rest args)
-  (let ((fns (nthcdr 0 args)))
+(defun clel-comp (&rest clel--args)
+  (let ((fns (nthcdr 0 clel--args)))
     "Compose functions FNS right-to-left."
   (lambda (x)
     (seq-reduce (lambda (v f)
@@ -389,8 +389,8 @@ of signalling, matching clojure.core/nth's 3-arity."
 
 (defalias 'clel-reset! #'clel-reset-bang)
 
-(defun clel-swap-bang (&rest args)
-  (let ((atom (nth 0 args)) (f (nth 1 args)) (args (nthcdr 2 args)))
+(defun clel-swap-bang (&rest clel--args)
+  (let ((atom (nth 0 clel--args)) (f (nth 1 clel--args)) (args (nthcdr 2 clel--args)))
     "Swap ATOM by applying F to current value and ARGS, calling watchers."
   (let* ((old-val (clel-deref atom))
         (new-val (apply f old-val args)))
@@ -486,8 +486,8 @@ of signalling, matching clojure.core/nth's 3-arity."
   ((vectorp s) (append s nil))
   (t (list s))))
 
-(defun clel-map (&rest args)
-  (let ((f (nth 0 args)) (colls (nthcdr 1 args)))
+(defun clel-map (&rest clel--args)
+  (let ((f (nth 0 clel--args)) (colls (nthcdr 1 clel--args)))
     "Lazily map F over COLLS. With one coll, returns lazy seq."
   (if (= 1 (length colls)) (let* ((s (clel-seq-force (car colls))))
     (clel-lazy-seq-create (lambda ()
@@ -540,8 +540,8 @@ of signalling, matching clojure.core/nth's 3-arity."
     (setq cur (clel-rest cur)))
     cur))))
 
-(defun clel-concat (&rest args)
-  (let ((colls (nthcdr 0 args)))
+(defun clel-concat (&rest clel--args)
+  (let ((colls (nthcdr 0 clel--args)))
     "Lazily concatenate COLLS."
   (if (null colls) nil (let* ((first-coll (clel-seq-force (car colls)))
         (rest-colls (cdr colls)))
@@ -549,13 +549,13 @@ of signalling, matching clojure.core/nth's 3-arity."
     (if first-coll (cons (clel-first first-coll) (apply #'clel-concat (cons (clel-rest first-coll) rest-colls))) (when rest-colls
     (clel-seq-force (apply #'clel-concat rest-colls))))))))))
 
-(defun clel-mapcat (&rest args)
-  (let ((f (nth 0 args)) (colls (nthcdr 1 args)))
+(defun clel-mapcat (&rest clel--args)
+  (let ((f (nth 0 clel--args)) (colls (nthcdr 1 clel--args)))
     "Map F over COLLS and concatenate results lazily."
   (apply #'clel-concat (clel-doall (apply #'clel-map f colls)))))
 
-(defun clel-interleave (&rest args)
-  (let ((colls (nthcdr 0 args)))
+(defun clel-interleave (&rest clel--args)
+  (let ((colls (nthcdr 0 clel--args)))
     "Lazily interleave COLLS."
   (let* ((seqs (mapcar #'clel-seq-force colls)))
     (clel-lazy-seq-create (lambda ()
@@ -601,8 +601,8 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Split S at first element where PRED is false.\nReturns list of (take-while pred s) and (drop-while pred s)."
   (list (clel-doall (clel-take-while pred s)) (clel-doall (clel-drop-while pred s))))
 
-(defun clel-reduce (&rest args)
-  (let ((f (nth 0 args)) (args (nthcdr 1 args)))
+(defun clel-reduce (&rest clel--args)
+  (let ((f (nth 0 clel--args)) (args (nthcdr 1 clel--args)))
     "Reduce S with F. (clel-reduce f coll) or (clel-reduce f init coll)."
   (let* ((init nil)
         (s nil))
@@ -688,8 +688,8 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Return t if COLL is empty or nil. Lazy-seq aware."
   (null (clel-seq-force coll)))
 
-(defun clel-range (&rest args)
-  (let ((args (nthcdr 0 args)))
+(defun clel-range (&rest clel--args)
+  (let ((args (nthcdr 0 clel--args)))
     "Generate a range of numbers.\n(range) - returns empty list (infinite range not supported)\n(range end) - returns (0 1 ... end-1)\n(range start end) - returns (start start+1 ... end-1)\n(range start end step) - returns (start start+step ...) up to but not including end"
   (let* ((start 0)
         (end nil)
@@ -724,8 +724,8 @@ of signalling, matching clojure.core/nth's 3-arity."
     (push (funcall f) result))
     (nreverse result)))
 
-(defun clel-set (&rest args)
-  (let ((items (nthcdr 0 args)))
+(defun clel-set (&rest clel--args)
+  (let ((items (nthcdr 0 clel--args)))
     "Create a set from ITEMS.\nReturns a hash-table where each item is a key with value t."
   (let* ((s (make-hash-table :test 'equal)))
     (dolist (item items)
@@ -763,8 +763,8 @@ of signalling, matching clojure.core/nth's 3-arity."
     (remhash item new)
     new))
 
-(defun clel-set-union (&rest args)
-  (let ((sets (nthcdr 0 args)))
+(defun clel-set-union (&rest clel--args)
+  (let ((sets (nthcdr 0 clel--args)))
     "Return the union of SETS."
   (let* ((result (make-hash-table :test 'equal)))
     (dolist (s sets)
@@ -773,8 +773,8 @@ of signalling, matching clojure.core/nth's 3-arity."
     (puthash item t result))))
     result)))
 
-(defun clel-set-intersection (&rest args)
-  (let ((sets (nthcdr 0 args)))
+(defun clel-set-intersection (&rest clel--args)
+  (let ((sets (nthcdr 0 clel--args)))
     "Return the intersection of SETS."
   (if (null sets) (make-hash-table :test 'equal) (let* ((first-set (car sets))
         (rest-sets (cdr sets))
@@ -788,8 +788,8 @@ of signalling, matching clojure.core/nth's 3-arity."
     (puthash item t result))))
     result))))
 
-(defun clel-set-difference (&rest args)
-  (let ((s1 (nth 0 args)) (sets (nthcdr 1 args)))
+(defun clel-set-difference (&rest clel--args)
+  (let ((s1 (nth 0 clel--args)) (sets (nthcdr 1 clel--args)))
     "Return items in S1 not in any of SETS."
   (let* ((result (make-hash-table :test 'equal)))
     (if (hash-table-p s1) (maphash (lambda (k v)
@@ -988,8 +988,8 @@ of signalling, matching clojure.core/nth's 3-arity."
   "Unwrap reduced value if reduced, else return X."
   (if (clel-reduced-p x) (cadr x) x))
 
-(defun clel-transduce (&rest args)
-  (let ((xform (nth 0 args)) (f (nth 1 args)) (args (nthcdr 2 args)))
+(defun clel-transduce (&rest clel--args)
+  (let ((xform (nth 0 clel--args)) (f (nth 1 clel--args)) (args (nthcdr 2 clel--args)))
     "Transduce COLL with transducer XFORM and reducing function F.\nUsage: (clel-transduce xform f coll) or (clel-transduce xform f init coll)"
   (let* ((init nil)
         (coll nil))
@@ -1339,8 +1339,8 @@ of signalling, matching clojure.core/nth's 3-arity."
   (lambda (& args)
     (not (apply f args))))
 
-(defun clel-juxt (&rest args)
-  (let ((fns (nthcdr 0 args)))
+(defun clel-juxt (&rest clel--args)
+  (let ((fns (nthcdr 0 clel--args)))
     "Return a function that applies each of FNS to its args, returning a list of results."
   (lambda (& args)
     (mapcar (lambda (f)
@@ -1423,8 +1423,8 @@ of signalling, matching clojure.core/nth's 3-arity."
     (when s (let* ((new-acc (funcall f acc (clel-first s))))
     (cons new-acc (clel--reductions-helper f new-acc (clel-rest s))))))))
 
-(defun clel-reductions (&rest args)
-  (let ((f (nth 0 args)) (args (nthcdr 1 args)))
+(defun clel-reductions (&rest clel--args)
+  (let ((f (nth 0 clel--args)) (args (nthcdr 1 clel--args)))
     "Return a lazy seq of intermediate reduce values.\nUsage: (clel-reductions f coll) or (clel-reductions f init coll)."
   (let* ((init nil)
         (coll nil))
@@ -1449,8 +1449,8 @@ of signalling, matching clojure.core/nth's 3-arity."
     (let* ((len (length s)))
     (if (<= len n) s (nthcdr (- len n) s)))))
 
-(defun clel-drop-last (&rest args)
-  (let ((args (nthcdr 0 args)))
+(defun clel-drop-last (&rest clel--args)
+  (let ((args (nthcdr 0 clel--args)))
     "Return all but the last N elements of COLL.\nUsage: (clel-drop-last coll) or (clel-drop-last n coll)."
   (let* ((n nil)
         (coll nil))

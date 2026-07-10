@@ -286,11 +286,11 @@
    Uses car/cadr/caddr for small indices, falls back to nth."
   [n]
   (case n
-    0 "(car args)"
-    1 "(cadr args)"
-    2 "(caddr args)"
-    3 "(cadddr args)"
-    (format "(nth %d args)" n)))
+    0 "(car clel--args)"
+    1 "(cadr clel--args)"
+    2 "(caddr clel--args)"
+    3 "(cadddr clel--args)"
+    (format "(nth %d clel--args)" n)))
 
 (defn- emit-arity-param-bindings
   "Emit let-binding string for an arity's params from an args list."
@@ -300,7 +300,7 @@
                           (fn [i p]
                             (format "(%s %s)" (mangle-name p) (nth-accessor i)))
                           fixed-params)
-          rest-binding   (format "(%s (nthcdr %d args))"
+          rest-binding   (format "(%s (nthcdr %d clel--args))"
                                  (mangle-name rest-param)
                                  (count fixed-params))]
       (str/join " " (concat fixed-bindings [rest-binding])))
@@ -331,9 +331,9 @@
                               [(emit-variadic-case variadic-arity)]))
         case-body          (str/join "\n    " case-clauses)]
     (if docstring
-      (format "(defun %s (&rest args)\n  %s\n  (cl-case (length args)\n    %s))"
+      (format "(defun %s (&rest clel--args)\n  %s\n  (cl-case (length clel--args)\n    %s))"
               elisp-name (pr-str docstring) case-body)
-      (format "(defun %s (&rest args)\n  (cl-case (length args)\n    %s))"
+      (format "(defun %s (&rest clel--args)\n  (cl-case (length clel--args)\n    %s))"
               elisp-name case-body))))
 
 (defn- emit-single-arity-defn
@@ -343,16 +343,16 @@
     (let [elisp-body     (str/join "\n  " (map emit body))
           fixed-bindings (map-indexed
                           (fn [i p]
-                            (format "(%s (nth %d args))" (mangle-name p) i))
+                            (format "(%s (nth %d clel--args))" (mangle-name p) i))
                           fixed-params)
-          rest-binding   (format "(%s (nthcdr %d args))"
+          rest-binding   (format "(%s (nthcdr %d clel--args))"
                                  (mangle-name rest-param)
                                  (count fixed-params))
           all-bindings   (str/join " " (concat fixed-bindings [rest-binding]))]
       (if docstring
-        (format "(defun %s (&rest args)\n  %s\n  (let (%s)\n    %s))"
+        (format "(defun %s (&rest clel--args)\n  %s\n  (let (%s)\n    %s))"
                 elisp-name (pr-str docstring) all-bindings elisp-body)
-        (format "(defun %s (&rest args)\n  (let (%s)\n    %s))"
+        (format "(defun %s (&rest clel--args)\n  (let (%s)\n    %s))"
                 elisp-name all-bindings elisp-body)))
     (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
           elisp-body   (str/join "\n  " (map emit body))]

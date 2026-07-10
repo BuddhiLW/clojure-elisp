@@ -196,9 +196,9 @@
     (let [result (ae '(defn greet
                         ([name] (str "Hello, " name))
                         ([greeting name] (str greeting ", " name))))]
-      (is (str/includes? result "&rest args"))
+      (is (str/includes? result "&rest clel--args"))
       (is (str/includes? result "cl-case"))
-      (is (str/includes? result "(length args)")))))
+      (is (str/includes? result "(length clel--args)")))))
 
 ;; ============================================================================
 ;; Gold: Try/Catch
