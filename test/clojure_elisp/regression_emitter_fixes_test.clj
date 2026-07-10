@@ -82,6 +82,28 @@
   (testing "(fn [a & b] ...) emits an elisp &rest parameter"
     (is (str/includes? (emit-form '(fn [a & b] b)) "(a &rest b)"))))
 
+(deftest variadic-arg-collision
+  ;; Regression for kanban 20260710115813-58f15258:
+  ;; the synthetic full-arglist var must NOT be named `args`. When a user param
+  ;; is itself named `args`, the emitted destructuring let self-shadows:
+  ;;   (let ((args (nthcdr 1 args))) ...) — under lexical-binding this reads the
+  ;; WHOLE list, not the tail (silent corruption; broke clel-reduce et al.).
+  ;; Fix: synthetic arglist is `clel--args`; the user `args` binds from it.
+  (testing "single-arity variadic with a user param literally named `args`"
+    (let [out (emit-form '(defn clel-reduce [f & args] (list f args)))]
+      (is (str/includes? out "(&rest clel--args)"))
+      (is (str/includes? out "(f (nth 0 clel--args))"))
+      (is (str/includes? out "(args (nthcdr 1 clel--args))"))
+      (is (not (str/includes? out "(nthcdr 1 args)")))
+      (is (not (str/includes? out "(&rest args)")))))
+  (testing "multi-arity with a user param literally named `args`"
+    (let [out (emit-form '(defn f ([args] args) ([a & args] (list a args))))]
+      (is (str/includes? out "(&rest clel--args)"))
+      (is (str/includes? out "(length clel--args)"))
+      (is (str/includes? out "(args (car clel--args))"))
+      (is (str/includes? out "(args (nthcdr 1 clel--args))"))
+      (is (not (str/includes? out "(&rest args)"))))))
+
 ;; ============================================================================
 ;; Fix 4: #() reader-gensym trailing # stripped
 ;; ============================================================================
