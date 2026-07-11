@@ -3,8 +3,7 @@
         org.clojure/tools.analyzer {:mvn/version "1.2.0"}
         org.clojure/tools.reader {:mvn/version "1.5.2"}
         ;; hive-dsl — Result ADT for railway-oriented error handling
-        io.github.hive-agi/hive-dsl
-        {:git/tag "v0.3.1" :git/sha "0e28484"}
+        io.github.hive-agi/hive-dsl {:mvn/version "0.5.2"}
         ;; malli — schema registry + generators for AST nodes and pipeline Result
         metosin/malli {:mvn/version "0.20.1"}}
  :aliases
@@ -20,7 +19,8 @@
                       io.github.hive-agi/hive-test
                       {:git/tag "v0.3.0" :git/sha "763e4bc"}}
          :main-opts ["-m" "kaocha.runner"]}
-  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.9"}}
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.9"}
+                 slipset/deps-deploy {:mvn/version "0.2.2"}}
           :ns-default build}
 
  ;; Local dev overrides: create deps.local.edn (gitignored) with :deps key.

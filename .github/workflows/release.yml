@@ -12,6 +12,9 @@ jobs:
   release:
     name: Tag & Release
     runs-on: ubuntu-latest
+    env:
+      CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
+      CLOJARS_PASSWORD: ${{ secrets.CLOJARS_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,3 +72,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           files: target/clel-${{ steps.version.outputs.version }}.jar
+
+      - name: Deploy to Clojars
+        if: steps.check.outputs.exists == 'false' && env.CLOJARS_USERNAME != ''
+        run: clojure -T:build deploy
