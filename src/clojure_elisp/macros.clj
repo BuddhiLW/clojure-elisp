@@ -2,7 +2,18 @@
   "Compile-time macro registry and expansion for ClojureElisp.
 
    Macros are registered during analysis and expanded before
-   forms are analyzed. The registry is global (atom-based).")
+   forms are analyzed. The registry is global (atom-based)."
+  (:require [malli.core :as m]))
+
+;; ============================================================================
+;; Schemas
+;; ============================================================================
+
+(def MacroRegistry
+  "Schema for the contents of `macro-registry`/`builtin-macros`: a map from a
+   macro name (symbol) to its expander (an `ifn?` — the fn applied to the macro
+   call's arguments)."
+  [:map-of :symbol ifn?])
 
 ;; ============================================================================
 ;; Macro Registry
@@ -66,3 +77,11 @@
     (if (identical? expanded form)
       form
       (recur expanded))))
+
+;; ============================================================================
+;; Function Contracts (Malli)
+;; ============================================================================
+
+(m/=> get-macro                [:=> [:cat :symbol] [:maybe ifn?]])
+(m/=> register-macro!          [:=> [:cat :symbol ifn?] MacroRegistry])
+(m/=> register-builtin-macro!  [:=> [:cat :symbol ifn?] MacroRegistry])

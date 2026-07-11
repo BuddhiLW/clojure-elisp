@@ -2,7 +2,26 @@
   "Clojure→Elisp function name mappings.
 
    Maps Clojure core functions and namespaced functions to their
-   Elisp equivalents. Organized by category for maintainability.")
+   Elisp equivalents. Organized by category for maintainability."
+  (:require [malli.core :as m]))
+
+;; ============================================================================
+;; Schemas
+;; ============================================================================
+
+(def elisp-token-schema
+  "A single Elisp token: a non-blank string with no whitespace. Every value in
+   the Clojure→Elisp mapping tables below is one such token (a symbol/fn name)."
+  [:and
+   {:error/message "must be a single non-blank Elisp token (no whitespace)"}
+   :string
+   [:re #"^\S+$"]])
+
+(def MappingTable
+  "Schema for one Clojure→Elisp lookup table: symbol keys (possibly namespaced)
+   mapped to single Elisp tokens. Every mapping table in this namespace, and the
+   merged `core-fn-mapping`, conforms to it."
+  [:map-of :symbol elisp-token-schema])
 
 ;; ============================================================================
 ;; Arithmetic
@@ -552,6 +571,85 @@
          elisp-builtin-mappings
          elisp-conflict-mappings))
 
+;; ============================================================================
+;; Table Validation & Collision Guard
+;; ============================================================================
+
+(def mapping-tables
+  "The source tables merged into `core-fn-mapping`, keyed by their defining var
+   name. Kept in sync with the `merge` above; used to validate each table
+   against `MappingTable` and to detect conflicting keys across tables."
+  {"arithmetic-mappings"            arithmetic-mappings
+   "comparison-mappings"            comparison-mappings
+   "logic-mappings"                 logic-mappings
+   "type-predicate-mappings"        type-predicate-mappings
+   "numeric-predicate-mappings"     numeric-predicate-mappings
+   "collection-predicate-mappings"  collection-predicate-mappings
+   "collection-mappings"            collection-mappings
+   "sequence-mappings"              sequence-mappings
+   "transducer-mappings"            transducer-mappings
+   "string-mappings"                string-mappings
+   "set-mappings"                   set-mappings
+   "math-mappings"                  math-mappings
+   "function-mappings"              function-mappings
+   "atom-mappings"                  atom-mappings
+   "emacs-buffer-mappings"          emacs-buffer-mappings
+   "emacs-text-prop-mappings"       emacs-text-prop-mappings
+   "emacs-process-mappings"         emacs-process-mappings
+   "emacs-file-mappings"            emacs-file-mappings
+   "emacs-window-mappings"          emacs-window-mappings
+   "utility-mappings"               utility-mappings
+   "io-mappings"                    io-mappings
+   "cl-lib-mappings"                cl-lib-mappings
+   "hash-table-mappings"            hash-table-mappings
+   "mutation-mappings"              mutation-mappings
+   "elisp-passthrough-mappings"     elisp-passthrough-mappings
+   "elisp-builtin-mappings"         elisp-builtin-mappings
+   "elisp-conflict-mappings"        elisp-conflict-mappings})
+
+(defn table-collisions
+  "Return a map of colliding-key -> vector of [table-name elisp-token] for every
+   symbol that two or more `mapping-tables` map to DIFFERENT Elisp tokens. An
+   empty result means the `merge` in `core-fn-mapping` is unambiguous (no source
+   table silently overrides another with a different value). Keys defined by
+   multiple tables with the SAME value are not collisions and are omitted."
+  []
+  (let [entries (for [[table-name table] mapping-tables
+                      [k v] table]
+                  [k table-name v])]
+    (into {}
+          (keep (fn [[k es]]
+                  (when (> (count (distinct (map #(nth % 2) es))) 1)
+                    [k (mapv (fn [[_ table-name v]] [table-name v]) es)])))
+          (group-by first entries))))
+
+(defn validate-tables!
+  "Checked invariant for the mapping registry. Asserts that (1) every source
+   table conforms to `MappingTable` and (2) no two tables map the same key to
+   different Elisp tokens (`table-collisions` is empty). Throws `ex-info` with
+   the offending data on violation; returns true when all invariants hold."
+  []
+  (doseq [[table-name table] mapping-tables]
+    (when-not (m/validate MappingTable table)
+      (throw (ex-info (str "Mapping table " table-name " violates MappingTable schema")
+                      {:table table-name
+                       :explanation (m/explain MappingTable table)}))))
+  (let [collisions (table-collisions)]
+    (when (seq collisions)
+      (throw (ex-info (str "Conflicting mapping keys across source tables: "
+                           (vec (keys collisions)))
+                      {:collisions collisions}))))
+  ;; Guard against mirror drift: the collision/schema checks are only sound if
+  ;; `mapping-tables` covers EXACTLY the tables merged into `core-fn-mapping`. A
+  ;; table added to one but not the other would silently escape validation.
+  (let [from-mirror (apply merge (vals mapping-tables))]
+    (when-not (= from-mirror core-fn-mapping)
+      (throw (ex-info (str "mapping-tables is out of sync with the core-fn-mapping "
+                           "merge — add/remove the table in BOTH places")
+                      {:only-in-merge  (apply dissoc core-fn-mapping (keys from-mirror))
+                       :only-in-mirror (apply dissoc from-mirror (keys core-fn-mapping))}))))
+  true)
+
 (def higher-order-fn-arg-slots
   "Higher-order Clojure fns -> the 0-based arg indices that are FUNCTION
    positions (or :all). The analyzer uses this to auto function-quote a bare
@@ -599,3 +697,32 @@
    'juxt         :all
    'every-pred   :all
    'some-fn      :all})
+
+(def ArgSlots
+  "Schema for `higher-order-fn-arg-slots`: each higher-order fn maps to either
+   `:all` (every argument is a function position) or a set of 0-based argument
+   indices (`nat-int?`) that are function positions."
+  [:map-of :symbol [:or [:= :all] [:set nat-int?]]])
+
+(defn validate-arg-slots!
+  "Checked invariant for `higher-order-fn-arg-slots`: asserts it conforms to
+   `ArgSlots`. Throws `ex-info` with the explanation on violation; returns true
+   otherwise. A named guard mirroring `validate-tables!`, so the load-time check
+   below is reusable from tests rather than an inline throw."
+  []
+  (when-not (m/validate ArgSlots higher-order-fn-arg-slots)
+    (throw (ex-info "higher-order-fn-arg-slots violates ArgSlots schema"
+                    {:explanation (m/explain ArgSlots higher-order-fn-arg-slots)})))
+  true)
+
+;; ============================================================================
+;; Load-Time Invariant Enforcement
+;; ============================================================================
+;;
+;; Both registry guards run once at namespace load, grouped here at the end so
+;; every table/def they check is already defined. A schema violation, a
+;; conflicting-key merge, or a malformed arg-slots map fails compilation loudly
+;; rather than degrading silently at runtime.
+
+(validate-tables!)
+(validate-arg-slots!)

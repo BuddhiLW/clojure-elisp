@@ -216,3 +216,44 @@
           out     (emit-form form)]
       (and (str/includes? out "pcase")
            (not (str/includes? out "cl-case"))))))
+
+;; ============================================================================
+;; Fix 5: loop-less recur binds via cl-labels (was a bare call to undefined recur)
+;; ============================================================================
+
+(deftest defn-tail-recur-binds-recur
+  (testing "loop-less recur in a defn emits a cl-labels recur binder"
+    (let [out (emit-form '(defn f [x] (if (> x 0) (recur (dec x)) x)))]
+      (is (str/includes? out "cl-labels ((recur"))
+      (is (str/includes? out "(recur x)"))))
+  (testing "loop-less recur in a fn (lambda) binds recur too"
+    (let [out (emit-form '(fn [x] (if (> x 0) (recur (dec x)) x)))]
+      (is (str/includes? out "lambda"))
+      (is (str/includes? out "cl-labels ((recur"))))
+  (testing "recur belonging to a nested loop is not double-wrapped"
+    (let [out (emit-form '(defn g [x] (loop [i 0] (when (< i x) (recur (inc i))))))]
+      (is (= 1 (count (re-seq #"cl-labels \(\(recur" out))))))
+  (testing "a defn without recur emits no cl-labels"
+    (is (not (str/includes? (emit-form '(defn h [x] (+ x 1))) "cl-labels"))))
+  (testing "variadic / multi-arity self-recur fails loudly, not silently broken"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported"
+                          (emit-form '(defn bad [x & xs] (recur xs)))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported"
+                          (emit-form '(fn [x & xs] (recur xs)))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported"
+                          (emit-form '(defn m ([x] (recur x)) ([x y] x)))))))
+
+(def gen-recur-defn
+  "A loop-less, fixed-arity defn/fn whose tail recur targets itself."
+  (gen/elements
+   ['(defn a [x] (if (> x 0) (recur (dec x)) x))
+    '(defn b [n acc] (if (> n 0) (recur (dec n) (+ acc n)) acc))
+    '(defn c [x] (when (> x 0) (recur (dec x))))
+    '(fn [x] (if (> x 0) (recur (dec x)) x))]))
+
+(defspec loop-less-recur-always-bound 100
+  (prop/for-all [form gen-recur-defn]
+    (let [out (emit-form form)]
+      ;; a (recur is emitted, and a cl-labels binder for it is always present
+      (and (str/includes? out "(recur")
+           (str/includes? out "cl-labels ((recur")))))

@@ -4,7 +4,9 @@
    Transforms AST nodes into Elisp source code strings."
   (:require [clojure.string :as str]
             [clojure-elisp.ast :as ast]
-            [clojure-elisp.mappings :as mappings]))
+            [clojure-elisp.mappings :as mappings]
+            [clojure-elisp.schema :as schema]
+            [malli.core :as m]))
 
 ;; ============================================================================
 ;; Elisp Name Mangling
@@ -337,9 +339,45 @@
                                      [(emit-variadic-case variadic-arity)]))]
     (format "(cl-case (length clel--args)\n    %s)" (str/join "\n    " case-clauses))))
 
+(def ^:private recur-boundary-ops
+  "Ops that establish their own recur target; recur below them is not the
+   enclosing fn's."
+  #{:loop :fn :defn :lambda :reify :defmethod :letfn :deftype :defrecord})
+
+(defn- body-has-tail-recur?
+  "True when a :recur node in body targets the enclosing fn, i.e. is not
+   nested inside a construct that establishes its own recur target."
+  [body]
+  (letfn [(walk [node]
+            (cond
+              (map? node)        (cond
+                                   (= :recur (:op node)) true
+                                   (recur-boundary-ops (:op node)) false
+                                   :else (some walk (vals node)))
+              (sequential? node) (some walk node)
+              :else              false))]
+    (boolean (some walk body))))
+
+(defn- unsupported-recur!
+  [context]
+  (throw (ex-info (str "recur in " context " is not supported by the Elisp emitter; "
+                       "use loop/recur or an explicit named helper")
+                  {:op :recur :context context})))
+
+(defn- wrap-tail-recur
+  "Wrap an emitted fn body so recur resolves to a cl-labels self-call over
+   the fn's own params."
+  [mangled-params body-str]
+  (format "(cl-labels ((recur (%s)\n      %s))\n    (recur %s))"
+          (str/join " " mangled-params)
+          body-str
+          (str/join " " mangled-params)))
+
 (defn- emit-multi-arity-defn
   "Emit a multi-arity defun with cl-case dispatch on arg count."
   [elisp-name docstring arities]
+  (when (some #(body-has-tail-recur? (:body %)) arities)
+    (unsupported-recur! "a multi-arity fn"))
   (let [dispatch (emit-arity-cl-case arities)]
     (if docstring
       (format "(defun %s (&rest clel--args)\n  %s\n  %s)"
@@ -351,7 +389,9 @@
   "Emit a single-arity defun (variadic or simple)."
   [elisp-name docstring params body variadic? fixed-params rest-param]
   (if variadic?
-    (let [elisp-body     (str/join "\n  " (map emit body))
+    (let [_              (when (body-has-tail-recur? body)
+                           (unsupported-recur! "a variadic fn"))
+          elisp-body     (str/join "\n  " (map emit body))
           fixed-bindings (map-indexed
                           (fn [i p]
                             (format "(%s (nth %d clel--args))" (mangle-name p) i))
@@ -366,7 +406,10 @@
         (format "(defun %s (&rest clel--args)\n  (let (%s)\n    %s))"
                 elisp-name all-bindings elisp-body)))
     (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
-          elisp-body   (str/join "\n  " (map emit body))]
+          body-str     (str/join "\n  " (map emit body))
+          elisp-body   (if (body-has-tail-recur? body)
+                         (wrap-tail-recur (map mangle-name params) body-str)
+                         body-str)]
       (if docstring
         (format "(defun %s %s\n  %s\n  %s)"
                 elisp-name elisp-params (pr-str docstring) elisp-body)
@@ -385,10 +428,19 @@
   (if multi-arity?
     ;; Multi-arity fn literal: dispatch on arg count like multi-arity defn,
     ;; but as an anonymous lambda over the synthetic clel--args arglist.
-    (format "(lambda (&rest clel--args)\n    %s)" (emit-arity-cl-case arities))
-    ;; Single arity: `&` -> `&rest` so (fn [x & xs] ...) binds the rest list.
-    (let [elisp-params (str "(" (emit-list (map mangle-param params)) ")")
-          elisp-body   (str/join "\n    " (map emit body))]
+    (do
+      (when (some #(body-has-tail-recur? (:body %)) arities)
+        (unsupported-recur! "a multi-arity fn"))
+      (format "(lambda (&rest clel--args)\n    %s)" (emit-arity-cl-case arities)))
+    ;; Single arity: `&` -> `&rest` (via mangle-param); a tail recur wraps via
+    ;; cl-labels, and a variadic fn containing recur is unsupported.
+    (let [variadic?    (some #(= '& %) params)
+          elisp-params (str "(" (emit-list (map mangle-param params)) ")")
+          body-str     (str/join "\n    " (map emit body))
+          elisp-body   (cond
+                         (not (body-has-tail-recur? body)) body-str
+                         variadic?                         (unsupported-recur! "a variadic fn")
+                         :else (wrap-tail-recur (map mangle-name params) body-str))]
       (format "(lambda %s\n    %s)" elisp-params elisp-body))))
 
 (defmethod emit-node :lazy-seq
@@ -1337,6 +1389,29 @@
       (str code "\n\n(provide '" elisp-ns ")\n"
            ";;; " elisp-ns ".el ends here\n")
       code)))
+
+;; ============================================================================
+;; Function Contracts (Malli)
+;; ============================================================================
+;;
+;; Contracts live on the plain-fn emit surface + the pure name helpers. `emit`
+;; takes a shallow AST node (a map with :op) and returns Elisp source; the deep
+;; recursive node shape is checked on demand via *validate-ast*, not per call.
+;;
+;; `emit-node` is a defmulti: instrumenting it would replace the MultiFn var root
+;; with a plain fn (breaking methods/get-method/defmethod dispatch), so it is
+;; intentionally left uncontracted — its input contract is `emit`'s, enforced one
+;; call up. instrument! only wraps vars that carry an m/=> schema, so emit-node
+;; stays an untouched MultiFn even when this ns is instrumented.
+
+(m/=> mangle-name [:=> [:cat [:or :symbol :string]] :string])
+(m/=> ns->prefix  [:=> [:cat :symbol] :string])
+(m/=> ns-qualify-name
+      [:function
+       [:=> [:cat [:or :symbol :string] [:maybe :map]] :string]
+       [:=> [:cat [:or :symbol :string] [:maybe :map] :boolean] :string]])
+(m/=> emit        [:=> [:cat schema/ast-node-schema] :string])
+(m/=> emit-file   [:=> [:cat [:sequential schema/ast-node-schema]] :string])
 
 (comment
   (require '[clojure-elisp.analyzer :as ana])

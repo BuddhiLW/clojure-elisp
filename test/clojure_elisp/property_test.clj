@@ -4,7 +4,8 @@
    Uses hive-test property macros and test.check generators to verify
    structural properties: totality, idempotency, roundtrips, and
    ADT invariants."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.set :as set]
+            [clojure.test :refer [deftest is testing]]
             [clojure.test.check.clojure-test :refer [defspec]]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
@@ -64,6 +65,72 @@
                gen-comparison-form
                gen-if-form
                gen-let-form]))
+
+(def gen-nested-form
+  "Generator for compound forms nesting a simple sub-form, exercising the
+   recursive AST child-node typing across a spread of ops (do/when/and/or/if/
+   let/cond) — all verified analyzable."
+  (gen/let [inner gen-simple-form]
+    (gen/elements
+     [(list 'do inner inner)
+      (list 'when (list '> 'x 0) inner)
+      (list 'and inner inner)
+      (list 'or inner inner)
+      (list 'if (list '> 'x 0) inner inner)
+      (list 'let ['y__gen inner] 'y__gen)
+      (list 'cond (list '> 'x 0) inner :else inner)])))
+
+(defn ast-nodes
+  "Every node map (has :op) reachable in an analyzed AST tree."
+  [root]
+  (filter :op
+          (tree-seq map?
+                    (fn [n] (mapcat (fn [v] (cond (map? v)        [v]
+                                                  (sequential? v) (filter map? v)
+                                                  :else           []))
+                                    (vals n)))
+                    root)))
+
+;; --- Recursive AST-node + form generators (CLJEL-MALLI-GEN) ---
+
+(def gen-leaf
+  "Generator for self-contained leaf AST nodes (:const/:local/:var), via the
+   src-side Malli leaf schemas (clojure-elisp.ast/gen-node)."
+  (gen/one-of (mapv ast/gen-node [:const :local :var])))
+
+(def gen-tree
+  "Recursive generator for nested AST-node TREES built from real, emittable ops
+   (:do/:and/:or/:vector/:if/:invoke) bottoming out at leaf nodes. Every tree it
+   produces conforms to the shared recursive ::schema/node AND is accepted by the
+   emitter — so it drives whole-tree validation AND node->emit totality directly,
+   without going through analyze."
+  (gen/recursive-gen
+   (fn [inner]
+     (gen/one-of
+      [(gen/fmap (fn [xs] {:op :do :body (vec xs)})      (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] {:op :and :exprs (vec xs)})    (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] {:op :or :exprs (vec xs)})     (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] {:op :vector :items (vec xs)}) (gen/vector inner 0 3))
+       (gen/fmap (fn [[t th el]] {:op :if :test t :then th :else el})
+                 (gen/tuple inner inner inner))
+       (gen/fmap (fn [[f args]] {:op :invoke :fn f :args (vec args)})
+                 (gen/tuple (ast/gen-node :var) (gen/vector inner 0 3)))]))
+   gen-leaf))
+
+(def gen-recursive-form
+  "Deeply-nested well-formed Clojure forms — simple leaves wrapped in
+   do/and/or/if/let/vector to arbitrary depth. Exercises analyze->emit over
+   recursively-generated source, past the single level of gen-nested-form."
+  (gen/recursive-gen
+   (fn [inner]
+     (gen/one-of
+      [(gen/fmap (fn [xs] (cons 'do xs))                    (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] (cons 'and xs))                   (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] (cons 'or xs))                    (gen/vector inner 1 3))
+       (gen/fmap (fn [[a b]] (list 'if (list '> 'x 0) a b)) (gen/tuple inner inner))
+       (gen/fmap (fn [x] (list 'let ['y__gen x] 'y__gen))   inner)
+       (gen/fmap vec                                        (gen/vector inner 0 3))]))
+   gen-simple-form))
 
 (def gen-compile-error-variant
   "Generator for CompileError variant keywords."
@@ -260,6 +327,134 @@
     (binding [emit/*validate-ast* true]
       (let [node (ana/analyze '(+ 1 2))]
         (is (string? (emit/emit node)))))))
+
+(deftest ast-value-shape-validation-test
+  (testing "non-vector collection key is rejected"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (ast/validate-ast-node {:op :do :body :not-a-vector})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (ast/validate-ast-node {:op :recur :args 42}))))
+  (testing "well-shaped collection key passes"
+    (is (= {:op :do :body []} (ast/validate-ast-node {:op :do :body []}))))
+  (testing "expanded value-schema coverage rejects mis-shaped keys"
+    (is (false? (ast/valid-ast-node? {:op :let :bindings :nope :body []})))
+    (is (false? (ast/valid-ast-node? {:op :map :keys 5 :vals []})))
+    (is (false? (ast/valid-ast-node? {:op :cond :clauses :x})))
+    (is (false? (ast/valid-ast-node? {:op :defrecord :name "R" :fields [] :protocols []})))
+    (is (true?  (ast/valid-ast-node? {:op :let :bindings [] :body []})))
+    (is (true?  (ast/valid-ast-node? {:op :defrecord :name 'R :fields [] :protocols []}))))
+  (testing "valid-ast-node? and explain-ast-node agree"
+    (is (true? (ast/valid-ast-node? {:op :do :body []})))
+    (is (nil? (ast/explain-ast-node {:op :do :body []})))
+    (is (some? (ast/explain-ast-node {:op :do :body :nope})))))
+
+(deftest ast-generator-test
+  (testing "gen-node produces nodes that validate for their :op"
+    (doseq [op [:const :local :var]]
+      (let [node (gen/generate (ast/gen-node op))]
+        (is (= op (:op node)))
+        (is (= node (ast/validate-ast-node node)))))))
+
+(defspec generated-leaf-nodes-validate 100
+  (prop/for-all [node (gen/one-of (mapv ast/gen-node [:const :local :var]))]
+                (= node (ast/validate-ast-node node))))
+
+;; ============================================================================
+;; AST registry: drift-guard + recursive conformance
+;; ============================================================================
+
+(deftest op-required-covers-emitter-dispatch
+  (testing "op->required stays exhaustive over emit-node's dispatch keys"
+    (let [emit-ops (disj (set (keys (methods emit/emit-node))) :default)
+          missing  (set/difference emit-ops (set (keys ast/op->required)))]
+      (is (empty? missing)
+          (str "ops dispatched by emit-node but missing from ast/op->required "
+               "(add them so validation covers them): " missing)))))
+
+(defspec analyze-produces-valid-nodes 300
+  ;; Every node in an analyzed tree conforms to its :op schema — turns the
+  ;; recursive AST registry from documentation into a checked invariant.
+  (prop/for-all [form (gen/one-of [gen-simple-form gen-nested-form])]
+                (every? ast/valid-ast-node? (ast-nodes (ana/analyze form)))))
+
+(defspec analyze-produces-valid-tree 200
+  ;; Whole-tree recursive validation via the shared ::schema/node schema.
+  (prop/for-all [form (gen/one-of [gen-simple-form gen-nested-form])]
+                (ast/valid-ast-tree? (ana/analyze form))))
+
+;; ============================================================================
+;; Recursive AST-node generators: schema conformance + emit totality
+;; ============================================================================
+
+(defspec generated-tree-conforms-to-node-schema 200
+  ;; Recursive node GENERATOR ⊑ recursive node SCHEMA: every tree gen-tree
+  ;; builds validates whole-tree against the shared ::schema/node.
+  (prop/for-all [node gen-tree]
+                (ast/valid-ast-tree? node)))
+
+(defspec generated-tree-emits-total 200
+  ;; The emitter is TOTAL over recursively-generated valid nodes: emit never
+  ;; throws and always returns a string (drives emit directly, no analyze step).
+  (prop/for-all [node gen-tree]
+                (string? (emit/emit node))))
+
+(defspec analyze-emit-nested-produces-string 150
+  ;; analyze->emit stays total over DEEPLY-nested generated forms — extends
+  ;; analyze-emit-produces-string past gen-nested-form's single nesting level.
+  (prop/for-all [form gen-recursive-form]
+                (string? (clel/emit form))))
+
+(deftest ast-no-false-rejection-regressions
+  ;; Guards the corpus-gap false-rejections found in adversarial review: a node
+  ;; the analyzer really produces must validate under BOTH per-node and
+  ;; whole-tree checks, and the two must agree.
+  (testing "try without a finally clause (analyzer emits :finally nil)"
+    (doseq [form ['(try (foo))
+                  '(try (foo) (catch Error e 1))
+                  '(try (foo) (catch Error e 1) (catch Exception x 2))]]
+      (let [n (ana/analyze form)]
+        (is (true? (ast/valid-ast-node? n)) (str "valid-ast-node? " form))
+        (is (true? (ast/valid-ast-tree? n)) (str "valid-ast-tree? " form)))))
+  (testing "try WITH a finally still validates"
+    (let [n (ana/analyze '(try (foo) (catch Error e 1) (finally (bar))))]
+      (is (true? (ast/valid-ast-node? n)))
+      (is (true? (ast/valid-ast-tree? n)))))
+  (testing "multi-arity defn has no top-level :body but is valid"
+    (doseq [form ['(defn f ([x] x) ([x y] (+ x y)))
+                  '(defn h ([] 0) ([x] x))
+                  '(defn k "doc" ([x] x) ([x y] y))]]
+      (let [n (ana/analyze form)]
+        (is (true? (ast/valid-ast-node? n)) (str "valid-ast-node? " form))
+        (is (true? (ast/valid-ast-tree? n)) (str "valid-ast-tree? " form))
+        (is (= n (ast/validate-ast-node n))))))
+  (testing "single-arity defn (has :body) still validates"
+    (is (true? (ast/valid-ast-node? (ana/analyze '(defn g [x] (+ x 1))))))))
+
+;; ============================================================================
+;; Pipeline Result Schemas (Malli)
+;; ============================================================================
+
+(deftest pipeline-result-schema-test
+  (testing "success Result conforms to StringCompileResult"
+    (is (clel/valid-string-result? (clel/emit-result '(+ 1 2)))))
+  (testing "error Result conforms to its schema"
+    (is (clel/valid-string-result? (clel/compile-file-string-result "(foo 1")))
+    (is (clel/valid-file-result? (clel/compile-file-result "/nope.cljel" "/tmp/clel-x.el"))))
+  (testing "an ok-string payload is not a valid file Result"
+    (is (not (clel/valid-file-result? (clel/emit-result '(+ 1 2)))))))
+
+(defspec emit-result-conforms-schema 200
+  (prop/for-all [form gen-simple-form]
+                (clel/valid-string-result? (clel/emit-result form))))
+
+(deftest instrumentation-contract-test
+  (testing "instrument! enforces input contracts; unstrument! removes them"
+    (clel/instrument!)
+    (try
+      (is (thrown-with-msg? Exception #"invalid-input" (clel/compile-string 42)))
+      (is (string? (clel/compile-string "(+ 1 2)")))
+      (finally (clel/unstrument!)))
+    (is (string? (clel/compile-string "(+ 1 2)")))))
 
 ;; ============================================================================
 ;; Property Tests for New Sequence Functions (clel-050)
