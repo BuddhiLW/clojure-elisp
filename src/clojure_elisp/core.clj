@@ -151,7 +151,9 @@
 (def ^:private instrumented-nses
   "Boundary namespaces whose m/=> contracts we enforce together. compile.clj and
    project.clj carry the real pipeline contracts, so instrumenting core alone
-   would leave them unenforced.
+   would leave them unenforced. emitter.clj carries the emit-surface contracts
+   (emit/emit-file/name helpers); its emit-node MultiFn is uncontracted, so
+   instrument! leaves it untouched.
 
    The contract-bearing pipeline re-exports above (compile-file, compile-ns,
    compile-project, extract-ns-name, …) are defn WRAPPERS that call through the
@@ -162,7 +164,9 @@
    time, and they carry no contract to enforce anyway."
   ['clojure-elisp.core
    'clojure-elisp.compile
-   'clojure-elisp.project])
+   'clojure-elisp.project
+   'clojure-elisp.analyzer
+   'clojure-elisp.emitter])
 
 (defn instrument!
   "Enable Malli instrumentation of the boundary fn contracts (core + compile +

@@ -4,7 +4,9 @@
    Transforms AST nodes into Elisp source code strings."
   (:require [clojure.string :as str]
             [clojure-elisp.ast :as ast]
-            [clojure-elisp.mappings :as mappings]))
+            [clojure-elisp.mappings :as mappings]
+            [clojure-elisp.schema :as schema]
+            [malli.core :as m]))
 
 ;; ============================================================================
 ;; Elisp Name Mangling
@@ -1367,6 +1369,29 @@
       (str code "\n\n(provide '" elisp-ns ")\n"
            ";;; " elisp-ns ".el ends here\n")
       code)))
+
+;; ============================================================================
+;; Function Contracts (Malli)
+;; ============================================================================
+;;
+;; Contracts live on the plain-fn emit surface + the pure name helpers. `emit`
+;; takes a shallow AST node (a map with :op) and returns Elisp source; the deep
+;; recursive node shape is checked on demand via *validate-ast*, not per call.
+;;
+;; `emit-node` is a defmulti: instrumenting it would replace the MultiFn var root
+;; with a plain fn (breaking methods/get-method/defmethod dispatch), so it is
+;; intentionally left uncontracted — its input contract is `emit`'s, enforced one
+;; call up. instrument! only wraps vars that carry an m/=> schema, so emit-node
+;; stays an untouched MultiFn even when this ns is instrumented.
+
+(m/=> mangle-name [:=> [:cat [:or :symbol :string]] :string])
+(m/=> ns->prefix  [:=> [:cat :symbol] :string])
+(m/=> ns-qualify-name
+      [:function
+       [:=> [:cat [:or :symbol :string] [:maybe :map]] :string]
+       [:=> [:cat [:or :symbol :string] [:maybe :map] :boolean] :string]])
+(m/=> emit        [:=> [:cat schema/ast-node-schema] :string])
+(m/=> emit-file   [:=> [:cat [:sequential schema/ast-node-schema]] :string])
 
 (comment
   (require '[clojure-elisp.analyzer :as ana])

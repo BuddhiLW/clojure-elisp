@@ -195,6 +195,14 @@
         (conj (mapv (fn [[op ce]] [op (op-branch op ce)]) op->child-schema)
               [::m/default :map])))
 
+(def ast-node-schema
+  "Shallow \"is-an-AST-node\" schema for emitter-surface contracts: any map
+   carrying an :op keyword. Deliberately NOT the recursive ::node — the emitter
+   calls `emit` once per node while walking the tree, so a deep per-call
+   validation would be O(n²). Deep structural validation stays on demand via
+   emitter/*validate-ast* + clojure-elisp.ast/validate-ast-node."
+  [:map [:op :keyword]])
+
 ;; ============================================================================
 ;; Registry + helpers
 ;; ============================================================================
