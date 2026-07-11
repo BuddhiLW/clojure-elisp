@@ -26,6 +26,9 @@ out/
 # Incremental compilation cache
 .clel-cache/
 
+# Claude Code local state (session transcripts, scratch, etc.)
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

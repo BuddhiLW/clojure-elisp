@@ -5,7 +5,8 @@
            :kaocha/ns-patterns ["-test$"]
            :kaocha.filter/skip-meta [:nrepl-required]}]
   :plugins [:kaocha.plugin/profiling
-            :kaocha.plugin/filter]
+            :kaocha.plugin/filter
+            :clojure-elisp.kaocha-instrument/instrument]
   :reporter [kaocha.report/dots]
   :color? true
   :fail-fast? false}

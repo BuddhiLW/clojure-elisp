@@ -6,7 +6,9 @@
    keeping it pragmatic and easy to understand."
   (:require [clojure-elisp.macros :as macros]
             [clojure-elisp.destructure :as destructure]
-            [clojure-elisp.mappings :as mappings]))
+            [clojure-elisp.mappings :as mappings]
+            [clojure-elisp.schema :as schema]
+            [malli.core :as m]))
 
 ;; ============================================================================
 ;; Environment
@@ -1712,6 +1714,18 @@
       (binding [*env* (merge *env* {:ns (:name ns-ast) :defs defs} ns-env)]
         (into [ns-ast] (mapv analyze (rest forms)))))
     (mapv analyze forms)))
+
+;; ============================================================================
+;; Function Contracts (Malli)
+;; ============================================================================
+;;
+;; `analyze` is the analyze-phase boundary: any Clojure form in, one AST node
+;; (a map with :op) out — the shallow schema; the deep recursive node shape is
+;; asserted by the analyze-produces-valid-tree property test. The per-op
+;; analyze-* helpers stay uncontracted (their output flows out through `analyze`).
+
+(m/=> analyze            [:=> [:cat :any] schema/ast-node-schema])
+(m/=> analyze-file-forms [:=> [:cat [:sequential :any]] [:vector schema/ast-node-schema]])
 
 (comment
   (analyze '(defn foo [x] (+ x 1)))

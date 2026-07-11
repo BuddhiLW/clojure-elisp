@@ -569,7 +569,7 @@
     (let [config-file (java.io.File/createTempFile "clel" ".edn")]
       (try
         (spit config-file "{:runtime :invalid}")
-        (is (thrown-with-msg? Exception #":runtime must be"
+        (is (thrown-with-msg? Exception #"Invalid clel.edn.*:runtime"
                               (clel/read-project-config (.getAbsolutePath config-file))))
         (finally
           (.delete config-file)))))
@@ -578,7 +578,7 @@
     (let [config-file (java.io.File/createTempFile "clel" ".edn")]
       (try
         (spit config-file "{:source-paths \"not-a-vector\"}")
-        (is (thrown-with-msg? Exception #":source-paths must be"
+        (is (thrown-with-msg? Exception #"Invalid clel.edn.*:source-paths"
                               (clel/read-project-config (.getAbsolutePath config-file))))
         (finally
           (.delete config-file))))))
