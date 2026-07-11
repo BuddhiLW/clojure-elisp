@@ -2,7 +2,7 @@
   (:require [clojure.tools.build.api :as b]
             [clojure.string :as str]))
 
-(def lib 'io.github.BuddhiLW/clojure-elisp)
+(def lib 'io.github.buddhilw/clojure-elisp)
 (def version (str/trim (slurp "VERSION")))
 (def class-dir "target/classes")
 (def uber-file (format "target/clel-%s.jar" version))
