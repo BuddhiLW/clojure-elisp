@@ -1,8 +1,31 @@
 # ClojureElisp
 
+[![Clojars Project](https://img.shields.io/clojars/v/io.github.buddhilw/clojure-elisp.svg)](https://clojars.org/io.github.buddhilw/clojure-elisp)
+[![cljdoc](https://cljdoc.org/badge/io.github.buddhilw/clojure-elisp)](https://cljdoc.org/d/io.github.buddhilw/clojure-elisp)
+[![Tests](https://github.com/BuddhiLW/clojure-elisp/actions/workflows/test.yml/badge.svg)](https://github.com/BuddhiLW/clojure-elisp/actions/workflows/test.yml)
+[![GitHub release](https://img.shields.io/github/v/release/BuddhiLW/clojure-elisp?sort=semver)](https://github.com/BuddhiLW/clojure-elisp/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Emacs](https://img.shields.io/badge/Emacs-28.1%2B-7F5AB6?logo=gnuemacs&logoColor=white)](https://www.gnu.org/software/emacs/)
+
 A Clojure dialect that compiles to Emacs Lisp — like ClojureScript targets JavaScript, ClojureElisp targets Emacs.
 
 Write `.cljel` files using Clojure syntax, compile them to `.el` files that run natively in Emacs 28.1+.
+
+## Installation
+
+Published on [Clojars](https://clojars.org/io.github.buddhilw/clojure-elisp):
+
+```clojure
+;; deps.edn
+io.github.buddhilw/clojure-elisp {:mvn/version "0.6.0"}
+```
+
+```clojure
+;; Leiningen / project.clj
+[io.github.buddhilw/clojure-elisp "0.6.0"]
+```
+
+The standalone CLI uberjar (`clel-<version>.jar`) is attached to each [GitHub release](https://github.com/BuddhiLW/clojure-elisp/releases).
 
 ## Quick Start
 
