@@ -3,8 +3,11 @@
    Exposes the ClojureElisp compiler as MCP tools over JSON-RPC."
   (:require [clojure-elisp.core :as clel]
             [clojure-elisp.analyzer :as ana]
+            [clojure-elisp.schema :as schema]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [malli.core :as m]
+            [malli.json-schema :as mjs])
   (:import [java.io BufferedReader InputStreamReader OutputStream]))
 
 ;; ---------------------------------------------------------------------------
@@ -144,30 +147,69 @@
       (read-value))))
 
 ;; ---------------------------------------------------------------------------
-;; MCP tool definitions
+;; MCP tool definitions — Malli :input schemas are the single source of truth
 ;; ---------------------------------------------------------------------------
 
+(def mcp-content-schema
+  "MCP tool-call result: a vector of content blocks. Only text blocks are produced."
+  [:vector [:map ["type" :string] ["text" :string]]])
+
+(defn- canonical-property
+  "Order a derived JSON-Schema property fragment the way the MCP wire form lists
+   it: `type` first, then any remaining keys (e.g. `description`) in place."
+  [prop]
+  (into (array-map)
+        (concat (select-keys prop [:type])
+                (dissoc prop :type))))
+
+(defn- malli->input-schema
+  "Derive an MCP JSON-Schema `inputSchema` map from a Malli `:input` map schema
+   via `malli.json-schema/transform`, canonicalized to the wire key order. The
+   Malli schema is thus the single source of truth for a tool's arguments — the
+   wire schema is generated, never hand-maintained. A `:closed` `:input` schema
+   surfaces as `additionalProperties:false`, so the advertised wire contract
+   rejects unknown arguments exactly as the pre-dispatch validation does."
+  [input]
+  (let [{jtype :type props :properties required :required :as js}
+        (mjs/transform (schema/schema input))]
+    (cond-> (array-map "type" jtype
+                       "properties" (update-vals props canonical-property))
+      (seq required)                     (assoc "required" required)
+      (contains? js :additionalProperties) (assoc "additionalProperties"
+                                                  (:additionalProperties js)))))
+
+(def tool-specs
+  "MCP tools defined by their Malli `:input` schema — the single source of truth
+   for both the wire `inputSchema` (derived below) and argument validation before
+   dispatch. `:input` uses string map keys so it matches the JSON-parsed
+   arguments (string-keyed) and the wire property names directly. Each schema is
+   `:closed`, so an unknown argument is rejected before dispatch (and advertised
+   as `additionalProperties:false` on the wire)."
+  [{:name "compile_string"
+    :description "Compile a ClojureElisp code string to Emacs Lisp"
+    :input [:map {:closed true} ["code" {:description "ClojureElisp source code to compile"} :string]]}
+   {:name "compile_file"
+    :description "Compile a .cljel file to a .el file"
+    :input [:map {:closed true}
+            ["input"  {:description "Path to input .cljel file"} :string]
+            ["output" {:description "Path to output .el file"} :string]]}
+   {:name "analyze"
+    :description "Analyze ClojureElisp code and return the AST as EDN"
+    :input [:map {:closed true} ["code" {:description "ClojureElisp source code to analyze"} :string]]}])
+
 (def tools
-  [{"name" "compile_string"
-    "description" "Compile a ClojureElisp code string to Emacs Lisp"
-    "inputSchema" {"type" "object"
-                   "properties" {"code" {"type" "string"
-                                         "description" "ClojureElisp source code to compile"}}
-                   "required" ["code"]}}
-   {"name" "compile_file"
-    "description" "Compile a .cljel file to a .el file"
-    "inputSchema" {"type" "object"
-                   "properties" {"input" {"type" "string"
-                                          "description" "Path to input .cljel file"}
-                                 "output" {"type" "string"
-                                           "description" "Path to output .el file"}}
-                   "required" ["input" "output"]}}
-   {"name" "analyze"
-    "description" "Analyze ClojureElisp code and return the AST as EDN"
-    "inputSchema" {"type" "object"
-                   "properties" {"code" {"type" "string"
-                                         "description" "ClojureElisp source code to analyze"}}
-                   "required" ["code"]}}])
+  "MCP tool descriptors advertised over `tools/list`. Each `inputSchema` is
+   DERIVED from the tool's Malli `:input` schema, so the wire contract and the
+   validation contract cannot drift."
+  (mapv (fn [{:keys [name description input]}]
+          {"name" name
+           "description" description
+           "inputSchema" (malli->input-schema input)})
+        tool-specs))
+
+(def ^:private tool-input-schema
+  "Tool name -> Malli `:input` schema, for validating arguments before dispatch."
+  (into {} (map (juxt :name :input)) tool-specs))
 
 (defn- handle-tool-call
   "Execute a tool call and return the result content."
@@ -197,6 +239,8 @@
       (throw (ex-info (str "Unknown tool: " tool-name) {})))
     (catch Exception e
       [{"type" "text" "text" (str "Error: " (.getMessage e))}])))
+
+(m/=> handle-tool-call [:=> [:cat :string [:map-of :string :any]] mcp-content-schema])
 
 ;; ---------------------------------------------------------------------------
 ;; JSON-RPC / MCP protocol
@@ -234,9 +278,16 @@
 
       "tools/call"
       (let [tool-name (get params "name")
-            arguments (get params "arguments" {})]
-        (let [content (handle-tool-call tool-name arguments)]
-          (respond id {"content" content "isError" false})))
+            arguments (get params "arguments" {})
+            input     (get tool-input-schema tool-name)
+            errors    (when input (schema/humanize input arguments))]
+        (if errors
+          ;; Reject malformed arguments before touching the compiler.
+          (respond id {"content" [{"type" "text"
+                                   "text" (str "Invalid arguments: " (pr-str errors))}]
+                       "isError" true})
+          (respond id {"content" (handle-tool-call tool-name arguments)
+                       "isError" false})))
 
       "ping"
       (respond id {})
