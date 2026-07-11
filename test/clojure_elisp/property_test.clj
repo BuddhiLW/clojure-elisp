@@ -91,6 +91,47 @@
                                     (vals n)))
                     root)))
 
+;; --- Recursive AST-node + form generators (CLJEL-MALLI-GEN) ---
+
+(def gen-leaf
+  "Generator for self-contained leaf AST nodes (:const/:local/:var), via the
+   src-side Malli leaf schemas (clojure-elisp.ast/gen-node)."
+  (gen/one-of (mapv ast/gen-node [:const :local :var])))
+
+(def gen-tree
+  "Recursive generator for nested AST-node TREES built from real, emittable ops
+   (:do/:and/:or/:vector/:if/:invoke) bottoming out at leaf nodes. Every tree it
+   produces conforms to the shared recursive ::schema/node AND is accepted by the
+   emitter — so it drives whole-tree validation AND node->emit totality directly,
+   without going through analyze."
+  (gen/recursive-gen
+   (fn [inner]
+     (gen/one-of
+      [(gen/fmap (fn [xs] {:op :do :body (vec xs)})      (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] {:op :and :exprs (vec xs)})    (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] {:op :or :exprs (vec xs)})     (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] {:op :vector :items (vec xs)}) (gen/vector inner 0 3))
+       (gen/fmap (fn [[t th el]] {:op :if :test t :then th :else el})
+                 (gen/tuple inner inner inner))
+       (gen/fmap (fn [[f args]] {:op :invoke :fn f :args (vec args)})
+                 (gen/tuple (ast/gen-node :var) (gen/vector inner 0 3)))]))
+   gen-leaf))
+
+(def gen-recursive-form
+  "Deeply-nested well-formed Clojure forms — simple leaves wrapped in
+   do/and/or/if/let/vector to arbitrary depth. Exercises analyze->emit over
+   recursively-generated source, past the single level of gen-nested-form."
+  (gen/recursive-gen
+   (fn [inner]
+     (gen/one-of
+      [(gen/fmap (fn [xs] (cons 'do xs))                    (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] (cons 'and xs))                   (gen/vector inner 1 3))
+       (gen/fmap (fn [xs] (cons 'or xs))                    (gen/vector inner 1 3))
+       (gen/fmap (fn [[a b]] (list 'if (list '> 'x 0) a b)) (gen/tuple inner inner))
+       (gen/fmap (fn [x] (list 'let ['y__gen x] 'y__gen))   inner)
+       (gen/fmap vec                                        (gen/vector inner 0 3))]))
+   gen-simple-form))
+
 (def gen-compile-error-variant
   "Generator for CompileError variant keywords."
   (gen/elements [:compile/read-error
@@ -340,6 +381,28 @@
   ;; Whole-tree recursive validation via the shared ::schema/node schema.
   (prop/for-all [form (gen/one-of [gen-simple-form gen-nested-form])]
                 (ast/valid-ast-tree? (ana/analyze form))))
+
+;; ============================================================================
+;; Recursive AST-node generators: schema conformance + emit totality
+;; ============================================================================
+
+(defspec generated-tree-conforms-to-node-schema 200
+  ;; Recursive node GENERATOR ⊑ recursive node SCHEMA: every tree gen-tree
+  ;; builds validates whole-tree against the shared ::schema/node.
+  (prop/for-all [node gen-tree]
+                (ast/valid-ast-tree? node)))
+
+(defspec generated-tree-emits-total 200
+  ;; The emitter is TOTAL over recursively-generated valid nodes: emit never
+  ;; throws and always returns a string (drives emit directly, no analyze step).
+  (prop/for-all [node gen-tree]
+                (string? (emit/emit node))))
+
+(defspec analyze-emit-nested-produces-string 150
+  ;; analyze->emit stays total over DEEPLY-nested generated forms — extends
+  ;; analyze-emit-produces-string past gen-nested-form's single nesting level.
+  (prop/for-all [form gen-recursive-form]
+                (string? (clel/emit form))))
 
 (deftest ast-no-false-rejection-regressions
   ;; Guards the corpus-gap false-rejections found in adversarial review: a node
