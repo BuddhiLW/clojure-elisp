@@ -309,9 +309,45 @@
                      (format "(%s %s)" (mangle-name p) (nth-accessor i)))
                    params))))
 
+(def ^:private recur-boundary-ops
+  "Ops that establish their own recur target; recur below them is not the
+   enclosing fn's."
+  #{:loop :fn :defn :lambda :reify :defmethod :letfn :deftype :defrecord})
+
+(defn- body-has-tail-recur?
+  "True when a :recur node in body targets the enclosing fn, i.e. is not
+   nested inside a construct that establishes its own recur target."
+  [body]
+  (letfn [(walk [node]
+            (cond
+              (map? node)        (cond
+                                   (= :recur (:op node)) true
+                                   (recur-boundary-ops (:op node)) false
+                                   :else (some walk (vals node)))
+              (sequential? node) (some walk node)
+              :else              false))]
+    (boolean (some walk body))))
+
+(defn- unsupported-recur!
+  [context]
+  (throw (ex-info (str "recur in " context " is not supported by the Elisp emitter; "
+                       "use loop/recur or an explicit named helper")
+                  {:op :recur :context context})))
+
+(defn- wrap-tail-recur
+  "Wrap an emitted fn body so recur resolves to a cl-labels self-call over
+   the fn's own params."
+  [mangled-params body-str]
+  (format "(cl-labels ((recur (%s)\n      %s))\n    (recur %s))"
+          (str/join " " mangled-params)
+          body-str
+          (str/join " " mangled-params)))
+
 (defn- emit-multi-arity-defn
   "Emit a multi-arity defun with cl-case dispatch on arg count."
   [elisp-name docstring arities]
+  (when (some #(body-has-tail-recur? (:body %)) arities)
+    (unsupported-recur! "a multi-arity fn"))
   (let [fixed-arities      (filter #(not= :variadic (:arity %)) arities)
         variadic-arity     (first (filter #(= :variadic (:arity %)) arities))
 
@@ -340,7 +376,9 @@
   "Emit a single-arity defun (variadic or simple)."
   [elisp-name docstring params body variadic? fixed-params rest-param]
   (if variadic?
-    (let [elisp-body     (str/join "\n  " (map emit body))
+    (let [_              (when (body-has-tail-recur? body)
+                           (unsupported-recur! "a variadic fn"))
+          elisp-body     (str/join "\n  " (map emit body))
           fixed-bindings (map-indexed
                           (fn [i p]
                             (format "(%s (nth %d clel--args))" (mangle-name p) i))
@@ -355,7 +393,10 @@
         (format "(defun %s (&rest clel--args)\n  (let (%s)\n    %s))"
                 elisp-name all-bindings elisp-body)))
     (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
-          elisp-body   (str/join "\n  " (map emit body))]
+          body-str     (str/join "\n  " (map emit body))
+          elisp-body   (if (body-has-tail-recur? body)
+                         (wrap-tail-recur (map mangle-name params) body-str)
+                         body-str)]
       (if docstring
         (format "(defun %s %s\n  %s\n  %s)"
                 elisp-name elisp-params (pr-str docstring) elisp-body)
@@ -371,12 +412,14 @@
 
 (defmethod emit-node :fn
   [{:keys [params body]}]
-  ;; The Clojure rest marker `&` must become Elisp's `&rest`; a bare `&` in a
-  ;; lambda arglist is an ordinary required parameter, so `(fn [x & xs] …)`
-  ;; would take the wrong arity and never bind the rest list.
-  (let [elisp-params (str "(" (emit-list (map (fn [p] (if (= '& p) "&rest" (mangle-name p)))
+  (let [variadic?    (some #(= '& %) params)
+        elisp-params (str "(" (emit-list (map (fn [p] (if (= '& p) "&rest" (mangle-name p)))
                                               params)) ")")
-        elisp-body   (str/join "\n    " (map emit body))]
+        body-str     (str/join "\n    " (map emit body))
+        elisp-body   (cond
+                       (not (body-has-tail-recur? body)) body-str
+                       variadic?                         (unsupported-recur! "a variadic fn")
+                       :else (wrap-tail-recur (map mangle-name params) body-str))]
     (format "(lambda %s\n    %s)" elisp-params elisp-body)))
 
 (defmethod emit-node :lazy-seq
