@@ -17,12 +17,12 @@ Published on [Clojars](https://clojars.org/io.github.buddhilw/clojure-elisp):
 
 ```clojure
 ;; deps.edn
-io.github.buddhilw/clojure-elisp {:mvn/version "0.6.0"}
+io.github.buddhilw/clojure-elisp {:mvn/version "0.6.1"}
 ```
 
 ```clojure
 ;; Leiningen / project.clj
-[io.github.buddhilw/clojure-elisp "0.6.0"]
+[io.github.buddhilw/clojure-elisp "0.6.1"]
 ```
 
 The standalone CLI uberjar (`clel-<version>.jar`) is attached to each [GitHub release](https://github.com/BuddhiLW/clojure-elisp/releases).

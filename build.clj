@@ -10,6 +10,29 @@
 (def basis (delay (b/create-basis {:project "deps.edn"})))
 
 (def version-resource "resources/clojure-elisp/VERSION")
+(def readme "README.md")
+
+(defn coord-patterns
+  "Regexes matching the README install coordinates as (prefix)(version)(suffix).
+   Derived from `lib`, so a group/artifact rename can't silently orphan them."
+  []
+  (let [l (java.util.regex.Pattern/quote (str lib))]
+    [;; deps.edn:   io.github.buddhilw/clojure-elisp {:mvn/version "X"}
+     (re-pattern (str "(" l " \\{:mvn/version \")([^\"]+)(\")"))
+     ;; Leiningen:  [io.github.buddhilw/clojure-elisp "X"]
+     (re-pattern (str "(\\[" l " \")([^\"]+)(\")"))]))
+
+(defn readme-versions
+  "Every version currently pinned in the README's install coordinates."
+  [source]
+  (into [] (mapcat #(map second (re-seq % source))) (coord-patterns)))
+
+(defn- sync-readme
+  "Rewrite the README install coordinates to `version`. Returns the new source."
+  [source]
+  (reduce (fn [s re] (str/replace s re (str "$1" version "$3")))
+          source
+          (coord-patterns)))
 
 (def pom-data
   [[:description "A Clojure-to-Emacs-Lisp compiler: analyzes Clojure-style source into an AST and emits Emacs Lisp, with a self-hosted runtime library."]
@@ -31,10 +54,18 @@
   (b/delete {:path "target"}))
 
 (defn sync-version
-  "Regenerate the classpath VERSION resource from the canonical top-level VERSION."
+  "Propagate the canonical top-level VERSION to everything that restates it:
+   the classpath VERSION resource (which stamps the runtime .el MELPA header)
+   and the README install coordinates."
   [_]
   (spit version-resource (slurp "VERSION"))
-  (println (str "Synced " version-resource " -> " version)))
+  (println (str "Synced " version-resource " -> " version))
+  (let [before (slurp readme)
+        after  (sync-readme before)]
+    (when (not= before after)
+      (spit readme after))
+    (println (str "Synced " readme " install coords -> " version
+                  (when (= before after) " (already current)")))))
 
 (defn jar
   "Build the library thin jar + pom for Clojars/Maven consumption."
