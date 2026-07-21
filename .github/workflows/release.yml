@@ -32,22 +32,13 @@ jobs:
         with:
           cli: latest
 
-      # A hand-edited VERSION wins when its tag is free; otherwise the patch
-      # advances to the first untagged A.B.X. build.clj owns this so VERSION,
-      # the classpath resource and the README coordinates move together.
+      # Resolves in-workspace only — main is protected, so nothing is pushed
+      # back. The committed VERSION is a floor; git tags are the ledger, and
+      # each run picks the first untagged A.B.X above that floor. The jar and
+      # the runtime .el header are stamped from the resolved value.
       - name: Resolve version (auto-bump patch when already tagged)
         id: version
         run: clojure -T:build bump-version
-
-      - name: Commit version bump
-        run: |
-          if ! git diff --quiet -- VERSION resources/clojure-elisp/VERSION README.md; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add VERSION resources/clojure-elisp/VERSION README.md
-            git commit -m "release: v${{ steps.version.outputs.version }}"
-            git push origin HEAD:main
-          fi
 
       - name: Build uberjar
         run: clojure -T:build uber

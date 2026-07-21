@@ -12,28 +12,6 @@
 (def version-resource "resources/clojure-elisp/VERSION")
 (def readme "README.md")
 
-(defn coord-patterns
-  "Regexes matching the README install coordinates as (prefix)(version)(suffix).
-   Derived from `lib`, so a group/artifact rename can't silently orphan them."
-  []
-  (let [l (java.util.regex.Pattern/quote (str lib))]
-    [;; deps.edn:   io.github.buddhilw/clojure-elisp {:mvn/version "X"}
-     (re-pattern (str "(" l " \\{:mvn/version \")([^\"]+)(\")"))
-     ;; Leiningen:  [io.github.buddhilw/clojure-elisp "X"]
-     (re-pattern (str "(\\[" l " \")([^\"]+)(\")"))]))
-
-(defn readme-versions
-  "Every version currently pinned in the README's install coordinates."
-  [source]
-  (into [] (mapcat #(map second (re-seq % source))) (coord-patterns)))
-
-(defn- sync-readme
-  "Rewrite the README install coordinates to `v`. Returns the new source."
-  [source v]
-  (reduce (fn [s re] (str/replace s re (str "$1" v "$3")))
-          source
-          (coord-patterns)))
-
 (defn- tag-exists?
   "True when the git tag vV already exists in this checkout.
 
@@ -78,18 +56,14 @@
   (b/delete {:path "target"}))
 
 (defn- sync-version!
-  "Propagate the on-disk VERSION (reported as `v`) to everything that restates
-   it: the classpath VERSION resource, which stamps the runtime .el MELPA
-   header, and the README install coordinates."
+  "Propagate the on-disk VERSION (reported as `v`) to the classpath VERSION
+   resource, which stamps the runtime .el MELPA header.
+
+   The README is deliberately NOT synced: it names no concrete version, so
+   there is nothing to keep in step. See version-consistency-test."
   [v]
   (spit version-resource (slurp "VERSION"))
-  (println (str "Synced " version-resource " -> " v))
-  (let [before (slurp readme)
-        after  (sync-readme before v)]
-    (when (not= before after)
-      (spit readme after))
-    (println (str "Synced " readme " install coords -> " v
-                  (when (= before after) " (already current)")))))
+  (println (str "Synced " version-resource " -> " v)))
 
 (defn sync-version
   "Propagate the canonical top-level VERSION to everything that restates it."

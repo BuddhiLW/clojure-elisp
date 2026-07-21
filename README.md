@@ -13,16 +13,18 @@ Write `.cljel` files using Clojure syntax, compile them to `.el` files that run 
 
 ## Installation
 
-Published on [Clojars](https://clojars.org/io.github.buddhilw/clojure-elisp):
+Published on [Clojars](https://clojars.org/io.github.buddhilw/clojure-elisp). The
+Clojars badge above carries the current version, and the Clojars page has
+ready-to-paste coordinates for deps.edn, Leiningen and Maven.
 
 ```clojure
 ;; deps.edn
-io.github.buddhilw/clojure-elisp {:mvn/version "0.6.1"}
+io.github.buddhilw/clojure-elisp {:mvn/version "<latest>"}
 ```
 
 ```clojure
 ;; Leiningen / project.clj
-[io.github.buddhilw/clojure-elisp "0.6.1"]
+[io.github.buddhilw/clojure-elisp "<latest>"]
 ```
 
 The standalone CLI uberjar (`clel-<version>.jar`) is attached to each [GitHub release](https://github.com/BuddhiLW/clojure-elisp/releases).
