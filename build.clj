@@ -28,11 +28,35 @@
   (into [] (mapcat #(map second (re-seq % source))) (coord-patterns)))
 
 (defn- sync-readme
-  "Rewrite the README install coordinates to `version`. Returns the new source."
-  [source]
-  (reduce (fn [s re] (str/replace s re (str "$1" version "$3")))
+  "Rewrite the README install coordinates to `v`. Returns the new source."
+  [source v]
+  (reduce (fn [s re] (str/replace s re (str "$1" v "$3")))
           source
           (coord-patterns)))
+
+(defn- tag-exists?
+  "True when the git tag vV already exists in this checkout.
+
+   Uses `tag --list`, whose output is the matched tag or nothing. `rev-parse`
+   is unusable here: on an unknown revision it echoes the argument back on
+   stdout, which git-process returns, so every tag would look present."
+  [v]
+  (not (str/blank? (b/git-process {:git-args ["tag" "--list" (str "v" v)]}))))
+
+(defn- next-free-version
+  "First A.B.X — X ascending from V's patch — whose vA.B.X tag is unused.
+   Returns V itself when its own tag is free."
+  [v]
+  (let [[maj min pat] (str/split v #"\.")
+        start (some-> pat parse-long)]
+    (when-not (and maj min start)
+      (throw (ex-info "VERSION is not A.B.C; cannot auto-bump the patch"
+                      {:version v})))
+    (loop [p start]
+      (let [candidate (str maj "." min "." p)]
+        (if (tag-exists? candidate)
+          (recur (inc p))
+          candidate)))))
 
 (def pom-data
   [[:description "A Clojure-to-Emacs-Lisp compiler: analyzes Clojure-style source into an AST and emits Emacs Lisp, with a self-hosted runtime library."]
@@ -53,19 +77,44 @@
 (defn clean [_]
   (b/delete {:path "target"}))
 
-(defn sync-version
-  "Propagate the canonical top-level VERSION to everything that restates it:
-   the classpath VERSION resource (which stamps the runtime .el MELPA header)
-   and the README install coordinates."
-  [_]
+(defn- sync-version!
+  "Propagate the on-disk VERSION (reported as `v`) to everything that restates
+   it: the classpath VERSION resource, which stamps the runtime .el MELPA
+   header, and the README install coordinates."
+  [v]
   (spit version-resource (slurp "VERSION"))
-  (println (str "Synced " version-resource " -> " version))
+  (println (str "Synced " version-resource " -> " v))
   (let [before (slurp readme)
-        after  (sync-readme before)]
+        after  (sync-readme before v)]
     (when (not= before after)
       (spit readme after))
-    (println (str "Synced " readme " install coords -> " version
+    (println (str "Synced " readme " install coords -> " v
                   (when (= before after) " (already current)")))))
+
+(defn sync-version
+  "Propagate the canonical top-level VERSION to everything that restates it."
+  [_]
+  (sync-version! version))
+
+(defn bump-version
+  "Resolve the version to release and propagate it across every tracked file.
+
+   A hand-edited VERSION wins when its tag is free; otherwise the patch
+   advances to the first untagged A.B.X. VERSION, the classpath resource and
+   the README coordinates are written together, so the consistency guard is
+   never left failing. Writes version/tag to GITHUB_OUTPUT when it is set.
+   Returns the resolved version."
+  [_]
+  (let [current  (str/trim (slurp "VERSION"))
+        resolved (next-free-version current)]
+    (when (not= current resolved)
+      (spit "VERSION" (str resolved "\n"))
+      (println (str "Bumped VERSION " current " -> " resolved)))
+    (sync-version! resolved)
+    (when-let [out (System/getenv "GITHUB_OUTPUT")]
+      (spit out (str "version=" resolved "\ntag=v" resolved "\n") :append true))
+    (println (str "Release version: " resolved))
+    resolved))
 
 (defn jar
   "Build the library thin jar + pom for Clojars/Maven consumption."
