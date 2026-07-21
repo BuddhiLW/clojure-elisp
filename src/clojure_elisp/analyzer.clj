@@ -283,12 +283,19 @@
                       (mapv analyze body)))))
 
 (defn analyze-if
-  "Analyze (if test then else?) forms."
-  [[_ test then else]]
+  "Analyze (if test then else...) forms.
+
+   Elisp's else is an implicit progn, so the n-ary case reduces to the ternary
+   base case by folding the else-tail into a single `do`. Destructuring the
+   tail away instead would discard it with no diagnostic."
+  [[_ test then & else]]
   (ast-node :if
             :test (analyze test)
             :then (analyze then)
-            :else (when else (analyze else))))
+            :else (when (seq else)
+                    (analyze (if (= 1 (count else))
+                               (first else)
+                               (cons 'do else))))))
 
 (defn analyze-when
   "Analyze (when test body...) forms."
@@ -1142,8 +1149,15 @@
                            clauses)))
 
 (defn analyze-setq
-  "Analyze (setq var val ...) forms. Pairs of symbol-value."
+  "Analyze (setq var val ...) forms. Pairs of symbol-value.
+   An odd form count is malformed in both languages, so it is rejected rather
+   than truncated by `partition`."
   [[_ & pairs]]
+  (when (odd? (count pairs))
+    (throw (analysis-error
+            (str "setq expects an even number of forms (var/value pairs); got "
+                 (count pairs) ". The trailing form would be dropped.")
+            {:form (cons 'setq pairs)})))
   (ast-node :setq
             :pairs (mapv (fn [[sym val]]
                            {:name sym :value (analyze val)})
@@ -1152,8 +1166,14 @@
 (defn analyze-setf
   "Analyze (setf place val ...) forms. Pairs of place-value.
    Like setq but place can be any generalized Elisp place expression
-   (e.g., (car x), (aref arr 0), symbol)."
+   (e.g., (car x), (aref arr 0), symbol). An odd form count is malformed in
+   both languages, so it is rejected rather than truncated by `partition`."
   [[_ & pairs]]
+  (when (odd? (count pairs))
+    (throw (analysis-error
+            (str "setf expects an even number of forms (place/value pairs); got "
+                 (count pairs) ". The trailing form would be dropped.")
+            {:form (cons 'setf pairs)})))
   (ast-node :setf
             :pairs (mapv (fn [[place val]]
                            {:place (analyze place) :value (analyze val)})

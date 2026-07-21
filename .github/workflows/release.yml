@@ -21,52 +21,43 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read version
-        id: version
-        run: |
-          if [ -f VERSION ]; then
-            VERSION=$(cat VERSION | tr -d '[:space:]')
-          else
-            echo "::error::VERSION file not found"
-            exit 1
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Check if tag exists
-        id: check
-        run: |
-          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Setup Java
-        if: steps.check.outputs.exists == 'false'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Setup Clojure
-        if: steps.check.outputs.exists == 'false'
         uses: DeLaGuardo/setup-clojure@12.5
         with:
           cli: latest
 
+      # A hand-edited VERSION wins when its tag is free; otherwise the patch
+      # advances to the first untagged A.B.X. build.clj owns this so VERSION,
+      # the classpath resource and the README coordinates move together.
+      - name: Resolve version (auto-bump patch when already tagged)
+        id: version
+        run: clojure -T:build bump-version
+
+      - name: Commit version bump
+        run: |
+          if ! git diff --quiet -- VERSION resources/clojure-elisp/VERSION README.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add VERSION resources/clojure-elisp/VERSION README.md
+            git commit -m "release: v${{ steps.version.outputs.version }}"
+            git push origin HEAD:main
+          fi
+
       - name: Build uberjar
-        if: steps.check.outputs.exists == 'false'
         run: clojure -T:build uber
 
       - name: Create tag
-        if: steps.check.outputs.exists == 'false'
         run: |
           git tag "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Create GitHub release
-        if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -74,5 +65,5 @@ jobs:
           files: target/clel-${{ steps.version.outputs.version }}.jar
 
       - name: Deploy to Clojars
-        if: steps.check.outputs.exists == 'false' && env.CLOJARS_USERNAME != ''
+        if: env.CLOJARS_USERNAME != ''
         run: clojure -T:build deploy
