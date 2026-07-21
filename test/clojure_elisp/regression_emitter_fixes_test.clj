@@ -134,6 +134,41 @@
       (is (str/includes? single "(t (default-action))"))
       (is (str/includes? multi "progn")))))
 
+(deftest cond-legacy-elisp-shape-fails-loud
+  ;; Regression for the 0.6.1 silent miscompile found 2026-07-21 while rebuilding
+  ;; hive-emacs: pre-grouped Elisp-style clauses passed to BARE `cond` were read as
+  ;; flat test/expr pairs, so N clauses collapsed into ceil(N/2) groups whose car is
+  ;; a former clause. Elisp then treats that car as a function to CALL -> byte-compile
+  ;; "Malformed function", and an odd trailing clause (the `(t ...)` fallback) was
+  ;; dropped outright. Both failure modes were SILENT: the compiler reported success.
+  ;;
+  ;; A test position whose head is itself a list is provably uncallable in Elisp
+  ;; (function position admits a symbol or a lambda form, never a computed value),
+  ;; so this detector cannot fire on the legitimate flat shapes above -- their heads
+  ;; are symbols. That is what makes it strictly safer than the old, correctly
+  ;; rejected (every? seq? clauses) auto-detection.
+  (testing "pre-grouped Elisp clauses in bare cond throw, naming elisp-cond as the fix"
+    (let [e (is (thrown? clojure.lang.ExceptionInfo
+                         (emit-form '(cond ((= x 1) "one") ((= x 2) "two") (t "many")))))]
+      (is (str/includes? (ex-message e) "elisp-cond")
+          "error must point at the supported pre-grouped surface")))
+  (testing "the exact hive-emacs shape that silently lost its (t ...) fallback throws"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (emit-form '(cond ((not (string-prefix-p p n)) (message "blocked") nil)
+                                   (t (message "ok") t))))))
+  (testing "odd flat clause count throws instead of silently dropping the last form"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (emit-form '(cond (pred x) (f) (pred2 y))))))
+  (testing "a lambda in test-head position is genuinely callable and must NOT throw"
+    (is (string? (emit-form '(cond ((lambda (v) v) 1) "yes" :else "no")))))
+  (testing "legitimate flat conds still compile unchanged (no false positives)"
+    (is (str/includes? (emit-form '(cond (pred x) (f) (pred2 y) (g))) "((pred x) (f))"))
+    (is (str/includes? (emit-form '(cond (hash-table-p r)
+                                         (cond (hash-table-p m) (a) (listp m) (b))
+                                         (listp r) (c)))
+                       "((listp r) (c))"))
+    (is (str/includes? (emit-form '(cond true 1 false 2)) "(t 1)"))))
+
 (deftest multi-arity-fn-and-defmethod-rest
   ;; Regression for kanban 20260710134255-3ce11ce0:
   ;;  (1) multi-arity anonymous fn silently dropped all but the first arity.

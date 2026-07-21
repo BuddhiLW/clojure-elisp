@@ -297,17 +297,47 @@
             :test (analyze test)
             :body (mapv analyze body)))
 
+(defn- uncallable-test-head?
+  "True when FORM cannot occupy a `cond` test position in Elisp.
+
+   Elisp function position admits a symbol or a literal lambda form, never a
+   computed value. So a test whose head is itself a list — ((= x 1) \"one\") —
+   is provably uncallable, which is precisely the signature of Elisp-style
+   pre-grouped clauses fed to a flat `cond`."
+  [form]
+  (and (seq? form)
+       (seq? (first form))
+       (not (contains? #{'lambda 'closure} (first (first form))))))
+
 (defn analyze-cond
   "Analyze (cond test expr test expr ...) — Clojure flat test/expr pairs.
 
-   Clojure `cond` is ALWAYS flat: there is no pre-grouped clause form, so we
-   never inspect clause shape. The Elisp-style pre-grouped shape
-   (cond (test body...) ...) is provided ONLY by the `elisp-cond` macro, which
-   desugars to this flat form (see `elisp-cond-expand`). Auto-detecting by
-   `(every? seq? clauses)` was wrong: a flat cond whose tests AND exprs are all
-   lists — e.g. (cond (hash-table-p m) (maphash ...) (listp m) (dolist ...)) —
-   was mis-read as pre-grouped and mis-compiled."
+   Clojure `cond` is ALWAYS flat: there is no pre-grouped clause form. The
+   Elisp-style pre-grouped shape (cond (test body...) ...) is provided ONLY by
+   the `elisp-cond` macro, which desugars to this flat form (see
+   `elisp-cond-expand`). Auto-detecting by `(every? seq? clauses)` was wrong: a
+   flat cond whose tests AND exprs are all lists — e.g.
+   (cond (hash-table-p m) (maphash ...) (listp m) (dolist ...)) — was mis-read
+   as pre-grouped and mis-compiled.
+
+   Rejects, rather than silently mis-compiling, the two shapes that cannot be
+   meant as flat pairs: an odd clause count (whose trailing form `partition`
+   would drop) and a test position that is provably uncallable."
   [[_ & clauses]]
+  (when (odd? (count clauses))
+    (throw (analysis-error
+            (str "cond expects an even number of forms (flat test/expr pairs); "
+                 "got " (count clauses) ". The trailing form would be dropped. "
+                 "For Elisp-style pre-grouped clauses use `elisp-cond`.")
+            {:form (cons 'cond clauses)})))
+  (doseq [[test _] (partition 2 clauses)]
+    (when (uncallable-test-head? test)
+      (throw (analysis-error
+              (str "cond test " (pr-str test) " is not callable: its head is a list. "
+                   "This is Elisp-style pre-grouped clause syntax, but bare `cond` "
+                   "takes flat test/expr pairs. Use `elisp-cond` for pre-grouped "
+                   "clauses, or flatten the clauses.")
+              {:form (cons 'cond clauses) :test test}))))
   (ast-node :cond
             :clauses (->> (partition 2 clauses)
                           (mapv (fn [[test expr]]
