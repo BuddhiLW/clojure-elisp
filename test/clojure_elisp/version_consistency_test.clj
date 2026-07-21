@@ -19,22 +19,24 @@
    ;; Leiningen:  [io.github.buddhilw/clojure-elisp "X"]
    #"\[io\.github\.buddhilw/clojure-elisp \"([^\"]+)\""])
 
-(deftest readme-install-coords-track-version
-  (let [version (str/trim (slurp "VERSION"))
-        readme  (slurp "README.md")
-        pinned  (into [] (mapcat #(map second (re-seq % readme)))
-                      readme-coord-patterns)]
+(deftest readme-install-coords-carry-no-concrete-version
+  (let [readme (slurp "README.md")
+        pinned (into [] (mapcat #(map second (re-seq % readme)))
+                     readme-coord-patterns)]
 
     (testing "the coordinates are still findable — a README rewrite that changes
               their shape must fail loudly rather than pass vacuously"
       (is (= 2 (count pinned))
-          (str "expected 2 pinned install coordinates in README.md (deps.edn + Leiningen), found "
+          (str "expected 2 install coordinates in README.md (deps.edn + Leiningen), found "
                (count pinned)
-               ". If the install snippets moved or changed shape, update both this test and "
-               "build/coord-patterns — otherwise the version sync silently stops covering them.")))
+               ". If the install snippets moved or changed shape, update this test — "
+               "otherwise it silently stops covering them.")))
 
-    (testing "every pinned coordinate matches /VERSION"
+    (testing "no coordinate names a concrete version — the release job cannot
+              write to a protected main, so a hardcoded version would go stale
+              the moment the next release ships. The Clojars badge is the
+              single source of truth for the current version."
       (doseq [v pinned]
-        (is (= version v)
-            (str "README.md pins " (pr-str v) " but /VERSION is " (pr-str version)
-                 " — run `clojure -T:build sync-version`"))))))
+        (is (not (re-matches #"\d+\.\d+\.\d+.*" v))
+            (str "README.md pins concrete version " (pr-str v)
+                 " — use a placeholder and let the Clojars badge carry the version."))))))
