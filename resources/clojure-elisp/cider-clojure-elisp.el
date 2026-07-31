@@ -85,10 +85,30 @@ Eval operations return to normal Clojure evaluation."
 
 ;;; --- Eval Helpers ---
 
+(defun cider-cljel--read-forms (elisp-string)
+  "Read every top-level form in ELISP-STRING and return them in source order.
+Signals on malformed input; a trailing run of whitespace or comments is not
+malformed and terminates the scan."
+  (let ((pos 0)
+        (len (length elisp-string))
+        (forms nil))
+    (condition-case nil
+        (while (< pos len)
+          (let ((res (read-from-string elisp-string pos)))
+            (setq forms (cons (car res) forms))
+            (setq pos (cdr res))))
+      (end-of-file nil))
+    (nreverse forms)))
+
 (defun cider-cljel--eval-elisp-string (elisp-string)
-  "Evaluate ELISP-STRING locally in Emacs and return the result as a string."
+  "Evaluate every top-level form in ELISP-STRING locally in Emacs.
+Returns the printed value of the last form as a string, or a description of
+the first error raised.  A single-form ELISP-STRING evaluates to that form's
+value, so expression-level eval is unchanged."
   (condition-case err
-      (let ((result (eval (car (read-from-string elisp-string)) t)))
+      (let ((result nil))
+        (dolist (form (cider-cljel--read-forms elisp-string))
+          (setq result (eval form t)))
         (format "%S" result))
     (error (format "Elisp eval error: %S" err))))
 

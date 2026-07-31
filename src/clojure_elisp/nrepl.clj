@@ -43,14 +43,21 @@
 
 (defn compile-code
   "Compile a ClojureElisp code string to Elisp.
+   MODE is :expr (default) for a single expression with no namespace
+   context, or :file for a whole buffer — (ns ...) aliases/refers apply,
+   definitions get their namespace prefix, and a trailing (provide ...)
+   is appended.
    Returns {:status :ok :elisp \"...\"} or {:status :error :error \"...\"}."
-  [code]
-  (try
-    {:status :ok
-     :elisp (core/compile-string code)}
-    (catch Exception e
-      {:status :error
-       :error (.getMessage e)})))
+  ([code] (compile-code code :expr))
+  ([code mode]
+   (try
+     {:status :ok
+      :elisp (if (= :file mode)
+               (core/compile-file-string code)
+               (core/compile-string code))}
+     (catch Exception e
+       {:status :error
+        :error (.getMessage e)}))))
 
 ;; ============================================================================
 ;; Response Helpers
@@ -86,9 +93,11 @@
 
 (defn handle-load-file
   "Handle a load-file op for a CLJEL session.
-   Compiles the file content and sends the compiled Elisp back."
+   Compiles the whole file content in :file mode — namespace context is
+   honoured and every top-level form is emitted — and sends the compiled
+   Elisp back."
   [{:keys [file] :as msg}]
-  (let [result (compile-code file)]
+  (let [result (compile-code file :file)]
     (if (= :ok (:status result))
       (send-compiled-result msg (:elisp result))
       (send-error msg (:error result)))))
