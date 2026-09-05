@@ -118,3 +118,24 @@
         (mi/unstrument! {:filters [(mi/-filter-ns 'clojure-elisp.macros)]})
         ;; leave the registry as tests found it
         (swap! macros/macro-registry dissoc 'tmp-macro)))))
+
+;; ============================================================================
+;; Lazy-seq safety — no seq consumer may target a raw Elisp primitive
+;; ============================================================================
+
+(deftest lazy-seq-consumers-target-clel-wrappers
+  (testing "every declared seq consumer resolves to a clel- wrapper"
+    (is (= {} (mappings/raw-lazy-seq-targets))
+        (str "A raw Elisp primitive cannot force a clel-lazy-seq: `length` "
+             "measures the struct and `apply` signals wrong-type-argument.")))
+  (testing "the declared set names fns that really are mapped"
+    (is (every? #(contains? mappings/core-fn-mapping %)
+                mappings/lazy-seq-consuming-fns)))
+  (testing "the guard fires when a consumer is pointed back at a primitive"
+    (with-redefs [mappings/core-fn-mapping (assoc mappings/core-fn-mapping
+                                                  'count "length")]
+      (is (= {'count "length"} (mappings/raw-lazy-seq-targets)))))
+  (testing "validate-tables! propagates a raw seq target as a violation"
+    (with-redefs [mappings/raw-lazy-seq-targets (constantly {'count "length"})]
+      (let [ex (is (thrown? clojure.lang.ExceptionInfo (mappings/validate-tables!)))]
+        (is (= {'count "length"} (:raw-targets (ex-data ex))))))))
