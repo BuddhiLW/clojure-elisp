@@ -45,13 +45,19 @@
     :else (error "clel-conj: unsupported collection type"))))
 
 (cl-defun clel-get (coll key &optional default)
-  "Get KEY from COLL, returning DEFAULT if not found."
+  "Get KEY from COLL, returning DEFAULT only when KEY is ABSENT.
+A present nil or false is returned as itself: `or' against the default
+would overwrite it, which is how destructuring :or used to lose a
+deliberately falsy value."
   (cond
     (nil? coll) default
     (list? coll)
     (if (number? key)
-      (or (elisp/nth key coll) default)
-      (or (alist-get key coll nil nil 'equal) default))
+      (if (and (integerp key) (>= key 0) (< key (count coll)))
+        (elisp/nth key coll)
+        default)
+      (let [pair (alist-assoc key coll)]
+        (if pair (cdr pair) default)))
     (vector? coll)
     (if (and (number? key) (< key (count coll)))
       (aref coll key)
