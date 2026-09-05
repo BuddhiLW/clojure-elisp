@@ -49,8 +49,45 @@
   :group 'cider
   :prefix "cider-cljel-")
 
+(defcustom cider-cljel-runtime-file nil
+  "Path to `clojure-elisp-runtime.el', used when it is not on `load-path'.
+Compiled ClojureElisp calls runtime functions such as `clel-str', so the
+runtime must be loaded before the first evaluation."
+  :type '(choice (const :tag "Rely on load-path" nil) file)
+  :group 'cider-clojure-elisp)
+
 (defvar-local cider-cljel-active nil
   "Non-nil when a CLJEL compilation session is active.")
+
+;;; --- Runtime ---
+
+(defun cider-cljel-ensure-runtime ()
+  "Ensure `clojure-elisp-runtime' is loaded.
+Returns non-nil on success.  Tries `load-path' first, then
+`cider-cljel-runtime-file'."
+  (or (featurep 'clojure-elisp-runtime)
+      (require 'clojure-elisp-runtime nil t)
+      (and cider-cljel-runtime-file
+           (file-readable-p cider-cljel-runtime-file)
+           (progn (load cider-cljel-runtime-file nil t)
+                  (featurep 'clojure-elisp-runtime)))))
+
+;;; --- Namespace Context ---
+
+(defun cider-cljel-buffer-ns-form ()
+  "Return the source text of this buffer's leading (ns ...) form, or nil.
+Sent with every eval so an interactively evaluated definition gets the same
+Elisp name that compiling the whole buffer would give it."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (when (re-search-forward "^(ns\\_>" nil t)
+        (let ((start (match-beginning 0)))
+          (goto-char start)
+          (ignore-errors
+            (forward-sexp)
+            (buffer-substring-no-properties start (point))))))))
 
 ;;; --- Session Management ---
 
@@ -60,6 +97,10 @@ Subsequent eval operations will compile ClojureElisp to Elisp
 and evaluate the result locally in Emacs."
   (interactive)
   (cider-ensure-connected)
+  (unless (cider-cljel-ensure-runtime)
+    (message "ClojureElisp: clojure-elisp-runtime.el not found. \
+Add it to load-path or set `cider-cljel-runtime-file'; \
+compiled code calling clel-str, clel-conj etc. will fail without it."))
   (let ((buf (current-buffer)))
     (cider-nrepl-send-request
      '("op" "cljel-start")
@@ -112,6 +153,17 @@ value, so expression-level eval is unchanged."
         (format "%S" result))
     (error (format "Elisp eval error: %S" err))))
 
+(defun cider-cljel--display (buffer point text)
+  "Display TEXT for an evaluation in BUFFER at POINT.
+Uses a CIDER inline overlay when available, echo area otherwise."
+  (with-current-buffer buffer
+    (or (and point
+             (fboundp 'cider--display-interactive-eval-result)
+             (ignore-errors
+               (cider--display-interactive-eval-result text point)
+               t))
+        (message "=> %s" text))))
+
 (defun cider-cljel--make-handler (buffer &optional point)
   "Make a response handler for CLJEL eval results.
 BUFFER is the source buffer.  Optional POINT is the source location
@@ -123,11 +175,10 @@ evaluates it locally in Emacs and displays the result."
     (let ((compiled (nrepl-dict-get response "cljel-compiled-elisp"))
           (err (nrepl-dict-get response "err")))
       (cond
-       ;; Compiled Elisp received — eval locally
+       ;; Compiled Elisp received, eval locally
        (compiled
-        (let ((result (cider-cljel--eval-elisp-string compiled)))
-          (with-current-buffer buffer
-            (message "=> %s" result))))
+        (cider-cljel--display buffer point
+                              (cider-cljel--eval-elisp-string compiled)))
        ;; Compilation error
        (err
         (with-current-buffer buffer
@@ -136,13 +187,17 @@ evaluates it locally in Emacs and displays the result."
 ;;; --- Eval Functions ---
 
 (defun cider-cljel-eval (code)
-  "Evaluate ClojureElisp CODE via nREPL and eval the compiled Elisp locally."
+  "Evaluate ClojureElisp CODE via nREPL and eval the compiled Elisp locally.
+The buffer's (ns ...) form travels with the request, so a definition
+evaluated here gets the same Elisp name the compiled buffer would give it."
   (interactive "sClojureElisp: ")
   (cider-ensure-connected)
   (cider-nrepl-send-request
-   (list "op" "eval"
-         "code" code
-         "ns" "user")
+   (append (list "op" "eval"
+                 "code" code
+                 "ns" "user")
+           (let ((ns-form (cider-cljel-buffer-ns-form)))
+             (when ns-form (list "cljel-ns" ns-form))))
    (cider-cljel--make-handler (current-buffer) (point))))
 
 (defun cider-cljel-eval-last-sexp ()

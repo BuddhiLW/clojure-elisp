@@ -156,6 +156,20 @@
 ;; Argument parsing
 ;; ---------------------------------------------------------------------------
 
+(defn- parse-port-flag
+  "Parse --port/-p from args. Returns a long or nil."
+  [args]
+  (some->> args
+           (drop-while #(not (contains? #{"--port" "-p"} %)))
+           second
+           parse-long))
+
+(defn- compiler-loadable?
+  "True when clojure-elisp.core can be required in this Babashka process."
+  []
+  (try (require 'clojure-elisp.core) true
+       (catch Exception _ false)))
+
 (defn- parse-output-flag
   "Parse -o flag from args. Returns the output path or nil."
   [args]
@@ -177,6 +191,7 @@
   (println "  compile <file.cljel> [-o out.el] Compile a single file")
   (println "  compile <dir/> [-o outdir/]      Compile all .cljel files in directory")
   (println "  watch <dir/> [-o outdir/]        Watch and recompile on changes")
+  (println "  nrepl [--port N]                 Start the ClojureElisp nREPL server (no JVM)")
   (println "  mcp                              Start MCP stdio server")
   (println "  version                          Print version")
   (println)
@@ -184,7 +199,8 @@
   (println "  clel compile")
   (println "  clel compile src/my_app.cljel -o out/my-app.el")
   (println "  clel compile src/ -o out/")
-  (println "  clel watch src/ -o out/"))
+  (println "  clel watch src/ -o out/")
+  (println "  clel nrepl --port 7888"))
 
 ;; ---------------------------------------------------------------------------
 ;; Main
@@ -219,6 +235,16 @@
         (if-let [jar (find-jar)]
           (run-jar jar "mcp")
           (die 1 "MCP server requires the uberjar. Run: make build install"))
+
+        "nrepl"
+        (let [port (or (parse-port-flag rest-args) 7888)]
+          (if (compiler-loadable?)
+            (do (require 'clel.nrepl-server)
+                ((resolve 'clel.nrepl-server/start-server!) port))
+            (die 1 (str "The compiler is not on this Babashka classpath.\n"
+                        "Run `clel nrepl` from a project whose bb.edn puts "
+                        "clojure-elisp's src on :paths,\n"
+                        "or from the clojure-elisp checkout itself."))))
 
         ("version" "v")
         (println (str "clel " (read-version)))
