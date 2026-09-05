@@ -320,6 +320,23 @@
         raw-elisp    (emit-forms forms)]
     (postprocess-elisp-syntax raw-elisp)))
 
+(defn compile-string-in-ns
+  "Compile a string of Clojure code in the namespace context of ns-source.
+   ns-source is the text of an (ns ...) form, or nil/blank for no context.
+
+   Emits only the compiled forms: no file header, no (provide ...). Definitions
+   carry the same namespace prefix compile-file-string would give them, so a
+   form compiled here and the same form compiled as part of its file emit the
+   same Elisp name."
+  [ns-source s]
+  (let [ns-forms  (if (str/blank? ns-source)
+                    []
+                    (read-all-forms (preprocess-elisp-syntax ns-source)))
+        forms     (read-all-forms (preprocess-elisp-syntax s))
+        ast-nodes (ana/analyze-file-forms (into (vec ns-forms) forms))
+        body      (drop (count ns-forms) ast-nodes)]
+    (postprocess-elisp-syntax (str/join "\n\n" (map emit/emit body)))))
+
 (defn compile-file-string-result
   "Compile a string of Clojure code as a file, returning a Result.
    Staged so the reader boundary tags failures :compile/read-error (rather than
@@ -425,6 +442,7 @@
 (m/=> emit                       [:=> [:cat :any] :string])
 (m/=> emit-forms                 [:=> [:cat [:sequential :any]] :string])
 (m/=> compile-string             [:=> [:cat :string] :string])
+(m/=> compile-string-in-ns       [:=> [:cat [:maybe :string] :string] :string])
 (m/=> compile-file-string        [:=> [:cat :string] :string])
 (m/=> emit-result                [:=> [:cat :any] errors/string-result-schema])
 (m/=> emit-forms-result          [:=> [:cat [:sequential :any]] errors/string-result-schema])

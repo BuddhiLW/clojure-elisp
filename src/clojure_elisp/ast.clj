@@ -13,8 +13,7 @@
   (:require [clojure.set :as set]
             [clojure-elisp.schema :as schema]
             [malli.core :as m]
-            [malli.error :as me]
-            [malli.generator :as mg]))
+            [malli.error :as me]))
 
 ;; ============================================================================
 ;; Required keys per :op
@@ -238,6 +237,11 @@
 
 (defn gen-node
   "Return a test.check generator for leaf AST nodes of the given :op.
-   Supported ops: keys of leaf-node-schemas."
+   Supported ops: keys of leaf-node-schemas.
+
+   malli.generator is resolved on first call rather than required at load
+   time: it pulls in test.check, which the compile path never needs and
+   which is absent from the lightweight runtimes (Babashka, ClojureWasm)
+   that host the cljel nREPL server."
   [op]
-  (mg/generator (get leaf-node-schemas op)))
+  ((requiring-resolve 'malli.generator/generator) (get leaf-node-schemas op)))

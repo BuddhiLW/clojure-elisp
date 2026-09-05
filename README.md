@@ -87,6 +87,121 @@ Compiles to:
 ;;; my-package.el ends here
 ```
 
+## Interactive Development
+
+No build step stands between you and your editor. `C-c C-c` compiles the form
+at point and evaluates the resulting Elisp **in the Emacs you are using**. The
+function is redefined in the running image, nothing is written to disk, and
+`M-x` finds it immediately. It is the elisp REPL loop, with Clojure syntax.
+
+### Start the server
+
+No JVM, no `.nrepl.edn`, no jack-in:
+
+```bash
+clel nrepl                # ClojureElisp nREPL server on port 7888
+```
+
+```
+M-x cider-connect-clj     RET localhost RET 7888 RET
+M-x cider-cljel-mode
+```
+
+Compilation is active from the first message, so `cider-cljel-mode` is only
+there for the keybindings.
+
+Already inside a Clojure project and want the JVM server instead? Put the
+middleware in `.nrepl.edn` and jack in as usual:
+
+```clojure
+;; .nrepl.edn
+{:middleware [clojure-elisp.nrepl/wrap-cljel]}
+```
+
+```
+M-x cider-jack-in         (with the :dev alias)
+M-x cider-cljel-mode
+```
+
+Both servers run the same compiler and speak the same protocol.
+
+### Keys
+
+| Key | Does |
+|---|---|
+| `C-c C-e` | Compile and eval the form before point |
+| `C-c C-c` | Compile and eval the top-level form at point |
+| `C-c C-k` | Compile and eval the whole buffer |
+
+`C-c C-e` and `C-c C-c` send the buffer's `(ns ...)` form along with the code,
+so a definition evaluated at point gets the same Elisp name that `C-c C-k` and
+`clel compile` give it. Evaluate `(defn greet ...)` inside `(ns my.pkg)` and you
+get `my-pkg-greet` every way you compile it.
+
+### A session
+
+Building a command that wraps the region in a Markdown code fence. Open
+`fence.cljel`, then evaluate as you go.
+
+```clojure
+(ns my.fence)
+```
+
+`C-c C-c` on the `ns` form. Now a helper:
+
+```clojure
+(defn fence-text [lang text]
+  (str "```" lang "\n" text "\n```"))
+```
+
+`C-c C-c`. It is defined right now. Try it without leaving the buffer, with
+`C-c C-e` after the closing paren:
+
+```clojure
+(fence-text "clojure" "(+ 1 2)")
+;; => "```clojure\n(+ 1 2)\n```"
+```
+
+The result appears inline, at point. Now the interactive command:
+
+```clojure
+(defn fence-region [start end]
+  (interactive "r")
+  (let [text (buffer-substring-no-properties start end)]
+    (delete-region start end)
+    (insert (fence-text "clojure" text))))
+```
+
+`C-c C-c`, then select a region and run `M-x my-fence-fence-region`. It works,
+because it is a real `defun` in your live Emacs.
+
+Wrong language hardcoded. Fix it in place:
+
+```clojure
+(defn fence-region [start end lang]
+  (interactive "r\nsLanguage: ")
+  (let [text (buffer-substring-no-properties start end)]
+    (delete-region start end)
+    (insert (fence-text lang text))))
+```
+
+`C-c C-c` again. The old definition is replaced. No recompile, no reload, no
+restart. When the buffer is right, ship it:
+
+```bash
+clel compile fence.cljel -o fence.el
+```
+
+The emitted `fence.el` defines the same `my-fence-fence-region` you have been
+calling all along.
+
+### Requirements
+
+Compiled code calls runtime functions such as `clel-str`, so
+`clojure-elisp-runtime.el` must be loadable. `cider-cljel-mode` loads it from
+`load-path` and tells you if it cannot find it; point
+`cider-cljel-runtime-file` at the file to be explicit.
+
 ## Features
 
 ### Language
@@ -146,8 +261,11 @@ Clojure core functions mapped to Elisp equivalents:
 | MCP Server | `src/clojure_elisp/mcp.clj` | MCP stdio server exposing compiler as AI tools |
 | CLI | `src/clojure_elisp/cli.clj` | JVM uberjar entry point (compile, mcp, version) |
 | BB CLI | `bb/clel/main.clj` | Babashka CLI frontend (delegates to uberjar) |
+| nREPL kernel | `src/clojure_elisp/nrepl_kernel.clj` | Session registry, compile modes, op semantics (transport-free) |
+| nREPL middleware | `src/clojure_elisp/nrepl.clj` | JVM transport: `wrap-cljel` for a CIDER jack-in |
+| nREPL server | `bb/clel/nrepl_server.clj` | Standalone transport: `clel nrepl`, no JVM |
 | Emacs mode | `resources/clojure-elisp/clojure-elisp-mode.el` | Major mode for `.cljel` files |
-| CIDER | `resources/clojure-elisp/cider-clojure-elisp.el` | nREPL middleware for CIDER integration |
+| CIDER | `resources/clojure-elisp/cider-clojure-elisp.el` | CIDER client: sends forms, evals the compiled Elisp locally |
 
 ## Installation
 
@@ -180,6 +298,7 @@ clel compile                            # Compile project from clel.edn
 clel compile src/my_app.cljel -o out/   # Compile a single file
 clel compile src/ -o out/               # Compile a directory
 clel watch src/ -o out/                 # Watch and recompile on changes
+clel nrepl --port 7888                  # Start the nREPL server for CIDER
 clel mcp                                # Start MCP stdio server
 clel version                            # Print version
 ```
@@ -212,7 +331,7 @@ clojure -T:build uber
 # Start REPL with dev dependencies (nREPL, CIDER)
 clojure -M:dev
 
-# Run tests (Kaocha — 500 tests, 2588 assertions)
+# Run tests (Kaocha, 598 tests, 3021 assertions)
 clojure -M:test
 
 # Build uberjar

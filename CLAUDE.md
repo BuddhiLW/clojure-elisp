@@ -65,6 +65,60 @@ Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen) → Elisp (.el
 
 ## Progress Log
 
+### 2026-09-05: Interactive Development as the primary workflow (v0.7.0)
+
+**Trigger:** public feedback said cljel "needs an external transpiler process
+which imo isn't really ergonomic while you're writing elisp functions, unless if
+you have way to invoke the transpiler, but this comes with a lot of tooling
+while elisp already has a good REPL-model".
+
+The loop already existed and was CIDER-native. The README showed it in one table
+row, so the reader could not find it, and three defects made it feel
+second-class. See `CHANGELOG.md` for the full discussion.
+
+**nREPL split into a kernel and two transports:**
+- `clojure-elisp.nrepl-kernel` - session registry, compile modes, `handle-op`.
+  No transport, no nREPL dependency. `handle-op` returns a vector of response
+  maps and writes nothing.
+- `clojure-elisp.nrepl` - JVM transport, `wrap-cljel` over the kernel. Public
+  surface unchanged.
+- `clel.nrepl-server` - bencode socket loop over the same kernel. `clel nrepl`
+  starts it under Babashka in ~275ms with no JVM, no `.nrepl.edn`, no jack-in.
+  Sessions start active because there is no Clojure evaluator to fall through
+  to.
+
+**Namespace parity (the worst defect):** `handle-eval` hardcoded `:expr` while
+`handle-load-file` used `:file`, so `C-c C-c` defined `greet` and `C-c C-k`
+defined `my-pkg-greet`. New `compile-string-in-ns` compiles in the buffer's ns
+context, emitting forms only. The client sends the `(ns ...)` form as
+`cljel-ns`.
+
+**Elisp client:** `cider-cljel-ensure-runtime` (no more `void-function
+clel-str` on first eval), `cider-cljel-buffer-ns-form`, inline overlays via
+`cider--display-interactive-eval-result` instead of `message`.
+
+**Compile path no longer carries test.check:** `ast/gen-node` resolves
+`malli.generator` through `requiring-resolve`. It is test-only, and requiring it
+blocked every lightweight host.
+
+**cljw evaluated, blocked upstream:** 36ms vs bb's 275ms and `cljw nrepl` ships
+already, but `malli.core/-memoize` reaches `java.util.concurrent.atomic.AtomicReference`,
+absent from ClojureWasm. Transport is ready; card 20260905132610-70d34b63.
+
+**Test stats:** 598 tests, 3021 assertions, 0 failures. Neutralizing
+`compile-string-in-ns` turns the new suite red (6 failures, 1 error).
+
+**Files modified:**
+- `src/clojure_elisp/nrepl_kernel.clj` - new, the transport-free core
+- `bb/clel/nrepl_server.clj` - new, standalone bencode server
+- `test/clojure_elisp/nrepl_ns_parity_test.clj` - new, 9 tests
+- `src/clojure_elisp/nrepl.clj` - reduced to the JVM transport
+- `src/clojure_elisp/compile.clj`, `core.clj` - `compile-string-in-ns`
+- `src/clojure_elisp/ast.clj` - lazy `malli.generator`
+- `resources/clojure-elisp/cider-clojure-elisp.el` - ns form, runtime, overlays
+- `bb/clel/main.clj`, `bb.edn` - `clel nrepl` subcommand and classpath
+- `README.md`, `CHANGELOG.md` - Interactive Development section, changelog
+
 ### 2026-01-29: Emacs Buffer/Process Interop Layer (clel-031)
 
 **Added comprehensive Emacs buffer/process interop for writing Emacs extensions in ClojureElisp:**

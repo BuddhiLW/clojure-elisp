@@ -51,6 +51,13 @@
   [s]
   (cc/compile-string s))
 
+(defn compile-string-in-ns
+  "Compile a string of Clojure code in the namespace context of ns-source.
+   ns-source is the text of an (ns ...) form, or nil for no context.
+   Emits the forms only: no file header, no (provide ...)."
+  [ns-source s]
+  (cc/compile-string-in-ns ns-source s))
+
 (defn compile-file-string
   "Compile a string of Clojure code as a file (with namespace context)."
   [s]
