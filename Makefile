@@ -41,6 +41,9 @@ test-elisp:
 	emacs -Q -batch -l ert \
 		-l test/elisp/cider-clojure-elisp-test.el \
 		-f ert-run-tests-batch-and-exit
+	emacs -Q -batch -l ert \
+		-l test/elisp/clojure-elisp-runtime-test.el \
+		-f ert-run-tests-batch-and-exit
 
 clean:
 	rm -rf target

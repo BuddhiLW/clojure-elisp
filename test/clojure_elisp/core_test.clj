@@ -150,8 +150,8 @@
     (is (= "(1+ x)" (clel/compile-string "(inc x)"))))
   (testing "nil? -> null"
     (is (= "(null x)" (clel/compile-string "(nil? x)"))))
-  (testing "count -> length"
-    (is (= "(length xs)" (clel/compile-string "(count xs)"))))
+  (testing "count -> clel-count"
+    (is (= "(clel-count xs)" (clel/compile-string "(count xs)"))))
   (testing "str -> clel-str"
     (is (= "(clel-str a b c)" (clel/compile-string "(str a b c)")))))
 

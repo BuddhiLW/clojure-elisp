@@ -5,6 +5,76 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-09-05
+
+A runtime correctness release. `map` and `filter` have always returned a lazy
+sequence, which is right, but almost nothing forced one. The consequence was
+that the most ordinary line of Clojure there is either threw or, worse,
+answered wrongly:
+
+```clojure
+(reduce + (map inc coll))   ; wrong-type-argument
+(apply + (map inc coll))    ; wrong-type-argument
+(count (map inc coll))      ; 4, for a three-element sequence
+(last (map inc coll))       ; nil
+(into [] (map inc coll))    ; the lazy-seq struct itself
+```
+
+The two silent answers are the dangerous half: no error, just a wrong number.
+
+None of the 603 tests could see any of it. They assert on emitted STRINGS, and
+the emitted string was correct the whole time. The defect lived one layer down,
+in what that string does when Emacs runs it. This release adds the tier that
+can see it: an ERT suite that loads the runtime and calls it, wired into `make
+test-elisp` and into CI.
+
+### Fixed
+
+- **Eager consumers did not force lazy sequences.** Elisp primitives cannot
+  force a `clel-lazy-seq`: `length` measures the four-element struct and
+  `apply` signals `wrong-type-argument`. The runtime now has one coercion,
+  `clel-realize`, and every fn that hands a sequence to a raw primitive goes
+  through it first. `count`, `apply`, `second`, `butlast`, `reverse`, `flatten`
+  and `remove` gained `clel-` wrappers rather than mapping straight onto Elisp.
+- **Walking loops ran one iteration past the end.** `clel-rest` returned an
+  unforced thunk as the tail, which is truthy, so every `while` driven by
+  `clel-first`/`clel-rest` saw a phantom trailing `nil`. That is why
+  `frequencies` reported an extra `(nil . 1)` entry, `every?` answered `nil`
+  for a sequence whose elements all satisfy the predicate, and `reduce` threw.
+  `clel-rest` now forces one cell.
+- **A transducer could be returned where a sequence was expected.** `distinct`,
+  `keep`, `dedupe` and `interpose` dispatch on `&optional coll`, which cannot
+  tell "no collection given" from "collection is empty". Recursing onto an
+  empty tail therefore hit the no-collection arity and returned a transducer in
+  the middle of a sequence. They now use the supplied-p idiom `clel-nth`
+  already used.
+- **`distinct` did not remove distant duplicates.** Its recursion allocated a
+  fresh `seen` table per step, so `(distinct [1 2 1])` returned `(1 2 1)`. The
+  table is now carried across the whole sequence.
+
+### Added
+
+- **`test/elisp/clojure-elisp-runtime-test.el`** — 13 ERT tests asserting that
+  an eager consumer answers the same for a lazy sequence as for the realized
+  list it stands for, that a lazy tail reached through a plain `cons` is still
+  forced, and that laziness survives (taking from `cycle` and `iterate` still
+  terminates). Against the 0.7.1 runtime, 12 of the 13 fail.
+- **`mappings/lazy-seq-consuming-fns`** declares which Clojure fns read a
+  sequence that may be lazy, and `validate-tables!` now rejects any of them
+  pointed at a raw Elisp primitive. The rule is stated once and enforced
+  mechanically, so a future mapping edit cannot quietly reintroduce this.
+- **Elisp tests now run in CI.** They previously existed only behind a
+  `make` target that CI never invoked.
+
+### Changed
+
+- `count`, `apply`, `second`, `butlast`, `reverse`, `flatten` and `remove` now
+  emit `clel-` wrappers instead of `length`, `apply`, `cadr`, `butlast`,
+  `reverse`, `flatten-tree` and `cl-remove-if`. Emitted output for these fns
+  differs from 0.7.1; behaviour only becomes more correct, and `remove` is now
+  lazy as in Clojure. Recompile rather than mixing 0.7.1 output with the 0.7.2
+  runtime.
+
 ## [0.7.1] - 2026-09-05
 
 Follow-up to 0.7.0. The interactive loop had a second half of the parity bug,

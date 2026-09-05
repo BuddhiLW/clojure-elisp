@@ -707,7 +707,7 @@
   (testing "repeat in let binding"
     (let [code (clel/emit '(let [xs (repeat 5 0)] (count xs)))]
       (is (str/includes? code "clel-repeat"))
-      (is (str/includes? code "length"))))
+      (is (str/includes? code "clel-count"))))
 
   (testing "repeat with map"
     (let [code (clel/emit '(map inc (repeat 3 0)))]
@@ -741,17 +741,17 @@
 ;; ============================================================================
 
 (deftest second-compilation-test
-  (testing "second compiles to cadr"
-    (is (= "(cadr xs)" (clel/emit '(second xs))))
-    (is (= "(cadr (list 1 2 3))" (clel/emit '(second [1 2 3])))))
+  (testing "second compiles to clel-second"
+    (is (= "(clel-second xs)" (clel/emit '(second xs))))
+    (is (= "(clel-second (list 1 2 3))" (clel/emit '(second [1 2 3])))))
 
   (testing "second in expression context"
     (let [code (clel/emit '(let [x (second items)] x))]
-      (is (str/includes? code "cadr"))
+      (is (str/includes? code "clel-second"))
       (is (str/includes? code "let"))))
 
   (testing "second preserves argument"
-    (is (re-find #"cadr\s+my-list" (clel/emit '(second my-list))))))
+    (is (re-find #"clel-second\s+my-list" (clel/emit '(second my-list))))))
 
 (deftest last-compilation-test
   (testing "last compiles to clel-last"
@@ -767,9 +767,9 @@
     (is (re-find #"clel-last\s+my-list" (clel/emit '(last my-list))))))
 
 (deftest butlast-compilation-test
-  (testing "butlast compiles to butlast"
-    (is (= "(butlast xs)" (clel/emit '(butlast xs))))
-    (is (str/includes? (clel/emit '(butlast [1 2 3])) "butlast")))
+  (testing "butlast compiles to clel-butlast"
+    (is (= "(clel-butlast xs)" (clel/emit '(butlast xs))))
+    (is (str/includes? (clel/emit '(butlast [1 2 3])) "clel-butlast")))
 
   (testing "butlast in expression context"
     (let [code (clel/emit '(let [x (butlast items)] x))]
@@ -1524,7 +1524,7 @@
   (testing "distinct in expression context"
     (let [code (clel/emit '(count (distinct xs)))]
       (is (str/includes? code "clel-distinct"))
-      (is (str/includes? code "length")))))
+      (is (str/includes? code "clel-count")))))
 
 (deftest dedupe-compilation-test
   (testing "dedupe compiles to clel-dedupe"

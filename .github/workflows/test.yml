@@ -36,3 +36,13 @@ jobs:
 
       - name: Run tests
         run: clojure -M:test
+
+      - name: Setup Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: '29.4'
+
+      # The Clojure suite asserts on emitted strings, so a runtime defect is
+      # invisible to it. These load the runtime into Emacs and call it.
+      - name: Run Elisp tests
+        run: make test-elisp

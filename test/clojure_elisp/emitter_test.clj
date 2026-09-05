@@ -90,7 +90,7 @@
     (is (= "clel-rest" (analyze-and-emit 'rest)))
     (is (= "1+" (analyze-and-emit 'inc)))
     (is (= "1-" (analyze-and-emit 'dec)))
-    (is (= "length" (analyze-and-emit 'count)))))
+    (is (= "clel-count" (analyze-and-emit 'count)))))
 
 (deftest emit-local-test
   (testing "local in let"
@@ -442,7 +442,7 @@
   (testing "list operations"
     (is (= "(clel-first xs)" (analyze-and-emit '(first xs))))
     (is (= "(clel-rest xs)" (analyze-and-emit '(rest xs))))
-    (is (= "(length xs)" (analyze-and-emit '(count xs)))))
+    (is (= "(clel-count xs)" (analyze-and-emit '(count xs)))))
   (testing "arithmetic"
     (is (= "(1+ x)" (analyze-and-emit '(inc x))))
     (is (= "(1- x)" (analyze-and-emit '(dec x)))))
@@ -1460,7 +1460,7 @@
   (testing "dotimes with expression count"
     (let [code (analyze-and-emit '(dotimes [i (count items)]
                                     (process i)))]
-      (is (clojure.string/includes? code "(cl-dotimes (i (length items))"))
+      (is (clojure.string/includes? code "(cl-dotimes (i (clel-count items))"))
       (is (clojure.string/includes? code "(process i)"))))
 
   (testing "dotimes with multiple body forms"
@@ -2367,7 +2367,7 @@
 
 (deftest emit-hof-function-quote-test
   (testing "core fns in a HOF function slot are #'-quoted"
-    (is (= "(apply #'+ (list 1 2 3))"        (analyze-and-emit '(apply + [1 2 3]))))
+    (is (= "(clel-apply #'+ (list 1 2 3))"   (analyze-and-emit '(apply + [1 2 3]))))
     (is (= "(clel-map #'1+ (list 1 2 3))"    (analyze-and-emit '(map inc [1 2 3]))))
     (is (= "(clel-reduce #'+ 0 (list 1 2 3))" (analyze-and-emit '(reduce + 0 [1 2 3]))))
     (is (= "(clel-filter #'cl-evenp (list 1 2 3 4))" (analyze-and-emit '(filter even? [1 2 3 4])))))

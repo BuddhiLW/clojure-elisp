@@ -13,6 +13,21 @@
   (is (= (slurp "VERSION") (slurp "resources/clojure-elisp/VERSION"))
       "/VERSION and resources/clojure-elisp/VERSION diverged — run `clojure -T:build sync-version`"))
 
+(deftest runtime-el-header-names-the-current-version
+  (testing "the shipped .el header carries the version it was stamped from"
+    (let [header  (re-find #"(?m)^;; Version: (.+)$"
+                           (slurp "resources/clojure-elisp/clojure-elisp-runtime.el"))]
+      (is (some? header)
+          "clojure-elisp-runtime.el lost its MELPA `;; Version:` header")
+      (is (= (str/trim (slurp "VERSION")) (str/trim (second header)))
+          (str "The runtime .el header lags /VERSION. sync-version writes the "
+               "VERSION resource but does NOT restamp the .el, which is only "
+               "written by a regen: `(clel/compile-runtime "
+               "\"resources/clojure-elisp/runtime.cljel\" "
+               "\"resources/clojure-elisp/clojure-elisp-runtime.el\")`. "
+               "Bumping VERSION after a regen leaves the shipped runtime "
+               "naming the previous release.")))))
+
 (def ^:private readme-coord-patterns
   [;; deps.edn:   io.github.buddhilw/clojure-elisp {:mvn/version "X"}
    #"io\.github\.buddhilw/clojure-elisp \{:mvn/version \"([^\"]+)\""
