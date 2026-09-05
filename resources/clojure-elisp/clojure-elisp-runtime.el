@@ -20,6 +20,11 @@
 (require 'cl-lib)
 (require 'seq)
 
+(defconst clel-runtime-version "0.7.2"
+  "Version of the ClojureElisp runtime library.
+Compiled files check this to refuse a runtime older than the one they
+were emitted against.")
+
 (defvar clojure-core-vector #'vector
   "Function-slot bridge for `vector' (Elisp-2 compatibility).")
 

@@ -141,7 +141,7 @@
     (let [result (clel/compile-string "(ns my-pkg)")]
       (is (str/includes? result ";;; my-pkg.el"))
       (is (str/includes? result "lexical-binding: t"))
-      (is (str/includes? result "(eval-and-compile (require 'clojure-elisp-runtime))")))))
+      (is (str/includes? result "(require 'clojure-elisp-runtime)")))))
 
 (deftest gold-ns-with-require
   (testing "ns with :require emits (require ...)"

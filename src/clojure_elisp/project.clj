@@ -11,6 +11,7 @@
             [clojure-elisp.compile :as cc]
             [clojure-elisp.errors :as errors]
             [clojure-elisp.fs :as fs]
+            [clojure-elisp.version :as version]
             [hive-dsl.result :as r]
             [malli.core :as m]))
 
@@ -240,7 +241,12 @@
        ";;; Code:\n"
        "\n"
        "(require 'cl-lib)\n"
-       "(require 'seq)\n"))
+       "(require 'seq)\n"
+       "\n"
+       "(defconst " version/runtime-version-symbol " \"" (read-version fs) "\"\n"
+       "  \"Version of the ClojureElisp runtime library.\n"
+       "Compiled files check this to refuse a runtime older than the one they\n"
+       "were emitted against.\")\n"))
 
 (defn compile-runtime
   "Compile the self-hosted runtime .cljel to the .el runtime library.
