@@ -9,7 +9,7 @@ INSTALL_JAR := $(INSTALL_DIR)/clel.jar
 BIN_DIR     := $(HOME)/.local/bin/blw
 BIN_LINK    := $(BIN_DIR)/clel
 
-.PHONY: build install uninstall test clean
+.PHONY: build install uninstall test test-clj test-elisp clean
 
 build: $(TARGET_JAR)
 
@@ -32,8 +32,15 @@ uninstall:
 	rm -f $(BIN_LINK)
 	@echo "Removed $(INSTALL_JAR) and $(BIN_LINK)"
 
-test:
+test: test-clj test-elisp
+
+test-clj:
 	clojure -M:test
+
+test-elisp:
+	emacs -Q -batch -l ert \
+		-l test/elisp/cider-clojure-elisp-test.el \
+		-f ert-run-tests-batch-and-exit
 
 clean:
 	rm -rf target

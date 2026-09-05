@@ -1,3 +1,8 @@
-{:paths ["bb"]
- :deps {}
+;; The compiler namespaces and their runtime deps are on the Babashka
+;; classpath so `clel nrepl` can compile in-process, with no JVM.
+;; malli.generator / test.check are deliberately absent: nothing on the
+;; compile path requires them (see clojure-elisp.ast/gen-node).
+{:paths ["bb" "src" "resources"]
+ :deps {io.github.hive-agi/hive-dsl {:mvn/version "0.5.2"}
+        metosin/malli {:mvn/version "0.20.1"}}
  :bbin/bin {clel {:main-opts ["-m" "clel.main"]}}}
