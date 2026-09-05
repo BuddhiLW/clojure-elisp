@@ -4,7 +4,7 @@
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.6.1
+;; Version: 0.7.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
@@ -144,7 +144,7 @@
   (cond
   ((null coll) nil)
   ((listp coll) (car (last coll)))
-  ((vectorp coll) (when (> (length coll) 0) (aref coll (1- (length coll)))))
+  ((vectorp coll) (if (> (length coll) 0) (aref coll (1- (length coll))) nil))
   (t nil)))
 
 (cl-defun clel-nth (coll n &optional (not-found nil not-found-p))
@@ -182,7 +182,7 @@
   "Return COLL as a sequence (list), or nil if empty."
   (cond
   ((null coll) nil)
-  ((listp coll) (when coll coll))
+  ((listp coll) (if coll coll nil))
   ((vectorp coll) (if (= 0 (length coll)) nil (append coll nil)))
   ((hash-table-p coll) (let* ((pairs nil))
     (maphash (lambda (k v)
@@ -452,7 +452,7 @@
   ((null s) nil)
   ((clel-lazy-seq-p s) (clel-first (clel-lazy-seq-force s)))
   ((listp s) (car s))
-  ((vectorp s) (when (> (length s) 0) (aref s 0)))
+  ((vectorp s) (if (> (length s) 0) (aref s 0) nil))
   (t nil)))
 
 (defun clel-rest (s)
@@ -461,13 +461,13 @@
   ((null s) nil)
   ((clel-lazy-seq-p s) (clel-rest (clel-lazy-seq-force s)))
   ((listp s) (cdr s))
-  ((vectorp s) (when (> (length s) 1) (cdr (append s nil))))
+  ((vectorp s) (if (> (length s) 1) (cdr (append s nil)) nil))
   (t nil)))
 
 (defun clel-next (s)
   "Return the next of S, or nil if empty. Forces lazy seqs."
   (let* ((r (clel-rest s)))
-    (when (and r (not (equal r nil))) r)))
+    (if (and r (not (equal r nil))) r nil)))
 
 (defun clel-seq-force (s)
   "Ensure S is a realized sequence (list). Forces lazy seqs."
@@ -1376,7 +1376,7 @@
   "Return the last element of a vector, or first element of a list.\nFor vectors (represented as lists in ClojureElisp), returns last element.\nFor lists, returns first element."
   (cond
   ((null coll) nil)
-  ((vectorp coll) (when (> (length coll) 0) (aref coll (1- (length coll)))))
+  ((vectorp coll) (if (> (length coll) 0) (aref coll (1- (length coll))) nil))
   ((listp coll) (car coll))
   (t nil)))
 
@@ -1412,8 +1412,8 @@
 (defun clel--reductions-helper (f acc s)
   "Recursive helper for `clel-reductions'.\nF is the reducing function, ACC the accumulator, S the remaining sequence."
   (clel-lazy-seq-create (lambda ()
-    (when s (let* ((new-acc (funcall f acc (clel-first s))))
-    (cons new-acc (clel--reductions-helper f new-acc (clel-rest s))))))))
+    (if s (let* ((new-acc (funcall f acc (clel-first s))))
+    (cons new-acc (clel--reductions-helper f new-acc (clel-rest s)))) nil))))
 
 (defun clel-reductions (&rest clel--args)
   (let ((f (nth 0 clel--args)) (args (nthcdr 1 clel--args)))
