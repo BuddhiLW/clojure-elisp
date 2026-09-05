@@ -321,21 +321,52 @@
     (postprocess-elisp-syntax raw-elisp)))
 
 (defn compile-string-in-ns
-  "Compile a string of Clojure code in the namespace context of ns-source.
-   ns-source is the text of an (ns ...) form, or nil/blank for no context.
+  "Compile s in the context of context-source: the buffer's (ns ...) form at
+   minimum, or the whole buffer to also resolve calls to sibling definitions.
+   nil or blank means no context.
 
-   Emits only the compiled forms: no file header, no (provide ...). Definitions
-   carry the same namespace prefix compile-file-string would give them, so a
-   form compiled here and the same form compiled as part of its file emit the
-   same Elisp name."
-  [ns-source s]
-  (let [ns-forms  (if (str/blank? ns-source)
-                    []
-                    (read-all-forms (preprocess-elisp-syntax ns-source)))
-        forms     (read-all-forms (preprocess-elisp-syntax s))
-        ast-nodes (ana/analyze-file-forms (into (vec ns-forms) forms))
-        body      (drop (count ns-forms) ast-nodes)]
+   Emits only the forms in s: no file header, no (provide ...), nothing from
+   context-source. Definitions carry the namespace prefix compile-file-string
+   gives them."
+  [context-source s]
+  (let [context-forms (if (str/blank? context-source)
+                        []
+                        (read-all-forms (preprocess-elisp-syntax context-source)))
+        forms         (read-all-forms (preprocess-elisp-syntax s))
+        ast-nodes     (ana/analyze-file-forms (into (vec context-forms) forms))
+        body          (drop (count context-forms) ast-nodes)]
     (postprocess-elisp-syntax (str/join "\n\n" (map emit/emit body)))))
+
+(defn compile-string-in-ns-result
+  "Compile s against context-source, returning a Result.
+   Staged so the reader boundary tags failures :compile/read-error."
+  [context-source s]
+  (r/let-ok [context-forms (r/try-effect*
+                            :compile/read-error
+                            (if (str/blank? context-source)
+                              []
+                              (read-all-forms (preprocess-elisp-syntax context-source))))
+             forms         (r/try-effect*
+                            :compile/read-error
+                            (read-all-forms (preprocess-elisp-syntax s)))]
+    (r/try-effect* :compile/analysis-error
+                   (-> (ana/analyze-file-forms (into (vec context-forms) forms))
+                       (->> (drop (count context-forms)) (map emit/emit)
+                            (str/join "\n\n"))
+                       postprocess-elisp-syntax))))
+
+(defn leading-ns-source
+  "Return the source text of the leading (ns ...) form in source, or nil.
+   Returns nil rather than throwing when source cannot be read."
+  [source]
+  (when-not (str/blank? source)
+    (try
+      (let [rdr   (clojure.lang.LineNumberingPushbackReader.
+                   (java.io.StringReader. (preprocess-elisp-syntax source)))
+            form  (read rdr false ::eof)]
+        (when (and (seq? form) (= 'ns (first form)))
+          (pr-str form)))
+      (catch Exception _ nil))))
 
 (defn compile-file-string-result
   "Compile a string of Clojure code as a file, returning a Result.
@@ -443,6 +474,9 @@
 (m/=> emit-forms                 [:=> [:cat [:sequential :any]] :string])
 (m/=> compile-string             [:=> [:cat :string] :string])
 (m/=> compile-string-in-ns       [:=> [:cat [:maybe :string] :string] :string])
+(m/=> compile-string-in-ns-result
+      [:=> [:cat [:maybe :string] :string] errors/string-result-schema])
+(m/=> leading-ns-source          [:=> [:cat [:maybe :string]] [:maybe :string]])
 (m/=> compile-file-string        [:=> [:cat :string] :string])
 (m/=> emit-result                [:=> [:cat :any] errors/string-result-schema])
 (m/=> emit-forms-result          [:=> [:cat [:sequential :any]] errors/string-result-schema])

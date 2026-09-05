@@ -26,8 +26,8 @@
 
     (testing "the coordinates are still findable — a README rewrite that changes
               their shape must fail loudly rather than pass vacuously"
-      (is (= 2 (count pinned))
-          (str "expected 2 install coordinates in README.md (deps.edn + Leiningen), found "
+      (is (= 3 (count pinned))
+          (str "expected 3 install coordinates in README.md (deps.edn + Leiningen + bb.edn), found "
                (count pinned)
                ". If the install snippets moved or changed shape, update this test — "
                "otherwise it silently stops covering them.")))

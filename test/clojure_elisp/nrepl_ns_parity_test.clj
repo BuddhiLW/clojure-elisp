@@ -93,6 +93,76 @@
     (is (str/includes? (some :err responses) "Compilation error:"))))
 
 ;; ============================================================================
+;; Call sites, not just definition sites
+;; ============================================================================
+
+(def sibling-buffer
+  (str ns-src "\n"
+       defn-src "\n"
+       "(defn shout [n] (upcase (greet n)))"))
+
+(def sibling-form "(defn shout [n] (upcase (greet n)))")
+
+(deftest calls-to-siblings-are-prefixed-with-buffer-context-test
+  (testing "the whole buffer as context resolves the sibling call"
+    (let [elisp (core/compile-string-in-ns sibling-buffer sibling-form)]
+      (is (str/includes? elisp "(defun my-pkg-shout (n)")
+          "the definition itself is prefixed")
+      (is (str/includes? elisp "(my-pkg-greet n)")
+          "and so is the call to its sibling")))
+  (testing "the emitted call matches what compiling the buffer emits"
+    (let [interactive (core/compile-string-in-ns sibling-buffer sibling-form)
+          whole-file  (core/compile-file-string sibling-buffer)]
+      (is (str/includes? whole-file "(my-pkg-greet n)"))
+      (is (str/includes? interactive "(my-pkg-greet n)")))))
+
+(deftest context-emits-only-the-requested-forms-test
+  (testing "nothing from the context leaks into the output"
+    (let [elisp (core/compile-string-in-ns sibling-buffer sibling-form)]
+      (is (str/includes? elisp "my-pkg-shout"))
+      (is (not (str/includes? elisp "(defun my-pkg-greet (n)"))
+          "the sibling is context, not output")
+      (is (not (str/includes? elisp "(provide "))))))
+
+(deftest handle-eval-prefers-buffer-context-test
+  (testing ":cljel-context resolves sibling calls"
+    (let [elisp (compiled-elisp
+                 (kernel/handle-eval {:code sibling-form
+                                      :cljel-context sibling-buffer}))]
+      (is (str/includes? elisp "(my-pkg-greet n)"))))
+  (testing ":cljel-ns alone still names the definition, the older contract"
+    (let [elisp (compiled-elisp
+                 (kernel/handle-eval {:code sibling-form :cljel-ns ns-src}))]
+      (is (str/includes? elisp "(defun my-pkg-shout (n)")))))
+
+(deftest broken-buffer-does-not-block-a-good-form-test
+  (testing "a half-typed form elsewhere degrades to the ns form, not an error"
+    (let [broken (str sibling-buffer "\n(defn half-typed [")
+          elisp  (compiled-elisp
+                  (kernel/handle-eval {:code defn-src :cljel-context broken}))]
+      (is (some? elisp) "the good form still compiles")
+      (is (str/includes? elisp "(defun my-pkg-greet (n)")
+          "and still gets its namespace prefix from the leading ns form")))
+  (testing "a context with no readable ns form degrades to no context"
+    (let [elisp (compiled-elisp
+                 (kernel/handle-eval {:code defn-src :cljel-context "(defn oops ["}))]
+      (is (some? elisp))
+      (is (str/includes? elisp "(defun greet (n)"))))
+  (testing "code that is itself broken still reports an error"
+    (let [responses (kernel/handle-eval {:code "(defn broken ["
+                                         :cljel-context sibling-buffer})]
+      (is (nil? (compiled-elisp responses)))
+      (is (some :err responses)))))
+
+(deftest leading-ns-source-test
+  (is (= "(ns my.pkg)" (core/leading-ns-source sibling-buffer)))
+  (is (nil? (core/leading-ns-source "(defn no-ns [x] x)")))
+  (is (nil? (core/leading-ns-source "")))
+  (is (nil? (core/leading-ns-source nil)))
+  (testing "an unreadable buffer yields nil rather than throwing"
+    (is (nil? (core/leading-ns-source "(defn half [")))))
+
+;; ============================================================================
 ;; Kernel session dispatch
 ;; ============================================================================
 
@@ -121,11 +191,11 @@
 ;; ============================================================================
 ;; Lightweight-host constraint
 ;; ============================================================================
+;;
+;; test.check is absent from Babashka and ClojureWasm.
 
 (deftest compile-path-does-not-require-test-check-test
   (testing "no namespace on the compile path pulls in malli.generator"
-    ;; test.check is absent from Babashka and ClojureWasm, so a load-time
-    ;; require of malli.generator would take `clel nrepl` down with it.
     (doseq [ns-sym '[clojure-elisp.core clojure-elisp.compile clojure-elisp.ast
                      clojure-elisp.analyzer clojure-elisp.emitter
                      clojure-elisp.schema clojure-elisp.nrepl-kernel]]

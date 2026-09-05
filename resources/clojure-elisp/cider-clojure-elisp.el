@@ -4,7 +4,7 @@
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.7.0
+;; Version: 0.7.1
 ;; Package-Requires: ((emacs "28.1") (cider "1.0"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
@@ -75,9 +75,7 @@ Returns non-nil on success.  Tries `load-path' first, then
 ;;; --- Namespace Context ---
 
 (defun cider-cljel-buffer-ns-form ()
-  "Return the source text of this buffer's leading (ns ...) form, or nil.
-Sent with every eval so an interactively evaluated definition gets the same
-Elisp name that compiling the whole buffer would give it."
+  "Return the source text of this buffer's leading (ns ...) form, or nil."
   (save-excursion
     (save-restriction
       (widen)
@@ -88,6 +86,14 @@ Elisp name that compiling the whole buffer would give it."
           (ignore-errors
             (forward-sexp)
             (buffer-substring-no-properties start (point))))))))
+
+(defun cider-cljel-buffer-context ()
+  "Return this buffer's whole source, the compilation context for an eval.
+Sending the buffer rather than its (ns ...) form alone is what resolves
+calls to sibling definitions."
+  (save-restriction
+    (widen)
+    (buffer-substring-no-properties (point-min) (point-max))))
 
 ;;; --- Session Management ---
 
@@ -188,16 +194,18 @@ evaluates it locally in Emacs and displays the result."
 
 (defun cider-cljel-eval (code)
   "Evaluate ClojureElisp CODE via nREPL and eval the compiled Elisp locally.
-The buffer's (ns ...) form travels with the request, so a definition
-evaluated here gets the same Elisp name the compiled buffer would give it."
+The buffer travels with the request as the compilation context, so a
+definition evaluated here gets the same Elisp name the compiled buffer would
+give it, and its calls to sibling definitions get the same prefix."
   (interactive "sClojureElisp: ")
   (cider-ensure-connected)
   (cider-nrepl-send-request
    (append (list "op" "eval"
                  "code" code
                  "ns" "user")
-           (let ((ns-form (cider-cljel-buffer-ns-form)))
-             (when ns-form (list "cljel-ns" ns-form))))
+           (let ((context (cider-cljel-buffer-context)))
+             (when (and context (not (string-empty-p context)))
+               (list "cljel-context" context))))
    (cider-cljel--make-handler (current-buffer) (point))))
 
 (defun cider-cljel-eval-last-sexp ()

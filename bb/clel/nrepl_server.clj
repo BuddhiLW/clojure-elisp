@@ -1,16 +1,13 @@
 (ns clel.nrepl-server
   "Standalone ClojureElisp nREPL server, no JVM required.
 
-   Speaks enough of the nREPL protocol for the CIDER client in
-   cider-clojure-elisp.el: clone, describe, close, ls-sessions, plus the CLJEL
-   ops. Op semantics come from clojure-elisp.nrepl-kernel, the same kernel the
-   JVM middleware uses, so both transports compile through one definition.
+   Boundary transport over clojure-elisp.nrepl-kernel. Speaks clone, close,
+   describe, ls-sessions and the CLJEL ops: enough of the protocol for the
+   CIDER client in cider-clojure-elisp.el.
 
-   Sessions start with CLJEL compilation ACTIVE: this server has no Clojure
-   evaluator and exists only to compile ClojureElisp, so there is nothing to
-   fall through to. That also removes the M-x cider-cljel-start step.
+   Sessions start with CLJEL compilation ACTIVE. There is no Clojure evaluator
+   here to fall through to.
 
-   Run it with a host that can load the compiler:
      bb -m clel.nrepl-server --port 7888"
   (:require [bencode.core :as bencode]
             [clojure-elisp.nrepl-kernel :as kernel])
