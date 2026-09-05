@@ -101,7 +101,7 @@
                 :basis @basis
                 :src-dirs ["src"]
                 :pom-data pom-data})
-  (b/copy-dir {:src-dirs ["src" "resources"]
+  (b/copy-dir {:src-dirs ["src" "resources" "bb"]
                :target-dir class-dir})
   (b/jar {:class-dir class-dir
           :jar-file jar-file})

@@ -1,20 +1,48 @@
 (ns clojure-elisp.nrepl-kernel
   "Transport-independent core of the ClojureElisp nREPL service.
 
-   Owns the session registry, the compile modes, and the op semantics. Knows
-   nothing about how a message arrives or how a response is written, so it
-   loads on any host that can load the compiler: the JVM (behind
-   clojure-elisp.nrepl's middleware) and Babashka (behind
-   clojure-elisp.nrepl-server's socket loop).
+   Strata:
+     Collect   session registry reads
+     Promote   pure compilation and response shaping over values
+     Pipeline  op dispatch, composing the above
+     Boundary  none here; the transports own I/O
 
-   handle-op returns a VECTOR of partial response maps, in send order, or nil
-   when the op is not ours. The transport merges its own correlation keys
-   (:id, :session) into each one."
+   handle-op returns a vector of partial response maps, or nil when the op is
+   not a CLJEL concern. The transport merges its own correlation keys.
+
+   Loads on any host that can load the compiler: the JVM behind
+   clojure-elisp.nrepl, Babashka behind clel.nrepl-server."
   (:require [clojure.string :as str]
-            [clojure-elisp.core :as core]))
+            [clojure-elisp.compile :as cc]
+            [clojure-elisp.errors :as errors]
+            [hive-dsl.result :as r]
+            [malli.core :as m]))
 
 ;; ============================================================================
-;; Session Tracking
+;; Value Objects
+;; ============================================================================
+
+(def compile-mode-schema
+  "How a request's code is compiled."
+  [:enum :expr :ns :file])
+
+(def eval-request-schema
+  "An eval op's compilable payload. :cljel-context is the buffer the form came
+   from; :cljel-ns is the older, narrower spelling carrying only its ns form."
+  [:map
+   [:code :string]
+   [:cljel-context {:optional true} [:maybe :string]]
+   [:cljel-ns {:optional true} [:maybe :string]]])
+
+(def response-schema
+  "One partial nREPL response, before the transport adds correlation keys."
+  [:map-of :keyword :any])
+
+(def responses-schema
+  [:sequential response-schema])
+
+;; ============================================================================
+;; Collect — session registry
 ;; ============================================================================
 
 (def cljel-sessions
@@ -22,105 +50,128 @@
   (atom #{}))
 
 (defn cljel-active?
-  "Check if the given session ID has CLJEL compilation active."
+  "True when session-id has CLJEL compilation active."
   [session-id]
   (contains? @cljel-sessions session-id))
 
 (defn activate!
-  "Mark SESSION-ID as compiling ClojureElisp."
+  "Mark session-id as compiling ClojureElisp."
   [session-id]
   (swap! cljel-sessions conj session-id))
 
 (defn deactivate!
-  "Return SESSION-ID to ordinary Clojure evaluation."
+  "Return session-id to ordinary Clojure evaluation."
   [session-id]
   (swap! cljel-sessions disj session-id))
 
 ;; ============================================================================
-;; Compilation
+;; Promote — compilation
 ;; ============================================================================
 
-(defn compile-code
-  "Compile a ClojureElisp code string to Elisp.
+(defn compile-result
+  "Compile code in mode, returning a Result.
+   :expr compiles standalone, :ns against context, :file as a whole buffer."
+  ([code] (compile-result code :expr nil))
+  ([code mode] (compile-result code mode nil))
+  ([code mode context]
+   (case mode
+     :file (cc/compile-file-string-result code)
+     :ns   (cc/compile-string-in-ns-result context code)
+     (cc/compile-string-in-ns-result nil code))))
 
-   MODE is one of:
-     :expr  single expression, no namespace context (default)
-     :ns    forms compiled in the namespace context of NS-SOURCE, the text of
-            an (ns ...) form. Definitions get the same namespace prefix :file
-            would give them; no file header or (provide ...) is emitted
-     :file  whole buffer. (ns ...) aliases/refers apply, definitions get their
-            namespace prefix, and a trailing (provide ...) is appended
+(defn- fallback-contexts
+  "The contexts to try, widest first: the buffer, its leading ns form, nothing."
+  [context]
+  (into [] (distinct) [context (cc/leading-ns-source context) nil]))
 
-   Returns {:status :ok :elisp \"...\"} or {:status :error :error \"...\"}."
-  ([code] (compile-code code :expr nil))
-  ([code mode] (compile-code code mode nil))
-  ([code mode ns-source]
-   (try
-     {:status :ok
-      :elisp (case mode
-               :file (core/compile-file-string code)
-               :ns   (core/compile-string-in-ns ns-source code)
-               (core/compile-string code))}
-     (catch Exception e
-       {:status :error
-        :error (.getMessage e)}))))
-
-;; ============================================================================
-;; Responses
-;; ============================================================================
-
-(defn- compiled-responses
-  "Responses carrying compiled Elisp.
-   Uses :cljel-compiled-elisp rather than :value so CIDER's built-in display
-   handler does not try to render an Elisp source string as a Clojure value."
-  [elisp]
-  [{:cljel-compiled-elisp elisp :ns "user"}
-   {:status ["done"]}])
-
-(defn- error-responses
-  [error-msg]
-  [{:err (str "Compilation error: " error-msg)}
-   {:status ["done"]}])
-
-(defn- result-responses
-  [{:keys [status elisp error]}]
-  (if (= :ok status)
-    (compiled-responses elisp)
-    (error-responses error)))
+(defn compile-in-context
+  "Compile code against context, degrading to narrower contexts on failure.
+   Reports the widest context's error when every attempt fails."
+  [code context]
+  (let [attempts (map #(compile-result code :ns %) (fallback-contexts context))]
+    (or (first (filter r/ok? attempts))
+        (first attempts))))
 
 ;; ============================================================================
-;; Op Semantics
+;; Promote — response shaping
+;; ============================================================================
+
+(defn- done [] {:status ["done"]})
+
+(defn result->responses
+  "Shape a compile Result into the responses to send.
+   Compiled Elisp travels as :cljel-compiled-elisp rather than :value, which
+   CIDER's built-in display handler would try to render as a Clojure value."
+  [result]
+  (if (r/ok? result)
+    [{:cljel-compiled-elisp (:ok result) :ns "user"} (done)]
+    [{:err (str "Compilation error: " (:message result))} (done)]))
+
+(defn request-context
+  "The compilation context a request carries, or nil."
+  [{:keys [cljel-context cljel-ns]}]
+  (first (remove str/blank? [cljel-context cljel-ns])))
+
+;; ============================================================================
+;; Pipeline — op semantics
 ;; ============================================================================
 
 (defn handle-eval
-  "Compile an eval op's code and return the responses to send.
-   When the client supplies :cljel-ns (the source text of the buffer's
-   (ns ...) form), the code is compiled in that namespace context, so an
-   interactively evaluated defn installs the SAME Elisp name that compiling
-   the whole buffer would install."
-  [{:keys [code cljel-ns]}]
-  (result-responses
-   (if (str/blank? cljel-ns)
-     (compile-code code)
-     (compile-code code :ns cljel-ns))))
+  "Responses for an eval op, compiled against the request's context."
+  [{:keys [code] :as request}]
+  (result->responses
+   (if-let [context (request-context request)]
+     (compile-in-context code context)
+     (compile-result code))))
 
 (defn handle-load-file
-  "Compile a load-file op's whole file content and return the responses."
+  "Responses for a load-file op: the whole file, with its ns context."
   [{:keys [file]}]
-  (result-responses (compile-code file :file)))
+  (result->responses (compile-result file :file)))
 
 (defn handle-op
   "Dispatch one nREPL message.
-   Returns a vector of partial response maps, or nil when OP is not a CLJEL
-   concern and the host should handle it normally."
+   Returns the responses to send, or nil when the op is not ours."
   [{:keys [op session] :as msg}]
   (case op
     "cljel-start" (do (activate! session)
-                      [{:value "ClojureElisp session started"
-                        :status ["done"]}])
+                      [{:value "ClojureElisp session started" :status ["done"]}])
     "cljel-stop"  (do (deactivate! session)
-                      [{:value "ClojureElisp session stopped"
-                        :status ["done"]}])
+                      [{:value "ClojureElisp session stopped" :status ["done"]}])
     "eval"        (when (cljel-active? session) (handle-eval msg))
     "load-file"   (when (cljel-active? session) (handle-load-file msg))
     nil))
+
+;; ============================================================================
+;; Compatibility
+;; ============================================================================
+
+(defn compile-code
+  "Compile code, returning {:status :ok :elisp s} or {:status :error :error s}.
+   The pre-Result shape, kept for callers of clojure-elisp.nrepl/compile-code."
+  ([code] (compile-code code :expr nil))
+  ([code mode] (compile-code code mode nil))
+  ([code mode context]
+   (let [result (compile-result code mode context)]
+     (if (r/ok? result)
+       {:status :ok :elisp (:ok result)}
+       {:status :error :error (:message result)}))))
+
+;; ============================================================================
+;; Function Contracts (Malli)
+;; ============================================================================
+
+(m/=> cljel-active?     [:=> [:cat [:maybe :string]] :boolean])
+(m/=> compile-result    [:function
+                         [:=> [:cat :string] errors/string-result-schema]
+                         [:=> [:cat :string compile-mode-schema]
+                          errors/string-result-schema]
+                         [:=> [:cat :string compile-mode-schema [:maybe :string]]
+                          errors/string-result-schema]])
+(m/=> compile-in-context
+      [:=> [:cat :string [:maybe :string]] errors/string-result-schema])
+(m/=> result->responses [:=> [:cat errors/string-result-schema] responses-schema])
+(m/=> request-context   [:=> [:cat eval-request-schema] [:maybe :string]])
+(m/=> handle-eval       [:=> [:cat eval-request-schema] responses-schema])
+(m/=> handle-op         [:=> [:cat [:map [:op {:optional true} [:maybe :string]]]]
+                         [:maybe responses-schema]])

@@ -1,0 +1,64 @@
+;; A ClojureElisp project that runs on Babashka alone: no JVM, no deps.edn.
+;;
+;; :local/root keeps the demo runnable from a fresh clone. Outside this repo,
+;; take the Clojars coordinate instead. See README.md.
+{:deps {io.github.buddhilw/clojure-elisp {:local/root "../.."}}
+
+ :tasks
+ {:requires ([babashka.fs :as fs]
+             [babashka.process :as process])
+
+  runtime
+  {:doc "Write clojure-elisp-runtime.el from the dependency into out/"
+   :requires ([clojure-elisp.core :as clel])
+   :task (println (:runtime-output (clel/bundle-runtime! "out")))}
+
+  compile
+  {:doc "Compile src/demo/greeter.cljel to out/demo-greeter.el"
+   :requires ([clojure-elisp.core :as clel])
+   :task (do (fs/create-dirs "out")
+             (let [r (clel/compile-file "src/demo/greeter.cljel"
+                                        "out/demo-greeter.el")]
+               (println (str "Compiled " (:input r) " -> " (:output r)
+                             " (" (:size r) " chars)"))))}
+
+  show
+  {:doc "Compile to stdout, without writing a file"
+   :requires ([clojure-elisp.core :as clel])
+   :task (println (clel/compile-file-string (slurp "src/demo/greeter.cljel")))}
+
+  eval-form
+  {:doc "Compile one form the way C-c C-c does, against the whole buffer"
+   :requires ([clojure-elisp.core :as clel])
+   :task (println (clel/compile-string-in-ns
+                   (slurp "src/demo/greeter.cljel")
+                   (or (first *command-line-args*)
+                       "(defn wave [n] (message (shout n)))")))}
+
+  demo
+  {:doc "Compile, load into a real Emacs, and call the functions"
+   :depends [compile runtime]
+   :task (let [{:keys [exit out err]}
+               (process/sh
+                ["emacs" "-Q" "--batch" "-L" "out"
+                 "-l" "clojure-elisp-runtime.el"
+                 "-l" "demo-greeter.el"
+                 "--eval"
+                 (str "(progn"
+                      " (princ (format \"greet:     %s\\n\" (demo-greeter-greet \"world\")))"
+                      " (princ (format \"shout:     %s\\n\" (demo-greeter-shout \"cljel\")))"
+                      " (with-temp-buffer (insert \"alpha\")"
+                      "   (demo-greeter-greet-region (point-min) (point-max))"
+                      "   (princ (format \"region:    %s\\n\" (buffer-string))))"
+                      " (princ (format \"M-x ready: %s\\n\""
+                      "   (commandp 'demo-greeter-greet-region))))")])]
+           (print out)
+           (when (seq err) (print err))
+           (flush)
+           (when-not (zero? exit) (System/exit exit)))}
+
+  nrepl
+  {:doc "Start the ClojureElisp nREPL server for CIDER (no JVM)"
+   :requires ([clel.nrepl-server :as server])
+   :task (server/start-server!
+          (if-let [p (first *command-line-args*)] (parse-long p) 7888))}}}

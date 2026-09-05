@@ -1,0 +1,30 @@
+(ns demo.greeter)
+
+(defn greet
+  "Return a greeting for NAME."
+  [name]
+  (str "Hello, " name "!"))
+
+(defn greet-region
+  "Replace the region with a greeting for the text it contains."
+  [start end]
+  (interactive "r")
+  (let [name (buffer-substring-no-properties start end)]
+    (delete-region start end)
+    (insert (greet name))))
+
+(defn shout
+  "Return NAME's greeting in upper case."
+  [name]
+  (upcase (greet name)))
+
+(defn greet-buffer
+  "Insert a greeting for every line of the current buffer."
+  []
+  (interactive)
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (end-of-line)
+      (insert (str "  ;; " (shout "world")))
+      (forward-line 1))))

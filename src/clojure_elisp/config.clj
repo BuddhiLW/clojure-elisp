@@ -43,8 +43,9 @@
                          {:path config-path :errors errors :config config}))))
      config)))
 
-(defn- bundle-runtime
-  "Copy the runtime .el resource into the output directory."
+(defn bundle-runtime
+  "Write clojure-elisp-runtime.el from the classpath into output-dir.
+   Returns {:runtime-output path}, or nil when the resource is absent."
   [fs output-dir]
   (when-let [content (fs/read-resource fs "clojure-elisp/clojure-elisp-runtime.el")]
     (fs/make-dirs! fs output-dir)
