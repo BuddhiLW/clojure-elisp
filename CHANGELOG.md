@@ -51,6 +51,16 @@ test-elisp` and into CI.
 - **`distinct` did not remove distant duplicates.** Its recursion allocated a
   fresh `seen` table per step, so `(distinct [1 2 1])` returned `(1 2 1)`. The
   table is now carried across the whole sequence.
+- **Destructuring `:or` overrode a present nil or false.** Clojure applies a
+  default only when the key is ABSENT; cljel emitted `(or (get m :x) 5)`, so
+  `{:keys [x] :or {x 5}}` over `{:x nil}` bound 5 instead of nil. All four
+  binding forms (`:keys`, `:strs`, `:syms` and explicit) now reach `get`'s
+  3-arity, and `clel-get` distinguishes an absent key from a falsy value in
+  every branch rather than only for hash tables.
+
+  A second bug fell out of the same line: the default was read with `(get
+  or-map sym)`, which cannot tell "no default" from "the default is nil or
+  false", so `:or {x false}` was silently dropped. It now uses `contains?`.
 
 ### Added
 

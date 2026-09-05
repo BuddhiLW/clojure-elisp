@@ -146,5 +146,29 @@
   (should (functionp (clel-keep #'identity)))
   (should (functionp (clel-interpose 0))))
 
+;;; A default applies only when the key is ABSENT
+
+(ert-deftest clel-get-default-only-on-absence ()
+  "A present nil or false is returned as itself, never replaced by the default.
+`or' against the default is what made destructuring :or lose a deliberately
+falsy value."
+  (let ((ht (clel-hash-map :x nil :y 7))
+        (al (list (cons :x nil) (cons :y 7))))
+    (should (equal nil (clel-get ht :x 5)))
+    (should (equal 7 (clel-get ht :y 5)))
+    (should (equal 5 (clel-get ht :z 5)))
+    (should (equal nil (clel-get al :x 5)))
+    (should (equal 7 (clel-get al :y 5)))
+    (should (equal 5 (clel-get al :z 5)))))
+
+(ert-deftest clel-get-default-on-indexed-collections ()
+  "Index lookups distinguish a nil element from an out-of-range index."
+  (should (equal 2 (clel-get (list 1 2 3) 1 99)))
+  (should (equal nil (clel-get (list 1 nil 3) 1 99)))
+  (should (equal 99 (clel-get (list 1 2 3) 9 99)))
+  (should (equal 2 (clel-get (vector 1 2 3) 1 99)))
+  (should (equal 99 (clel-get (vector 1 2 3) 9 99)))
+  (should (equal 5 (clel-get nil :x 5))))
+
 (provide 'clojure-elisp-runtime-test)
 ;;; clojure-elisp-runtime-test.el ends here

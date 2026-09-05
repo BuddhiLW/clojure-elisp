@@ -95,11 +95,18 @@
    - {:keys [x y]} with m -> [[x (get m :x)] [y (get m :y)]]
    - {:strs [x y]} -> [[x (get m \"x\")] [y (get m \"y\")]]
    - {a :a b :b} -> [[a (get m :a)] [b (get m :b)]]
-   - {:keys [x] :or {x 0}} -> [[x (or (get m :x) 0)]]
+   - {:keys [x] :or {x 0}} -> [[x (get m :x 0)]]
    - {:keys [x] :as all} -> [[x (get m :x)] [all m]]"
   [pattern map-sym]
   (let [as-sym            (:as pattern)
         or-map            (:or pattern)
+        lookup
+        (fn [k sym]
+          ;; `contains?`, not `(get or-map sym)`: a declared default of nil or
+          ;; false is a real default, and reading it as "no default" drops it.
+          (if (contains? or-map sym)
+            (list 'get map-sym k (get or-map sym))
+            (list 'get map-sym k)))
         keys-syms         (:keys pattern)
         strs-syms         (:strs pattern)
         syms-syms         (:syms pattern)
@@ -108,45 +115,28 @@
     (cond-> []
       ;; Handle :keys [x y] -> bind x to (get m :x)
       keys-syms
-      (into (for [sym  keys-syms
-                  :let [k (keyword (name sym))
-                        default (get or-map sym)]]
-              [sym (if default
-                     (list 'clojure.core/or (list 'get map-sym k) default)
-                     (list 'get map-sym k))]))
+      (into (for [sym keys-syms]
+              [sym (lookup (keyword (name sym)) sym)]))
 
       ;; Handle :strs [x y] -> bind x to (get m "x")
       strs-syms
-      (into (for [sym  strs-syms
-                  :let [k (name sym)
-                        default (get or-map sym)]]
-              [sym (if default
-                     (list 'clojure.core/or (list 'get map-sym k) default)
-                     (list 'get map-sym k))]))
+      (into (for [sym strs-syms]
+              [sym (lookup (name sym) sym)]))
 
       ;; Handle :syms [x y] -> bind x to (get m 'x)
       syms-syms
-      (into (for [sym  syms-syms
-                  :let [default (get or-map sym)]]
-              [sym (if default
-                     (list 'clojure.core/or (list 'get map-sym (list 'quote sym)) default)
-                     (list 'get map-sym (list 'quote sym)))]))
+      (into (for [sym syms-syms]
+              [sym (lookup (list 'quote sym) sym)]))
 
       ;; Handle explicit bindings {a :a b :b}
       (seq explicit-bindings)
       (into (for [[sym k] explicit-bindings
-                  :when   (not= sym '_)
-                  :let    [default (get or-map sym)]]
+                  :when   (not= sym '_)]
               (if (destructure-pattern? sym)
                 ;; Nested destructuring
-                (let [temp-sym (gensym "map__")]
-                  [temp-sym (if default
-                              (list 'clojure.core/or (list 'get map-sym k) default)
-                              (list 'get map-sym k))])
+                [(gensym "map__") (lookup k sym)]
                 ;; Simple binding
-                [sym (if default
-                       (list 'clojure.core/or (list 'get map-sym k) default)
-                       (list 'get map-sym k))])))
+                [sym (lookup k sym)])))
 
       ;; Handle :as binding
       as-sym
