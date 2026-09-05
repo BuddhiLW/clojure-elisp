@@ -690,8 +690,15 @@
 
 (deftest cross-file-warning-test
   (testing "warning emitted for missing symbol in known namespace"
-    (let [f1 (java.io.File/createTempFile "test-utils" ".cljel")
-          f2 (java.io.File/createTempFile "test-app" ".cljel")
+    ;; A directory this test OWNS. compile-project scans the directory it is
+    ;; given, so passing the parent of a createTempFile fixture handed it the
+    ;; shared system temp dir and compiled every .cljel any other process had
+    ;; left there — green or red depending on what else was on the box.
+    (let [src-dir (str (java.nio.file.Files/createTempDirectory
+                        "cljel-cross-file"
+                        (into-array java.nio.file.attribute.FileAttribute [])))
+          f1 (java.io.File. src-dir "test-utils.cljel")
+          f2 (java.io.File. src-dir "test-app.cljel")
           out-dir (java.io.File/createTempFile "test-out" "")]
       (try
         ;; out-dir needs to be a directory
@@ -702,7 +709,7 @@
         (spit f2 "(ns my.app (:require [my.utils :as u]))\n(defn main [] (u/nonexistent 42))")
         (let [stderr-output (java.io.StringWriter.)
               result (binding [*err* stderr-output]
-                       (clel/compile-project [(.getParent f1)] (.getAbsolutePath out-dir)))
+                       (clel/compile-project [src-dir] (.getAbsolutePath out-dir)))
               warnings (str stderr-output)]
           ;; Should produce a warning about nonexistent
           (is (str/includes? warnings "WARNING"))
@@ -711,8 +718,8 @@
           ;; Compilation should still succeed (warning, not error)
           (is (vector? result)))
         (finally
-          (.delete f1)
-          (.delete f2)
+          (doseq [f (reverse (file-seq (java.io.File. src-dir)))]
+            (.delete f))
           ;; Clean up output directory
           (doseq [f (file-seq out-dir)]
             (.delete f))))))
