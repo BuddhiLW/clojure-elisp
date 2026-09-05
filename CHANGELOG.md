@@ -93,6 +93,24 @@ test-elisp` and into CI.
   lie: a 0.7.2 file does not need a 0.7.2 runtime, it needs whichever runtime
   first provided what it uses.
 
+- **`sync-version` now covers every `.el` header.** It propagated `/VERSION` to
+  the classpath VERSION resource and nothing else, while six locations restate
+  the version. `clojure-elisp-mode.el` and `cider-clojure-elisp.el` sat at
+  0.5.0 while `VERSION` read 0.6.1 — two releases of drift, invisible because
+  no gate looked at them, hand-fixed twice. MELPA Stable reads that header, so
+  drift ships the wrong version. `version-consistency-test` now asserts all
+  three against `/VERSION`, and a second test fails if a `.el` file appears
+  that is in neither list.
+
+### Fixed (tests)
+
+- **`cross-file-warning-test` compiled every `.cljel` in the shared system temp
+  directory.** It passed `(.getParent f1)` — that is, `/tmp` — to
+  `compile-project`, so it compiled whatever any other process had left there
+  and was green or red depending on what else was on the box. It now creates a
+  directory it owns. Reproduced by dropping one unparseable `.cljel` in `/tmp`:
+  errors before, passes after.
+
 ### Changed
 
 - `count`, `apply`, `second`, `butlast`, `reverse`, `flatten` and `remove` now
