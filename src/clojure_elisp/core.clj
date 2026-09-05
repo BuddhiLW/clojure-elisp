@@ -18,6 +18,7 @@
   (:require [clojure-elisp.compile :as cc]
             [clojure-elisp.project :as project]
             [clojure-elisp.config :as config]
+            [clojure-elisp.fs :as fs]
             [clojure-elisp.errors :as errors]
             [malli.core :as m]
             [malli.instrument :as mi]))
@@ -52,11 +53,17 @@
   (cc/compile-string s))
 
 (defn compile-string-in-ns
-  "Compile a string of Clojure code in the namespace context of ns-source.
-   ns-source is the text of an (ns ...) form, or nil for no context.
+  "Compile a string of Clojure code in the context of context-source.
+   context-source is the buffer's (ns ...) form at minimum, or the whole
+   buffer to also make sibling definitions visible to call sites.
    Emits the forms only: no file header, no (provide ...)."
-  [ns-source s]
-  (cc/compile-string-in-ns ns-source s))
+  [context-source s]
+  (cc/compile-string-in-ns context-source s))
+
+(defn leading-ns-source
+  "Return the source text of the leading (ns ...) form in source, or nil."
+  [source]
+  (cc/leading-ns-source source))
 
 (defn compile-file-string
   "Compile a string of Clojure code as a file (with namespace context)."
@@ -109,6 +116,12 @@
   "Compile all .cljel files under source-paths in dependency order."
   ([source-paths output-dir]    (project/compile-project source-paths output-dir))
   ([fs source-paths output-dir] (project/compile-project fs source-paths output-dir)))
+
+(defn bundle-runtime!
+  "Write clojure-elisp-runtime.el from the classpath into output-dir.
+   Returns {:runtime-output path} or nil when the resource is absent."
+  ([output-dir] (bundle-runtime! fs/default-fs output-dir))
+  ([fs output-dir] (config/bundle-runtime fs output-dir)))
 
 (defn compile-runtime
   "Compile the self-hosted runtime .cljel to its .el library."
@@ -173,7 +186,8 @@
    'clojure-elisp.compile
    'clojure-elisp.project
    'clojure-elisp.analyzer
-   'clojure-elisp.emitter])
+   'clojure-elisp.emitter
+   'clojure-elisp.nrepl-kernel])
 
 (defn instrument!
   "Enable Malli instrumentation of the boundary fn contracts (core + compile +

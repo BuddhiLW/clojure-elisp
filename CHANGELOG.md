@@ -5,6 +5,66 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-09-05
+
+Follow-up to 0.7.0. The interactive loop had a second half of the parity bug,
+and the Babashka story shipped incomplete.
+
+### Fixed
+
+- **Interactive eval emitted unprefixed calls to sibling definitions.** 0.7.0
+  fixed the name a form DEFINES; it did not fix the names a form CALLS. The
+  analyzer pre-scans the definitions it is handed, so compiling against the
+  `(ns ...)` form alone left a sibling call bare:
+
+  ```
+  (defn shout [n] (upcase (greet n)))
+  => (defun demo-greeter-shout (n) (upcase (greet n)))       ; void-function
+  ```
+
+  The client now sends the whole buffer as `cljel-context`, so calls resolve
+  the way they do in the compiled file. When the buffer cannot be compiled the
+  server falls back to its leading `(ns ...)` form and then to no context, so a
+  half-typed form elsewhere does not block evaluating a good one.
+- **`bbin install` could not find `clel.main`.** `bbin` resolves the project as
+  a `:local/root` dependency, which reads `deps.edn` `:paths`; the Babashka
+  entry points were only on `bb.edn`'s. Pre-existing, and it made the
+  recommended install route non-functional. `bb` is now on `deps.edn` `:paths`.
+- **The published jar carried no Babashka entry points.** `clel.nrepl-server`
+  and `clel.main` were absent from the 0.7.0 artifact, so the Clojars
+  coordinate could not start the standalone server. The jar now ships `bb`.
+
+### Added
+
+- **`clojure-elisp.core/bundle-runtime!`** writes `clojure-elisp-runtime.el`
+  from the classpath into a directory of your choosing. Previously this was
+  private and reachable only through `compile-project-from-config`, so a
+  consumer had to name a path into the ClojureElisp checkout to get the
+  runtime.
+- **`examples/bb-demo`**, a complete ClojureElisp project running on Babashka:
+  compile, show, eval-form, runtime, nrepl, and a `demo` task that loads the
+  output into a real Emacs and calls the functions.
+- **`compile-string-in-ns-result`**, the Railway variant, alongside the
+  existing `compile-file-string-result`.
+
+### Changed
+
+- **`clojure-elisp.nrepl-kernel` restratified** along Collect / Promote /
+  Pipeline / Boundary, and moved onto the project's own error vocabulary
+  (`hive-dsl.result` plus the `clojure-elisp.errors` schemas) instead of the
+  ad-hoc `{:status :ok}` maps it shipped with. `compile-code` is kept as the
+  compatibility surface. The namespace now carries `m/=>` contracts and joins
+  the instrumented set, so they are enforced by the suite rather than declared.
+- Version headers in the three `.el` files track the release.
+
+### Verification
+
+603 tests, 3042 assertions, 0 failures. The demo was run end to end: compiled
+`.cljel`, bundled runtime, loaded both into Emacs 28+, called the functions and
+confirmed `commandp` on the interactive one. The standalone server was driven
+over a socket from the demo project. Neutralizing the context handling turns
+the parity suite red (13 failures, 1 error).
+
 ## [0.7.0] - 2026-09-05
 
 The theme of this release is that **the interactive loop is the primary way to
@@ -159,6 +219,7 @@ Releases before 0.6.1 are recorded in the
 [GitHub releases](https://github.com/BuddhiLW/clojure-elisp/releases) and in the
 Progress Log in `CLAUDE.md`.
 
+[0.7.1]: https://github.com/BuddhiLW/clojure-elisp/releases/tag/v0.7.1
 [0.7.0]: https://github.com/BuddhiLW/clojure-elisp/releases/tag/v0.7.0
 [0.6.2]: https://github.com/BuddhiLW/clojure-elisp/releases/tag/v0.6.2
 [0.6.1]: https://github.com/BuddhiLW/clojure-elisp/releases/tag/v0.6.1

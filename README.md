@@ -94,9 +94,37 @@ at point and evaluates the resulting Elisp **in the Emacs you are using**. The
 function is redefined in the running image, nothing is written to disk, and
 `M-x` finds it immediately. It is the elisp REPL loop, with Clojure syntax.
 
+### Try it in 30 seconds
+
+[`examples/bb-demo`](examples/bb-demo) is a complete ClojureElisp project that
+runs on Babashka alone. It compiles a `.cljel` source, loads it into a real
+Emacs, and calls the functions:
+
+```bash
+git clone https://github.com/BuddhiLW/clojure-elisp
+cd clojure-elisp/examples/bb-demo && bb demo
+```
+
+```
+Compiled src/demo/greeter.cljel -> out/demo-greeter.el (963 chars)
+greet:     Hello, world!
+shout:     HELLO, CLJEL!
+region:    Hello, alpha!
+M-x ready: t
+```
+
+`bb nrepl` in that directory starts the server below. See its
+[README](examples/bb-demo/README.md) for the task list.
+
 ### Start the server
 
-No JVM, no `.nrepl.edn`, no jack-in:
+Install the CLI once:
+
+```bash
+bbin install io.github.BuddhiLW/clojure-elisp
+```
+
+Then, with no JVM, no `.nrepl.edn` and no jack-in:
 
 ```bash
 clel nrepl                # ClojureElisp nREPL server on port 7888
@@ -277,7 +305,30 @@ Install the `clel` CLI with [bbin](https://github.com/babashka/bbin):
 bbin install io.github.BuddhiLW/clojure-elisp
 ```
 
-This gives you the `clel` command globally. Requires [Babashka](https://github.com/babashka/babashka) and the uberjar (see below).
+This gives you the `clel` command globally, including `clel nrepl`, which
+compiles in the Babashka process and needs no JVM. Requires
+[Babashka](https://github.com/babashka/babashka). Only `clel mcp` and the
+`compile` fallback path need the uberjar (see below).
+
+### As a Babashka dependency
+
+The compiler and the nREPL server both load under Babashka, so a `bb.edn` is
+the whole setup. [`examples/bb-demo`](examples/bb-demo) is a working project
+built this way:
+
+```clojure
+{:deps {io.github.buddhilw/clojure-elisp {:mvn/version "<latest>"}}
+ :tasks
+ {compile {:requires ([clojure-elisp.core :as clel])
+           :task (clel/compile-file "src/my/pkg.cljel" "out/my-pkg.el")}
+  runtime {:requires ([clojure-elisp.core :as clel])
+           :task (clel/bundle-runtime! "out")}
+  nrepl   {:requires ([clel.nrepl-server :as server])
+           :task (server/start-server! 7888)}}}
+```
+
+`bundle-runtime!` writes `clojure-elisp-runtime.el` out of the dependency, so
+nothing has to name a path into the ClojureElisp checkout.
 
 ### Uberjar
 
