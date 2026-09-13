@@ -3,7 +3,8 @@
 
    Maps Clojure core functions and namespaced functions to their
    Elisp equivalents. Organized by category for maintainability."
-  (:require [malli.core :as m]))
+  (:require [clojure.string]
+            [malli.core :as m]))
 
 ;; ============================================================================
 ;; Schemas
@@ -104,15 +105,15 @@
 
 (def collection-mappings
   {'first "clel-first"
-   'second "cadr"
+   'second "clel-second"
    'last "clel-last"
-   'butlast "butlast"
+   'butlast "clel-butlast"
    'rest "clel-rest"
    'next "clel-next"
    'list "list"
    'cons "cons"
    'conj "clel-conj"
-   'count "length"
+   'count "clel-count"
    'nth "clel-nth"
    'get "clel-get"
    'contains? "clel-contains-p"
@@ -128,8 +129,8 @@
    'seq "clel-seq"
    'empty? "clel-empty-p"
    'into "clel-into"
-   'reverse "reverse"
-   'flatten "flatten-tree"
+   'reverse "clel-reverse"
+   'flatten "clel-flatten"
    'peek "clel-peek"
    'pop "clel-pop"
    'subvec "clel-subvec"})
@@ -142,7 +143,7 @@
   {;; Lazy
    'map "clel-map"
    'filter "clel-filter"
-   'remove "cl-remove-if"
+   'remove "clel-remove"
    'take "clel-take"
    'drop "clel-drop"
    'take-while "clel-take-while"
@@ -277,7 +278,7 @@
 ;; ============================================================================
 
 (def function-mappings
-  {'apply "apply"
+  {'apply "clel-apply"
    'identity "identity"
    'constantly "clel-constantly"
    'partial "apply-partially"
@@ -623,11 +624,34 @@
                     [k (mapv (fn [[_ table-name v]] [table-name v]) es)])))
           (group-by first entries))))
 
+(def lazy-seq-consuming-fns
+  "Clojure fns that read a sequence argument which may be a `clel-lazy-seq' at
+   run time. Raw Elisp primitives cannot force one: `length' measures the struct
+   and `apply' signals wrong-type-argument. Every entry must therefore resolve
+   to a `clel-` wrapper that realizes before it reads."
+  '#{first second last butlast rest next nth count get contains? conj into seq
+     empty? reverse flatten peek pop apply reduce sort sort-by group-by
+     frequencies every? some not-every? not-any? remove str set zipmap
+     select-keys rand-nth doall dorun clojure.string/join})
+
+(defn raw-lazy-seq-targets
+  "Return {fn-sym elisp-token} for every `lazy-seq-consuming-fns` entry whose
+   `core-fn-mapping` target is a raw Elisp primitive rather than a `clel-`
+   wrapper. Empty means no lazy seq can reach a primitive that cannot force it."
+  []
+  (into (sorted-map)
+        (keep (fn [sym]
+                (when-let [target (core-fn-mapping sym)]
+                  (when-not (clojure.string/starts-with? target "clel-")
+                    [sym target]))))
+        lazy-seq-consuming-fns))
+
 (defn validate-tables!
   "Checked invariant for the mapping registry. Asserts that (1) every source
-   table conforms to `MappingTable` and (2) no two tables map the same key to
-   different Elisp tokens (`table-collisions` is empty). Throws `ex-info` with
-   the offending data on violation; returns true when all invariants hold."
+   table conforms to `MappingTable`, (2) no two tables map the same key to
+   different Elisp tokens (`table-collisions` is empty), and (3) every
+   `lazy-seq-consuming-fns` entry targets a `clel-` wrapper. Throws `ex-info`
+   with the offending data on violation; returns true when all invariants hold."
   []
   (doseq [[table-name table] mapping-tables]
     (when-not (m/validate MappingTable table)
@@ -648,6 +672,11 @@
                            "merge — add/remove the table in BOTH places")
                       {:only-in-merge  (apply dissoc core-fn-mapping (keys from-mirror))
                        :only-in-mirror (apply dissoc from-mirror (keys core-fn-mapping))}))))
+  (let [raw (raw-lazy-seq-targets)]
+    (when (seq raw)
+      (throw (ex-info (str "These fns receive lazy seqs but map to raw Elisp, "
+                           "which cannot force them: " (vec (keys raw)))
+                      {:raw-targets raw}))))
   true)
 
 (def higher-order-fn-arg-slots

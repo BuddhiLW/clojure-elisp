@@ -13,6 +13,41 @@
   (is (= (slurp "VERSION") (slurp "resources/clojure-elisp/VERSION"))
       "/VERSION and resources/clojure-elisp/VERSION diverged — run `clojure -T:build sync-version`"))
 
+(def ^:private el-packages
+  "Every .el file carrying a MELPA `;; Version:` header. Mirrors build/el-packages;
+   `el-package-list-covers-every-el-file` fails if a new .el escapes both."
+  ["resources/clojure-elisp/clojure-elisp-runtime.el"
+   "resources/clojure-elisp/clojure-elisp-mode.el"
+   "resources/clojure-elisp/cider-clojure-elisp.el"])
+
+(deftest el-headers-name-the-current-version
+  (testing "every shipped .el header carries /VERSION"
+    (doseq [path el-packages]
+      (let [header (re-find #"(?m)^;; Version: (.+)$" (slurp path))]
+        (is (some? header)
+            (str path " lost its MELPA `;; Version:` header — the sync writes "
+                 "by regex, so a header that moves stops being written and "
+                 "nothing else notices."))
+        (is (= (str/trim (slurp "VERSION")) (str/trim (second header)))
+            (str path " lags /VERSION — run `clojure -T:build sync-version`. "
+                 "MELPA Stable reads this header, so drift ships the wrong "
+                 "version. clojure-elisp-mode.el and cider-clojure-elisp.el sat "
+                 "two releases behind before anything looked at them."))))))
+
+(deftest el-package-list-covers-every-el-file
+  (testing "no .el ships without being in the version sync — a new package that
+            nobody adds to the list would silently keep whatever header it was
+            born with"
+    (let [on-disk (->> (file-seq (java.io.File. "resources/clojure-elisp"))
+                       (filter #(.isFile %))
+                       (map #(.getPath %))
+                       (filter #(str/ends-with? % ".el"))
+                       set)]
+      (is (= on-disk (set el-packages))
+          (str "resources/clojure-elisp .el files and the synced list diverged. "
+               "Add the file to build/el-packages AND to el-packages here, or "
+               "say why it carries no version.")))))
+
 (def ^:private readme-coord-patterns
   [;; deps.edn:   io.github.buddhilw/clojure-elisp {:mvn/version "X"}
    #"io\.github\.buddhilw/clojure-elisp \{:mvn/version \"([^\"]+)\""
