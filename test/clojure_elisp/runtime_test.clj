@@ -1800,3 +1800,34 @@
       (is (str/includes? code "cl-assert"))
       (is (str/includes? code "must be positive")))))
 
+
+;; ============================================================================
+;; Destructuring :or — kanban 20260710102141-320e86ab
+;; ============================================================================
+
+(deftest destructuring-or-uses-absence-not-truthiness-test
+  (testing ":keys defaults reach get's 3-arity, never (or (get ...) default)"
+    (let [code (clel/emit '(let [{:keys [x] :or {x 5}} m] x))]
+      (is (str/includes? code "(clel-get map__" ))
+      (is (re-find #"\(clel-get map__\d+ :x 5\)" code))
+      (is (not (re-find #"\(or \(clel-get" code))
+          "`or` replaces a present nil/false with the default; Clojure applies
+           :or only when the key is ABSENT")))
+
+  (testing ":strs, :syms and explicit bindings carry the default the same way"
+    (is (re-find #"\(clel-get map__\d+ \"a\" 1\)"
+                 (clel/emit '(let [{:strs [a] :or {a 1}} m] a))))
+    (is (re-find #"\(clel-get map__\d+ 'a 1\)"
+                 (clel/emit '(let [{:syms [a] :or {a 1}} m] a))))
+    (is (re-find #"\(clel-get map__\d+ :b 2\)"
+                 (clel/emit '(let [{b :b :or {b 2}} m] b)))))
+
+  (testing "a declared falsy default is still a default"
+    (is (re-find #"\(clel-get map__\d+ :x nil\)"
+                 (clel/emit '(let [{:keys [x] :or {x false}} m] x)))
+        "reading the default with `get` cannot tell `:or {x false}` from no
+         default at all, and would drop it"))
+
+  (testing "no :or still emits the 2-arity"
+    (let [code (clel/emit '(let [{:keys [x]} m] x))]
+      (is (re-find #"\(clel-get map__\d+ :x\)" code)))))
