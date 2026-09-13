@@ -51,6 +51,16 @@ test-elisp` and into CI.
 - **`distinct` did not remove distant duplicates.** Its recursion allocated a
   fresh `seen` table per step, so `(distinct [1 2 1])` returned `(1 2 1)`. The
   table is now carried across the whole sequence.
+- **Destructuring `:or` overrode a present nil or false.** Clojure applies a
+  default only when the key is ABSENT; cljel emitted `(or (get m :x) 5)`, so
+  `{:keys [x] :or {x 5}}` over `{:x nil}` bound 5 instead of nil. All four
+  binding forms (`:keys`, `:strs`, `:syms` and explicit) now reach `get`'s
+  3-arity, and `clel-get` distinguishes an absent key from a falsy value in
+  every branch rather than only for hash tables.
+
+  A second bug fell out of the same line: the default was read with `(get
+  or-map sym)`, which cannot tell "no default" from "the default is nil or
+  false", so `:or {x false}` was silently dropped. It now uses `contains?`.
 
 ### Added
 
@@ -65,6 +75,51 @@ test-elisp` and into CI.
   mechanically, so a future mapping edit cannot quietly reintroduce this.
 - **Elisp tests now run in CI.** They previously existed only behind a
   `make` target that CI never invoked.
+- **Compiled files refuse a runtime that is too old to run them.** The runtime
+  now defines `clel-runtime-version`, stamped from `VERSION` at regen, and
+  every emitted file opens with:
+
+  ```elisp
+  (eval-and-compile
+    (require 'clojure-elisp-runtime)
+    (unless (and (boundp 'clel-runtime-version)
+                 (version<= "0.7.2" clel-runtime-version))
+      (error "clojure-elisp-runtime %s is too old for this file (needs %s)" ...)))
+  ```
+
+  This is harmless while the runtime is bundled beside its application, since
+  that copy is always the one that compiled the file. It stops being harmless
+  the moment the runtime is package managed, which is the MELPA goal: MELPA
+  ships HEAD and MELPA Stable ships the latest tag, so a 0.9 file can meet a
+  0.7 runtime. Without the guard that surfaces as `void-function clel-count`,
+  which reads as a broken package rather than a version mismatch, or worse as
+  a silently changed semantic. The `boundp` check matters: a runtime older
+  than 0.7.2 does not define the constant at all, and an unguarded read would
+  signal `void-variable` instead of saying what is wrong.
+
+  The guard compares against `version/minimum-runtime-version`, a deliberate
+  constant, not against the project version. Deriving it from `VERSION` would
+  rewrite every compiled file on every patch release and make the message a
+  lie: a 0.7.2 file does not need a 0.7.2 runtime, it needs whichever runtime
+  first provided what it uses.
+
+- **`sync-version` now covers every `.el` header.** It propagated `/VERSION` to
+  the classpath VERSION resource and nothing else, while six locations restate
+  the version. `clojure-elisp-mode.el` and `cider-clojure-elisp.el` sat at
+  0.5.0 while `VERSION` read 0.6.1 — two releases of drift, invisible because
+  no gate looked at them, hand-fixed twice. MELPA Stable reads that header, so
+  drift ships the wrong version. `version-consistency-test` now asserts all
+  three against `/VERSION`, and a second test fails if a `.el` file appears
+  that is in neither list.
+
+### Fixed (tests)
+
+- **`cross-file-warning-test` compiled every `.cljel` in the shared system temp
+  directory.** It passed `(.getParent f1)` — that is, `/tmp` — to
+  `compile-project`, so it compiled whatever any other process had left there
+  and was green or red depending on what else was on the box. It now creates a
+  directory it owns. Reproduced by dropping one unparseable `.cljel` in `/tmp`:
+  errors before, passes after.
 
 ### Changed
 

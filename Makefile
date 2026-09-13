@@ -37,12 +37,24 @@ test: test-clj test-elisp
 test-clj:
 	clojure -M:test
 
-test-elisp:
+GUARD_FIXTURE := test/elisp/fixtures/guarded.el
+
+# A real compiled file, written by the compiler. Generated rather than
+# committed so it cannot drift from the emitter it stands for.
+$(GUARD_FIXTURE): src/clojure_elisp/emitter.clj src/clojure_elisp/version.clj
+	@mkdir -p $(dir $@)
+	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
+	  (spit \"$@\" (clel/compile-file-string \"(ns guarded)\n(defn ok [] :ok)\"))"
+
+test-elisp: $(GUARD_FIXTURE)
 	emacs -Q -batch -l ert \
 		-l test/elisp/cider-clojure-elisp-test.el \
 		-f ert-run-tests-batch-and-exit
 	emacs -Q -batch -l ert \
 		-l test/elisp/clojure-elisp-runtime-test.el \
+		-f ert-run-tests-batch-and-exit
+	emacs -Q -batch -l ert \
+		-l test/elisp/clojure-elisp-runtime-guard-test.el \
 		-f ert-run-tests-batch-and-exit
 
 clean:
