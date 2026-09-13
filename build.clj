@@ -55,15 +55,44 @@
 (defn clean [_]
   (b/delete {:path "target"}))
 
+(def el-packages
+  "Every .el file carrying a MELPA `;; Version:` header. MELPA Stable reads
+   that header, so a stale one ships the wrong version."
+  ["resources/clojure-elisp/clojure-elisp-runtime.el"
+   "resources/clojure-elisp/clojure-elisp-mode.el"
+   "resources/clojure-elisp/cider-clojure-elisp.el"])
+
+(def ^:private el-version-header #"(?m)^;; Version: .*$")
+
+(defn- stamp-el-version!
+  "Rewrite path's `;; Version:` header to v.
+
+   Throws when the header is absent rather than writing nothing: a renamed or
+   restructured file must fail the release loudly, not drop silently out of the
+   sync. That silence is what let two headers sit two releases behind."
+  [path v]
+  (let [src (slurp path)]
+    (when-not (re-find el-version-header src)
+      (throw (ex-info (str path " has no `;; Version:` header to sync")
+                      {:path path :version v})))
+    (spit path (str/replace src el-version-header (str ";; Version: " v)))
+    (println (str "Synced " path " -> " v))))
+
 (defn- sync-version!
-  "Propagate the on-disk VERSION (reported as `v`) to the classpath VERSION
-   resource, which stamps the runtime .el MELPA header.
+  "Propagate the on-disk VERSION (reported as `v`) to everything that restates
+   it: the classpath VERSION resource and the MELPA header of each .el package.
+
+   The runtime .el header is also written by compile-runtime, from the same
+   resource; stamping it here too means a bump no longer needs a regen to reach
+   the shipped file.
 
    The README is deliberately NOT synced: it names no concrete version, so
    there is nothing to keep in step. See version-consistency-test."
   [v]
   (spit version-resource (slurp "VERSION"))
-  (println (str "Synced " version-resource " -> " v)))
+  (println (str "Synced " version-resource " -> " v))
+  (doseq [path el-packages]
+    (stamp-el-version! path v)))
 
 (defn sync-version
   "Propagate the canonical top-level VERSION to everything that restates it."

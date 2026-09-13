@@ -51,6 +51,16 @@ test-elisp` and into CI.
 - **`distinct` did not remove distant duplicates.** Its recursion allocated a
   fresh `seen` table per step, so `(distinct [1 2 1])` returned `(1 2 1)`. The
   table is now carried across the whole sequence.
+- **Destructuring `:or` overrode a present nil or false.** Clojure applies a
+  default only when the key is ABSENT; cljel emitted `(or (get m :x) 5)`, so
+  `{:keys [x] :or {x 5}}` over `{:x nil}` bound 5 instead of nil. All four
+  binding forms (`:keys`, `:strs`, `:syms` and explicit) now reach `get`'s
+  3-arity, and `clel-get` distinguishes an absent key from a falsy value in
+  every branch rather than only for hash tables.
+
+  A second bug fell out of the same line: the default was read with `(get
+  or-map sym)`, which cannot tell "no default" from "the default is nil or
+  false", so `:or {x false}` was silently dropped. It now uses `contains?`.
 
 ### Added
 
@@ -92,6 +102,24 @@ test-elisp` and into CI.
   rewrite every compiled file on every patch release and make the message a
   lie: a 0.7.2 file does not need a 0.7.2 runtime, it needs whichever runtime
   first provided what it uses.
+
+- **`sync-version` now covers every `.el` header.** It propagated `/VERSION` to
+  the classpath VERSION resource and nothing else, while six locations restate
+  the version. `clojure-elisp-mode.el` and `cider-clojure-elisp.el` sat at
+  0.5.0 while `VERSION` read 0.6.1 — two releases of drift, invisible because
+  no gate looked at them, hand-fixed twice. MELPA Stable reads that header, so
+  drift ships the wrong version. `version-consistency-test` now asserts all
+  three against `/VERSION`, and a second test fails if a `.el` file appears
+  that is in neither list.
+
+### Fixed (tests)
+
+- **`cross-file-warning-test` compiled every `.cljel` in the shared system temp
+  directory.** It passed `(.getParent f1)` — that is, `/tmp` — to
+  `compile-project`, so it compiled whatever any other process had left there
+  and was green or red depending on what else was on the box. It now creates a
+  directory it owns. Reproduced by dropping one unparseable `.cljel` in `/tmp`:
+  errors before, passes after.
 
 ### Changed
 

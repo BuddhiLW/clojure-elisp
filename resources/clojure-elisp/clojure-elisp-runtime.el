@@ -59,10 +59,11 @@ were emitted against.")
   (t (error "clel-conj: unsupported collection type")))))
 
 (cl-defun clel-get (coll key &optional default)
-  "Get KEY from COLL, returning DEFAULT if not found."
+  "Get KEY from COLL, returning DEFAULT only when KEY is ABSENT.\nA present nil or false is returned as itself: `or' against the default\nwould overwrite it, which is how destructuring :or used to lose a\ndeliberately falsy value."
   (cond
   ((null coll) default)
-  ((listp coll) (if (numberp key) (or (nth key coll) default) (or (alist-get key coll nil nil 'equal) default)))
+  ((listp coll) (if (numberp key) (if (and (integerp key) (>= key 0) (< key (clel-count coll))) (nth key coll) default) (let* ((pair (assoc key coll)))
+    (if pair (cdr pair) default))))
   ((vectorp coll) (if (and (numberp key) (< key (clel-count coll))) (aref coll key) default))
   ((hash-table-p coll) (gethash key coll default))
   (t default)))
