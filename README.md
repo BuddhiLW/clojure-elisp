@@ -368,6 +368,28 @@ Or manually copy from the repo:
 cp resources/clojure-elisp/clojure-elisp-runtime.el ~/.emacs.d/site-lisp/
 ```
 
+### Publishing a Package
+
+Give the package's main namespace an `:elisp/package` attr-map and the compiled
+file gets the library headers package.el and MELPA read:
+
+```clojure
+(ns my.pkg
+  "One-line summary.
+
+   Commentary paragraphs."
+  {:elisp/package {:author "Jane Doe <jane@example.org>"
+                   :url "https://example.org/my-pkg"
+                   :version "0.1.0"
+                   :package-requires [[emacs "28.1"]]
+                   :keywords ["convenience"]
+                   :license "GPL-3.0-or-later"}})
+```
+
+`Package-Requires` gains `(clojure-elisp-runtime "<minimum>")` automatically.
+Other keys: `:maintainer`, `:copyright`, `:commentary`; `:author` and
+`:maintainer` also take a vector.
+
 ### Building from Source
 
 ```bash

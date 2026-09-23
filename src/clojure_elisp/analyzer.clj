@@ -447,19 +447,25 @@
 (defn analyze-ns
   "Analyze (ns name ...) forms.
    Parses :require clauses into structured data with :as and :refer options.
-   Parses :load-path clauses into a :load-paths vector."
+   Parses :load-path clauses into a :load-paths vector.
+   Carries the docstring as :doc and an attr-map's :elisp/package as :package."
   [[_ ns-name & clauses]]
-  (let [requires (->> clauses
+  (let [doc      (when (string? (first clauses)) (first clauses))
+        attrs    (merge (meta ns-name)
+                        (first (filter map? (take 2 clauses))))
+        requires (->> clauses
                       (filter #(and (sequential? %) (= :require (first %))))
                       (mapcat rest)
                       (map parse-require-spec)
                       vec)
         load-paths (parse-load-paths clauses)]
-    (ast-node :ns
-              :name ns-name
-              :requires requires
-              :load-paths load-paths
-              :clauses clauses)))
+    (cond-> (ast-node :ns
+                      :name ns-name
+                      :requires requires
+                      :load-paths load-paths
+                      :clauses clauses)
+      doc                    (assoc :doc doc)
+      (:elisp/package attrs) (assoc :package (:elisp/package attrs)))))
 
 (defn analyze-quote
   "Analyze (quote form) forms."

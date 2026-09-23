@@ -46,7 +46,14 @@ $(GUARD_FIXTURE): src/clojure_elisp/emitter.clj src/clojure_elisp/version.clj
 	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
 	  (spit \"$@\" (clel/compile-file-string \"(ns guarded)\n(defn ok [] :ok)\"))"
 
-test-elisp: $(GUARD_FIXTURE)
+PACKAGE_FIXTURE := test/elisp/fixtures/packaged.el
+
+$(PACKAGE_FIXTURE): test/elisp/sources/packaged.cljel src/clojure_elisp/package_header.clj src/clojure_elisp/emitter.clj
+	@mkdir -p $(dir $@)
+	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
+	  (spit \"$@\" (clel/compile-file-string (slurp \"$<\")))"
+
+test-elisp: $(GUARD_FIXTURE) $(PACKAGE_FIXTURE)
 	emacs -Q -batch -l ert \
 		-l test/elisp/cider-clojure-elisp-test.el \
 		-f ert-run-tests-batch-and-exit
@@ -55,6 +62,9 @@ test-elisp: $(GUARD_FIXTURE)
 		-f ert-run-tests-batch-and-exit
 	emacs -Q -batch -l ert \
 		-l test/elisp/clojure-elisp-runtime-guard-test.el \
+		-f ert-run-tests-batch-and-exit
+	emacs -Q -batch -l ert \
+		-l test/elisp/clojure-elisp-package-header-test.el \
 		-f ert-run-tests-batch-and-exit
 
 clean:

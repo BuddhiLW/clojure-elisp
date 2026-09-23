@@ -5,6 +5,35 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Package library headers from ns metadata.** A namespace whose attr-map
+  carries `:elisp/package` compiles to a file package.el, lisp-mnt and MELPA
+  can read:
+
+  ```clojure
+  (ns my.pkg
+    "One-line summary.
+
+     Commentary paragraphs."
+    {:elisp/package {:author "Jane Doe <jane@example.org>"
+                     :url "https://example.org/my-pkg"
+                     :version "0.1.0"
+                     :keywords ["convenience"]
+                     :license "GPL-3.0-or-later"}})
+  ```
+
+  The docstring's first line is the summary and the rest is `;;; Commentary:`
+  (or pass `:commentary`). `Package-Requires` always names `emacs` (default
+  `"28.1"`) and `clojure-elisp-runtime` at `minimum-runtime-version`, because
+  every compiled file loads the runtime; declaring the runtime older than that
+  is a compile error rather than a file that refuses to load after install.
+  `;;; Code:` now precedes the runtime guard in this mode. Namespaces without
+  `:elisp/package` compile byte-for-byte as before. `package-buffer-info` and
+  `lm-*` are the oracle in `test/elisp/clojure-elisp-package-header-test.el`.
+
 ## [0.7.2] - 2026-09-05
 
 A runtime correctness release. `map` and `filter` have always returned a lazy
