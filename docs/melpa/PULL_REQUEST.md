@@ -49,10 +49,6 @@ Maintainer.
 - [x] I've used `M-x checkdoc` to check the package's documentation strings
 - [x] I've built and installed the package using the instructions in CONTRIBUTING.org
 
-The `Assisted-by:` item is open: an AI assistant helped write the compiler and
-this runtime. To add the line, give the package map `:assisted-by` (see the
-README's Publishing a Package section) and run `make runtime`.
-
 ### Local checks behind the checklist
 
 - melpazoid (Docker, `RECIPE=... LOCAL_REPO=... make`): no byte-compile,
