@@ -8,6 +8,7 @@
 ;; Compiles every .cljel under examples/ and test/, plus the self-hosted
 ;; runtime, with compile-file-string, and writes OUT-DIR/<path>.el (or
 ;; <path>.error with the message). The three OUT-DIRs must be identical.
+;; Paths after OUT-DIR compile only those files; --list prints the corpus.
 (require '[clojure-elisp.core :as clel]
          '[clojure.java.io :as io]
          '[clojure.string :as str])
@@ -32,7 +33,11 @@
     (.mkdirs (.getParentFile f))
     (spit f content)))
 
-(doseq [path corpus]
+(when (= "--list" out-dir)
+  (run! println corpus)
+  (System/exit 0))
+
+(doseq [path (or (seq (rest *command-line-args*)) corpus)]
   (let [target (str out-dir "/" path)
         result (try {:ok (clel/compile-file-string (slurp path))}
                     (catch Exception e {:error (ex-message e)}))]

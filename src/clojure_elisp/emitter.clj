@@ -9,7 +9,8 @@
             [clojure-elisp.reader :as reader]
             [clojure-elisp.schema :as schema]
             [clojure-elisp.version :as version]
-            [malli.core :as m]))
+            [malli.core :as m]
+            [clojure-elisp.layout :as layout]))
 
 ;; ============================================================================
 ;; Elisp Name Mangling
@@ -1624,12 +1625,17 @@
 ;; File Emission
 ;; ============================================================================
 
+(def ^:dynamic *layout*
+  "When true, `emit-file` lays its text out with `clojure-elisp.layout`."
+  true)
+
 (defn emit-file
   "Emit a sequence of AST nodes as a complete Elisp file.
    If the first node is :ns, appends (provide 'ns-name) at the end."
   [ast-nodes]
   (let [ns-node  (when (= :ns (:op (first ast-nodes))) (first ast-nodes))
-        code     (str/join "\n\n" (mapv emit ast-nodes))
+        code     (cond-> (str/join "\n\n" (mapv emit ast-nodes))
+                   *layout* layout/layout-code)
         elisp-ns (when ns-node (mangle-name (:name ns-node)))]
     (if elisp-ns
       (str code "\n\n(provide '" elisp-ns ")\n"
