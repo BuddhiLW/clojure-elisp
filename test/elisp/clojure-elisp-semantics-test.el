@@ -293,5 +293,18 @@ when its entries are dotted pairs, and `get' reads it either way."
   (should (equal :none (semantics-condp-arrow '(9))))
   (should (equal '(:big :mid :small) (mapcar #'semantics-condp-fn-pred '(11 7 1)))))
 
+;;; Emacs definition forms
+
+(ert-deftest clel-semantics-defcustom-safe-predicate ()
+  "A :safe #'pred option is a function, not a call to `var'."
+  (should (eq 'integerp (get 'semantics-limit 'safe-local-variable)))
+  (should (equal 3 semantics-limit)))
+
+(ert-deftest clel-semantics-cl-defstruct-docstring ()
+  "The docstring documents the struct instead of becoming slots."
+  (should (equal '(:sunrise 0) (semantics-make-event)))
+  (should (equal '(cl-tag-slot kind elevation)
+                 (mapcar #'car (cl-struct-slot-info 'semantics-event)))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

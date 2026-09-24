@@ -234,6 +234,8 @@
     (set? x)    (str "(" (str/join " " (map quoted-data x)) ")")
     (vector? x) (str "[" (str/join " " (map quoted-data x)) "]")
     (seq? x)    (str "(" (str/join " " (map quoted-data x)) ")")
+    (true? x)   "t"
+    (false? x)  "nil"
     :else       (pr-str x)))
 
 (defmethod emit-node :quote
@@ -252,27 +254,25 @@
               elisp-name elisp-params elisp-body))))
 
 (defmethod emit-node :cl-defstruct
-  [{:keys [name-or-opts slots]}]
+  [{:keys [name-or-opts docstring slots]}]
   (let [;; name-or-opts can be a symbol or a list with options
         name-str (if (symbol? name-or-opts)
                    (mangle-name name-or-opts)
                    ;; It's a list: (name (:constructor make-name) ...)
                    (str "(" (str/join " "
                                       (map (fn [x]
-                                             (cond
-                                               (symbol? x) (mangle-name x)
-                                               (seq? x) (str "(" (str/join " " (map str x)) ")")
-                                               (list? x) (str "(" (str/join " " (map str x)) ")")
-                                               :else (str x)))
+                                             (if (symbol? x) (mangle-name x) (quoted-data x)))
                                            name-or-opts)) ")"))
+        ;; A slot is a name or (name default options...): data, as written
         slots-str (str/join " " (map (fn [s]
                                        (if (symbol? s)
                                          (mangle-name s)
-                                         (str s)))
+                                         (quoted-data s)))
                                      slots))]
-    (if (seq slots)
-      (format "(cl-defstruct %s %s)" name-str slots-str)
-      (format "(cl-defstruct %s)" name-str))))
+    (str "(cl-defstruct " name-str
+         (when docstring (str "\n  " (pr-str docstring)))
+         (when (seq slots) (str (if docstring "\n  " " ") slots-str))
+         ")")))
 
 (defmethod emit-node :cl-defun
   [{:keys [name docstring arglist body]}]
@@ -1361,20 +1361,26 @@
                           (seq body-str) (conj (str "  " body-str)))]
     (str (str/join "\n" parts) ")")))
 
+(defn- emit-option-val
+  "Render a defgroup/defcustom keyword option's value, written as data. A
+   function reference #'p reads as (var p) and must print as #'p: (var p)
+   is a call to the void function `var' when the defcustom is evaluated."
+  [v]
+  (cond
+    (nil? v) "nil"
+    (true? v) "t"
+    (false? v) "nil"
+    (string? v) (pr-str v)
+    (keyword? v) (str v)
+    (and (seq? v) (= 'quote (first v)))
+    (str "'" (quoted-data (second v)))
+    (and (seq? v) (#{'var 'function} (first v)) (symbol? (second v)))
+    (str "#'" (second v))
+    :else (str v)))
+
 (defmethod emit-node :defgroup
   [{:keys [name value docstring options]}]
   (let [group-name      (mangle-name name)
-        ;; Helper to emit option values (handles quoted forms, etc.)
-        emit-option-val (fn [v]
-                          (cond
-                            (nil? v) "nil"
-                            (true? v) "t"
-                            (false? v) "nil"
-                            (string? v) (pr-str v)
-                            (keyword? v) (str v)
-                            (and (seq? v) (= 'quote (first v)))
-                            (str "'" (second v))
-                            :else (str v)))
         ;; Emit value (typically nil)
         value-str       (emit-option-val value)
         ;; Emit options as keyword-value pairs
@@ -1391,17 +1397,6 @@
 (defmethod emit-node :defcustom
   [{:keys [name default docstring options]}]
   (let [var-name        (mangle-name name)
-        ;; Helper to emit option values (handles quoted forms, etc.)
-        emit-option-val (fn [v]
-                          (cond
-                            (nil? v) "nil"
-                            (true? v) "t"
-                            (false? v) "nil"
-                            (string? v) (pr-str v)
-                            (keyword? v) (str v)
-                            (and (seq? v) (= 'quote (first v)))
-                            (str "'" (second v))
-                            :else (str v)))
         ;; Emit default value (may be an analyzed AST node, e.g. :function-quote from #')
         default-str     (if (and (map? default) (:op default))
                           (emit default)

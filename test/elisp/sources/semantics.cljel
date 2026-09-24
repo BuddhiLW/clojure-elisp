@@ -221,3 +221,20 @@
 (defn condp-arrow [xs] (condp some xs #{0 6} :>> inc #{4 5} :>> dec :none))
 
 (defn condp-fn-pred [n] (condp (fn [limit v] (> v limit)) n 10 :big 5 :mid :small))
+
+;;; Emacs definition forms
+
+(defgroup semantics nil "Semantics fixture." :group 'lisp)
+
+(defcustom semantics-limit 3
+  "Limit for the fixture."
+  :type 'integer
+  :safe #'integerp
+  :group 'semantics)
+
+(cl-defstruct semantics-event
+  "A sun event."
+  kind
+  (elevation 0 :read-only true))
+
+(defn make-event [] (let [e (make-semantics-event :kind :sunrise)] [(semantics-event-kind e) (semantics-event-elevation e)]))

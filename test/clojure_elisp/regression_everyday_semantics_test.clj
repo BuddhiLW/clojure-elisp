@@ -312,3 +312,16 @@
 (deftest unknown-ast-node-is-refused-not-commented
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"No Emacs Lisp emitter for AST node :op :bogus"
                         (emit/emit {:op :bogus :env {}}))))
+
+;;; Emacs definition forms
+
+(deftest defcustom-function-options-print-as-function-quotes
+  (let [out (emit-form '(defcustom tod-lat nil "Lat." :safe #'numberp :type '(choice (const :tag "Off" nil) number)))]
+    (is (str/includes? out ":safe #'numberp"))
+    (is (not (str/includes? out "(var ")))
+    (is (str/includes? out ":type '(choice (const :tag \"Off\" nil) number)"))))
+
+(deftest cl-defstruct-docstring-is-not-a-slot
+  (is (= "(cl-defstruct tod-sun-event\n  \"A sun event.\"\n  kind (elevation 0 :read-only t))"
+         (emit-form '(cl-defstruct tod-sun-event "A sun event." kind (elevation 0 :read-only true)))))
+  (is (= "(cl-defstruct plain a b)" (emit-form '(cl-defstruct plain a b)))))

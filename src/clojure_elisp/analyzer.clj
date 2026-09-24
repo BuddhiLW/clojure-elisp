@@ -1449,9 +1449,13 @@
    (cl-defstruct person name age email)
    (cl-defstruct (person (:constructor make-person)) name age email)"
   [[_ name-or-opts & slots]]
-  (ast-node :cl-defstruct
-            :name-or-opts name-or-opts
-            :slots (vec slots)))
+  (let [[docstring slots] (if (string? (first slots))
+                            [(first slots) (rest slots)]
+                            [nil slots])]
+    (cond-> (ast-node :cl-defstruct
+                      :name-or-opts name-or-opts
+                      :slots (vec slots))
+      docstring (assoc :docstring docstring))))
 
 (defn analyze-cl-defun
   "Analyze (cl-defun name arglist &optional docstring body...) forms.
