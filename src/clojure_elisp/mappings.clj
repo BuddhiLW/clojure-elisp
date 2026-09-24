@@ -147,7 +147,11 @@
    'flatten "clel-flatten"
    'peek "clel-peek"
    'pop "clel-pop"
-   'subvec "clel-subvec"})
+   'subvec "clel-subvec"
+   'vec "clel-vec"
+   'mapv "clel-mapv"
+   'filterv "clel-filterv"
+   'map-indexed "clel-map-indexed"})
 
 ;; ============================================================================
 ;; Sequence Functions
@@ -297,9 +301,66 @@
    'constantly "clel-constantly"
    'partial "apply-partially"
    'comp "clel-comp"
-   'name "symbol-name"
+   'name "clel-name"
+   'namespace "clel-namespace"
+   'keyword "clel-keyword"
+   'symbol "clel-symbol"
+   'boolean "clel-boolean"
+   'int "truncate"
+   'long "truncate"
+   'double "float"
    'juxt "clel-juxt"
-   'complement "clel-complement"})
+   'complement "clel-complement"
+   'min-key "clel-min-key"
+   'max-key "clel-max-key"
+   'ex-message "clel-ex-message"
+   'ex-data "clel-ex-data"
+   'parse-long "clel-parse-long"
+   'parse-double "clel-parse-double"})
+
+;; ============================================================================
+;; Java static members
+;; ============================================================================
+
+(def java-static-mappings
+  "Class/member references Clojure code reaches for, mapped onto Elisp. A
+   field (Math/PI) maps to a variable, a method to a function. Deliberately
+   outside `clojure-fn-names`: Math/PI in value position is a variable."
+  {'Math/PI "float-pi"
+   'Math/E "float-e"
+   'Math/abs "abs"
+   'Math/sqrt "sqrt"
+   'Math/cbrt "clel-math-cbrt"
+   'Math/sin "sin"
+   'Math/cos "cos"
+   'Math/tan "tan"
+   'Math/asin "asin"
+   'Math/acos "acos"
+   'Math/atan "atan"
+   'Math/atan2 "atan"
+   'Math/exp "exp"
+   'Math/log "log"
+   'Math/log10 "clel-math-log10"
+   'Math/pow "clel-math-pow"
+   'Math/floor "clel-math-floor"
+   'Math/ceil "clel-math-ceil"
+   'Math/rint "clel-math-rint"
+   'Math/round "clel-math-round"
+   'Math/signum "clel-math-signum"
+   'Math/hypot "clel-math-hypot"
+   'Math/max "max"
+   'Math/min "min"
+   'Math/floorDiv "floor"
+   'Math/floorMod "mod"
+   'Math/toRadians "degrees-to-radians"
+   'Math/toDegrees "radians-to-degrees"
+   'Math/random "clel-rand"
+   'Long/parseLong "clel-parse-long"
+   'Integer/parseInt "clel-parse-long"
+   'Double/parseDouble "clel-parse-double"
+   'Long/MAX_VALUE "most-positive-fixnum"
+   'Long/MIN_VALUE "most-negative-fixnum"
+   'System/currentTimeMillis "clel-current-time-millis"})
 
 ;; ============================================================================
 ;; Atoms
@@ -571,6 +632,7 @@
          set-mappings
          math-mappings
          function-mappings
+         java-static-mappings
          atom-mappings
          emacs-buffer-mappings
          emacs-text-prop-mappings
@@ -607,6 +669,7 @@
    "set-mappings"                   set-mappings
    "math-mappings"                  math-mappings
    "function-mappings"              function-mappings
+   "java-static-mappings"           java-static-mappings
    "atom-mappings"                  atom-mappings
    "emacs-buffer-mappings"          emacs-buffer-mappings
    "emacs-text-prop-mappings"       emacs-text-prop-mappings

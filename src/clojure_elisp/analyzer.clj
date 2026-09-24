@@ -799,6 +799,14 @@
               :name protocol-name
               :extensions (parse-extensions body))))
 
+(defn analyze-instance?
+  "Analyze (instance? Type value): a type test, not a call. Type is a class
+   name, kept as data."
+  [[_ type-sym value]]
+  (ast-node :instance?
+            :type type-sym
+            :value (analyze value)))
+
 (defn analyze-satisfies?
   "Analyze (satisfies? Protocol value) forms.
    Checks if a value satisfies a protocol at runtime."
@@ -1678,6 +1686,7 @@
    'extend-type analyze-extend-type
    'extend-protocol analyze-extend-protocol
    'satisfies? analyze-satisfies?
+   'instance? analyze-instance?
    'reify analyze-reify
    'fn analyze-fn
    'fn* analyze-fn

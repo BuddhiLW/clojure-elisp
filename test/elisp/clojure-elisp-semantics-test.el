@@ -252,5 +252,35 @@ when its entries are dotted pairs, and `get' reads it either way."
 (ert-deftest clel-semantics-empty-string ()
   (should (equal '(t nil nil (1)) (semantics-empty-string-empty))))
 
+;;; Core functions
+
+(ert-deftest clel-semantics-realized-seqs ()
+  (should (equal '((2 3) (1 2) (:a (1 2)) (1 3) ((0 :a) (1 :b)))
+                 (clel-semantics-test--realize (semantics-realized-seqs)))))
+
+(ert-deftest clel-semantics-min-max-key ()
+  (should (equal '(:night "abc" -1) (semantics-extreme-keys))))
+
+(ert-deftest clel-semantics-names-and-keywords ()
+  "name drops the colon and the namespace, keyword builds one."
+  (should (equal '("night" "sym" "s" "n" "ns" :night :ns/n :k x ":night")
+                 (semantics-names-and-keywords))))
+
+(ert-deftest clel-semantics-coercions ()
+  (should (equal '(3 -3 nil t t t t) (semantics-coercions))))
+
+(ert-deftest clel-semantics-not-equal-is-generic ()
+  "not= compares any values, not only numbers."
+  (should (equal '(t nil t) (semantics-not-equal-generic))))
+
+(ert-deftest clel-semantics-ex-message-and-data ()
+  (should (equal '(("neg" ((:x . -1))) ("boom 1" nil)) (semantics-exceptions))))
+
+(ert-deftest clel-semantics-parsing ()
+  (should (equal '(42 -7 nil nil 2.5) (semantics-parsing))))
+
+(ert-deftest clel-semantics-java-math ()
+  (should (equal '(2.0 3.0 3 -2 1024.0 3 4.0 5 t -1.0 3.0) (semantics-math))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

@@ -16,6 +16,12 @@
   [src]
   (second (str/split (clel/compile-file-string src) #";;; Code:\n" 2)))
 
+(defn- are-emitted
+  "Assert each form emits its expected string."
+  [& form-expected]
+  (doseq [[form expected] (partition 2 form-expected)]
+    (is (= expected (emit-form form)) (pr-str form))))
+
 ;;; Function values in a Lisp-2
 
 (deftest local-fn-value-is-funcalled
@@ -220,3 +226,40 @@
 (deftest cl-defun-parameters-are-locals
   (is (= "(cl-defun f (key &optional (val 1 val-p))\n  (list key val val-p))"
          (emit-form '(cl-defun f (key &optional (val 1 val-p)) (list key val val-p))))))
+
+;;; Core functions
+
+(deftest missing-core-fns-are-mapped
+  (are-emitted
+   '(mapv f xs)             "(clel-mapv #'f xs)"
+   '(vec xs)                "(clel-vec xs)"
+   '(filterv odd? xs)       "(clel-filterv #'cl-oddp xs)"
+   '(map-indexed f xs)      "(clel-map-indexed #'f xs)"
+   '(min-key f a b)         "(clel-min-key #'f a b)"
+   '(max-key f a b)         "(clel-max-key #'f a b)"
+   '(not-empty xs)          "(clel-not-empty xs)"
+   '(hash-map :a 1)         "(clel-array-map :a 1)"
+   '(keyword "k")           "(clel-keyword \"k\")"
+   '(name k)                "(clel-name k)"
+   '(int x)                 "(truncate x)"
+   '(boolean x)             "(clel-boolean x)"
+   '(integer? x)            "(integerp x)"
+   '(float? x)              "(floatp x)"
+   '(identical? a b)        "(eq a b)"
+   '(ex-message e)          "(clel-ex-message e)"
+   '(ex-data e)             "(clel-ex-data e)"
+   '(parse-long s)          "(clel-parse-long s)"))
+
+(deftest java-math-maps-to-elisp
+  (are-emitted
+   '(Math/floor x)          "(clel-math-floor x)"
+   '(Math/sqrt x)           "(sqrt x)"
+   '(Math/atan2 y x)        "(atan y x)"
+   '(Math/pow x 2)          "(clel-math-pow x 2)"
+   '(* 2 Math/PI)           "(* 2 float-pi)"
+   '(map Math/abs xs)       "(clel-map #'abs xs)"))
+
+(deftest instance?-is-a-type-test
+  (is (= "(cl-typep x 'string)" (emit-form '(instance? String x))))
+  (is (= "(cl-typep x 'string)" (emit-form '(instance? java.lang.String x))))
+  (is (= "(cl-typep x 'my-struct)" (emit-form '(instance? my-struct x)))))

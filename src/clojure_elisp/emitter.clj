@@ -1038,6 +1038,12 @@
         ;; If not a built-in, assume it's a user-defined struct type
         (mangle-name type-sym))))
 
+(defmethod emit-node :instance?
+  [{:keys [type value]}]
+  ;; java.lang.String and String name the same class
+  (let [type-sym (symbol (str/replace (str type) #"^java\.lang\." ""))]
+    (format "(cl-typep %s '%s)" (emit value) (elisp-type-specializer type-sym))))
+
 (defn- emit-extend-method
   "Emit cl-defmethod for extend-type/extend-protocol method."
   [type-sym {:keys [name params body]}]

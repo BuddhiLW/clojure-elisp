@@ -821,17 +821,19 @@
     (is (re-find #"clel-contains-p\s+my-map\s+my-key" (clel/emit '(contains? my-map my-key))))))
 
 (deftest name-compilation-test
-  (testing "name compiles to symbol-name"
-    (is (= "(symbol-name :foo)" (clel/emit '(name :foo))))
-    (is (= "(symbol-name x)" (clel/emit '(name x)))))
+  ;; clel-name, not symbol-name: (symbol-name :foo) is ":foo", and Clojure's
+  ;; (name :foo) is "foo".
+  (testing "name compiles to clel-name"
+    (is (= "(clel-name :foo)" (clel/emit '(name :foo))))
+    (is (= "(clel-name x)" (clel/emit '(name x)))))
 
   (testing "name in expression context"
     (let [code (clel/emit '(let [n (name :keyword)] n))]
-      (is (str/includes? code "symbol-name"))
+      (is (str/includes? code "clel-name"))
       (is (str/includes? code "let"))))
 
   (testing "name preserves argument"
-    (is (re-find #"symbol-name\s+my-sym" (clel/emit '(name my-sym))))))
+    (is (re-find #"clel-name\s+my-sym" (clel/emit '(name my-sym))))))
 
 ;; ============================================================================
 ;; Nested Data Functions (clel-036)

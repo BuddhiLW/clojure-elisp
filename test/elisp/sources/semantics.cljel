@@ -184,3 +184,30 @@
 (defn quoted-map [] '{:k v})
 
 (defn empty-string-empty [] [(empty? "") (empty? "a") (not-empty "") (not-empty [1])])
+
+;;; Core functions
+
+(defn realized-seqs []
+  [(mapv inc [1 2]) (vec (list 1 2)) (vec (first {:a [1 2]})) (filterv odd? [1 2 3])
+   (map-indexed (fn [i x] [i x]) [:a :b])])
+
+(defn extreme-keys []
+  [(:id (apply min-key :elev phases)) (max-key count "a" "abc" "ab") (min-key abs -3 2 -1)])
+
+(defn names-and-keywords []
+  [(name :night) (name 'sym) (name "s") (name (keyword "ns" "n")) (namespace (keyword "ns" "n"))
+   (keyword "night") (keyword "ns" "n") (keyword :k) (symbol "x") (str :night)])
+
+(defn coercions [] [(int 3.7) (int -3.7) (boolean nil) (boolean 0) (integer? 3) (float? 3.0) (identical? :a :a)])
+
+(defn not-equal-generic [] [(not= nil 1) (not= {:a 1} {:a 1}) (not= "a" "b")])
+
+(defn exceptions []
+  [(try (throw (ex-info "neg" {:x -1})) (catch :default e [(ex-message e) (ex-data e)]))
+   (try (error "boom %d" 1) (catch :default e [(ex-message e) (ex-data e)]))])
+
+(defn parsing [] [(parse-long "42") (parse-long "-7") (parse-long "4.2") (parse-long "x") (parse-double "2.5")])
+
+(defn math []
+  [(Math/floor 2.7) (Math/ceil 2.1) (Math/round 2.5) (Math/round -2.5) (Math/pow 2 10)
+   (Math/abs -3) (Math/sqrt 16) (Math/max 1 5) (> Math/PI 3.14) (Math/signum -2) (Math/log10 1000)])

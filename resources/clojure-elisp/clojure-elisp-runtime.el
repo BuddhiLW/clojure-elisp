@@ -1758,6 +1758,153 @@ were emitted against.")
         (len (clel-count s)))
     (if (<= len n) nil (cl-subseq s 0 (- len n)))))))
 
+(defun clel-vec (coll)
+  "Clojure `vec': the items of COLL as a new realized list. A map gives its\nentries, an entry its two items, a string its characters."
+  (if (stringp coll) (append coll nil) (copy-sequence (clel-seq coll))))
+
+(defun clel-mapv (&rest clel--args)
+  (let ((f (nth 0 clel--args)) (colls (nthcdr 1 clel--args)))
+    "Clojure `mapv': `map', realized."
+  (clel-realize (clel-apply #'clel-map f colls))))
+
+(defun clel-filterv (pred coll)
+  "Clojure `filterv': `filter', realized."
+  (clel-realize (clel-filter pred coll)))
+
+(defun clel-map-indexed (f coll)
+  "Clojure `map-indexed': (F index item) for each item of COLL."
+  (let* ((f (clel--fn f))
+        (i -1))
+    (mapcar (lambda (x)
+    (setq i (1+ i))
+    (funcall f i x)) (clel-seq coll))))
+
+(defun clel-min-key (&rest clel--args)
+  (let ((k (nth 0 clel--args)) (x (nth 1 clel--args)) (more (nthcdr 2 clel--args)))
+    "Clojure `min-key': the argument for which (K arg) is least; the last on\na tie."
+  (let* ((k (clel--fn k))
+        (best x)
+        (best-k (funcall k x)))
+    (dolist (y more)
+    (let* ((ky (funcall k y)))
+    (when (<= ky best-k)
+    (setq best y)
+    (setq best-k ky))))
+    best)))
+
+(defun clel-max-key (&rest clel--args)
+  (let ((k (nth 0 clel--args)) (x (nth 1 clel--args)) (more (nthcdr 2 clel--args)))
+    "Clojure `max-key': the argument for which (K arg) is greatest; the last\non a tie."
+  (let* ((k (clel--fn k))
+        (best x)
+        (best-k (funcall k x)))
+    (dolist (y more)
+    (let* ((ky (funcall k y)))
+    (when (>= ky best-k)
+    (setq best y)
+    (setq best-k ky))))
+    best)))
+
+(defun clel-name (x)
+  "Clojure `name': a keyword or symbol's name without its namespace or\ncolon; a string is its own name."
+  (if (stringp x) x (let* ((s (symbol-name x))
+        (s (if (and (keywordp x) (string-prefix-p ":" s)) (substring s 1) s))
+        (slash (string-search "/" s)))
+    (if (and slash (> (length s) 1)) (substring s (1+ slash)) s))))
+
+(defun clel-namespace (x)
+  "Clojure `namespace': the namespace of a keyword or symbol, or nil."
+  (let* ((s (symbol-name x))
+        (s (if (and (keywordp x) (string-prefix-p ":" s)) (substring s 1) s))
+        (slash (string-search "/" s)))
+    (when (and slash (> (length s) 1))
+    (substring s 0 slash))))
+
+(cl-defun clel-keyword (a &optional (b nil b-p))
+  "Clojure `keyword': (keyword name) or (keyword ns name)."
+  (cond
+  (b-p (intern (concat ":" (if a (concat (clel-name a) "/") "") (clel-name b))))
+  ((keywordp a) a)
+  ((null a) nil)
+  (t (intern (concat ":" (if (symbolp a) (symbol-name a) a))))))
+
+(cl-defun clel-symbol (a &optional (b nil b-p))
+  "Clojure `symbol': (symbol name) or (symbol ns name)."
+  (cond
+  (b-p (intern (concat (if a (concat a "/") "") b)))
+  ((symbolp a) (if (keywordp a) (intern (clel-name a)) a))
+  (t (intern a))))
+
+(defun clel-boolean (x)
+  "Clojure `boolean': t for any value but nil."
+  (if x t nil))
+
+(defun clel-ex-message (e)
+  "Clojure `ex-message' on a condition caught by `condition-case': the\nmessage of an `ex-info' or `error', else the condition's printed message."
+  (cond
+  ((stringp e) e)
+  ((and (consp e) (stringp (cadr e))) (cadr e))
+  ((consp e) (error-message-string e))
+  (t nil)))
+
+(defun clel-ex-data (e)
+  "Clojure `ex-data': the data map of a condition raised by `ex-info'."
+  (when (and (consp e) (eq (car e) 'error) (stringp (cadr e)))
+    (caddr e)))
+
+(defun clel-parse-long (s)
+  "Clojure `parse-long': the integer S spells, or nil."
+  (when (and (stringp s) (string-match-p "\\`[+-]?[0-9]+\\'" s))
+    (string-to-number s)))
+
+(defun clel-parse-double (s)
+  "Clojure `parse-double': the number S spells, as a float, or nil."
+  (when (and (stringp s) (string-match-p "\\`[+-]?\\([0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\([eE][+-]?[0-9]+\\)?\\'" s))
+    (float (string-to-number s))))
+
+(defun clel-math-floor (x)
+  "Math/floor: the largest integral value not above X, as a float."
+  (ffloor (float x)))
+
+(defun clel-math-ceil (x)
+  "Math/ceil: the smallest integral value not below X, as a float."
+  (fceiling (float x)))
+
+(defun clel-math-rint (x)
+  "Math/rint: X rounded to the nearest integral value, ties to even, as a float."
+  (fround (float x)))
+
+(defun clel-math-round (x)
+  "Math/round: X rounded to the nearest integer, ties toward positive infinity."
+  (floor (+ (float x) 0.5)))
+
+(defun clel-math-pow (x y)
+  "Math/pow: X raised to Y, as a float."
+  (expt (float x) y))
+
+(defun clel-math-log10 (x)
+  "Math/log10: the base-10 logarithm of X."
+  (log x 10))
+
+(defun clel-math-signum (x)
+  "Math/signum: -1.0, 0.0 or 1.0 by the sign of X."
+  (cond
+  ((> x 0) 1.0)
+  ((< x 0) -1.0)
+  (t 0.0)))
+
+(defun clel-math-hypot (x y)
+  "Math/hypot: the square root of X squared plus Y squared."
+  (sqrt (+ (* (float x) x) (* (float y) y))))
+
+(defun clel-math-cbrt (x)
+  "Math/cbrt: the cube root of X."
+  (if (< x 0) (- (expt (float (- x)) (/ 1.0 3))) (expt (float x) (/ 1.0 3))))
+
+(defun clel-current-time-millis ()
+  "System/currentTimeMillis: the current time in milliseconds."
+  (truncate (* 1000 (float-time))))
+
 (defvar clel--protocol-registry (make-hash-table :test 'equal)
   "Registry mapping protocol names to their method lists.")
 
