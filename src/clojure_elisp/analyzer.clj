@@ -120,18 +120,24 @@
 (declare analyze)
 (declare analyze-literal-vector)
 (declare analyze-symbol)
+(declare assign-target)
 
 (defn analyze-def
-  "Analyze (def name expr) or (def name docstring expr)."
+  "Analyze (def name expr) or (def name docstring expr), and defonce, whose
+   Elisp form is the same defvar: defvar never re-initializes a bound
+   variable, which is defonce. ^:private names it ns--name, like defn-, and
+   ^{:doc ...} is a docstring."
   [[_ name & body]]
-  (let [[docstring init] (if (and (string? (first body))
-                                  (second body))
-                           [(first body) (second body)]
-                           [nil (first body)])]
-    (ast-node :def
-              :name name
-              :docstring docstring
-              :init (when init (analyze init)))))
+  (let [[docstring init-forms] (if (and (string? (first body))
+                                        (next body))
+                                 [(first body) (rest body)]
+                                 [(:doc (meta name)) body])]
+    ;; (def x nil) binds nil; only (def x) is a bare declaration.
+    (cond-> (ast-node :def
+                      :name name
+                      :docstring docstring
+                      :init (when (seq init-forms) (analyze (first init-forms))))
+      (:private (meta name)) (assoc :private? true))))
 
 (defn- analyze-arity-clauses
   "Build arity maps from ([params] body...) clauses — shared by multi-arity
@@ -745,6 +751,7 @@
   [[_ target value]]
   (ast-node :set!
             :target target
+            :target-node (assign-target target)
             :value (analyze value)))
 
 (defn analyze-extend-type
@@ -1182,6 +1189,17 @@
                                 :body (mapv analyze body)}))
                            clauses)))
 
+(defn- assign-target
+  "The variable a setq/set! of SYM assigns: a local, a def of this namespace
+   (so (setq counter ...) reaches ns-counter, private names included), a
+   qualified var, or nil for a global Elisp variable named as written."
+  [sym]
+  (when (symbol? sym)
+    (let [node (analyze-symbol sym)]
+      (when (or (= :local (:op node))
+                (and (= :var (:op node)) (:ns node) (not= 'clojure.core (:ns node))))
+        node))))
+
 (defn analyze-setq
   "Analyze (setq var val ...) forms. Pairs of symbol-value.
    An odd form count is malformed in both languages, so it is rejected rather
@@ -1194,7 +1212,9 @@
             {:form (cons 'setq pairs)})))
   (ast-node :setq
             :pairs (mapv (fn [[sym val]]
-                           {:name sym :value (analyze val)})
+                           {:name   sym
+                            :target (assign-target sym)
+                            :value  (analyze val)})
                          (partition 2 pairs))))
 
 (defn analyze-setf
@@ -1585,6 +1605,7 @@
 (def special-forms
   "Map of special form symbols to their analyzers."
   {'def analyze-def
+   'defonce analyze-def
    'defn analyze-defn
    'defn- analyze-defn
    'defmacro analyze-defmacro
@@ -1838,10 +1859,11 @@
   (into {}
         (for [form forms
               :when (and (seq? form) (symbol? (second form)))
-              :let [head (first form)]
-              :when (#{'defn 'defn- 'def} head)]
-          [(second form) {:private? (= head 'defn-)
-                          :kind     (if (= head 'def) :def :defn)}])))
+              :let [head (first form)
+                    sym  (second form)]
+              :when (#{'defn 'defn- 'def 'defonce} head)]
+          [sym {:private? (boolean (or (= head 'defn-) (:private (meta sym))))
+                :kind     (if (#{'def 'defonce} head) :def :defn)}])))
 
 (defn scan-exports
   "Public API for scanning top-level defs from forms. Returns set of defined symbols."

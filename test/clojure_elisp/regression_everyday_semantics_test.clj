@@ -50,7 +50,7 @@
     (is (str/includes? out "(h #'a-b-helper)") "a defn read as a value is #'")))
 
 (deftest known-function-in-value-position-is-quoted
-  (is (= "(defvar my-inc #'1+)" (str/replace (emit-form '(def my-inc inc)) " )" ")")))
+  (is (= "(defvar my-inc #'1+)" (emit-form '(def my-inc inc))))
   (is (= "(foo #'clel-str)" (emit-form '(foo str))))
   (testing "Emacs passthrough names may be variables and stay bare"
     (is (= "(message buffer-file-name)" (emit-form '(message buffer-file-name))))))
@@ -130,3 +130,52 @@
   (let [out (emit-form '(let [{[x y] :pt} m] y))]
     (is (re-find #"\(vec__\d+ \(clel-get map__\d+ :pt\)\)" out))
     (is (re-find #"\(y \(clel-nth vec__\d+ 1 nil\)\)" out))))
+
+;;; Definitions: defonce, private names, assignment
+
+(def ^:private defs-src
+  "(ns a.b (:require [c.d :as d]))
+(def counter 0)
+(def ^:private secret 42)
+(defonce cache \"The cache.\" (atom {}))
+(defonce ^{:doc \"Once.\"} once 1)
+(def nothing nil)
+(def declared)
+(defn ^:private h [x] (+ x secret))
+(defn- h2 [x] x)
+(defn g []
+  (setq counter (inc counter))
+  (set! counter 5)
+  (setq load-path nil)
+  (setq d/v 1)
+  (let [x 1] (setq x 2) x)
+  [(h 1) (a.b/h 2) (a.b/h2 3) (map h [1])])")
+
+(deftest defonce-is-a-documented-defvar
+  (let [out (compile-ns defs-src)]
+    (is (re-find #"\(defvar a-b-cache \(clel-atom .*\) \"The cache.\"\)" out))
+    (is (str/includes? out "(defvar a-b-once 1 \"Once.\")"))
+    (is (not (str/includes? out "hasRoot")))))
+
+(deftest def-nil-binds-and-bare-def-declares
+  (let [out (compile-ns defs-src)]
+    (is (str/includes? out "(defvar a-b-nothing nil)"))
+    (is (str/includes? out "(defvar a-b-declared)"))))
+
+(deftest private-metadata-names-definition-and-call-sites
+  (let [out (compile-ns defs-src)]
+    (is (str/includes? out "(defvar a-b--secret 42)") "def ^:private")
+    (is (str/includes? out "(defun a-b--h (x)") "defn ^:private")
+    (is (str/includes? out "(+ x a-b--secret)"))
+    (is (str/includes? out "(a-b--h 1)") "short call")
+    (is (str/includes? out "(a-b--h 2)") "call qualified with its own namespace")
+    (is (str/includes? out "(a-b--h2 3)") "defn- called qualified")
+    (is (str/includes? out "(clel-map #'a-b--h (list 1))") "passed as a value")))
+
+(deftest setq-and-set!-resolve-through-the-namespace
+  (let [out (compile-ns defs-src)]
+    (is (str/includes? out "(setq a-b-counter (1+ a-b-counter))"))
+    (is (str/includes? out "(setf a-b-counter 5)"))
+    (is (str/includes? out "(setq load-path nil)") "a global Elisp variable as written")
+    (is (str/includes? out "(setq c-d-v 1)") "an aliased var")
+    (is (str/includes? out "(setq x 2)") "a local")))

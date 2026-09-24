@@ -103,3 +103,21 @@
 (defn rest-of-lazy [] (let [[a & more] (map inc [1 2 3])] [a more]))
 
 (defn nested-map-destructure [m] (let [{[x y] :pt {:keys [z]} :inner} m] [x y z]))
+
+;;; Definitions: defonce, private names, assignment
+
+(defonce registry "Registered things." (atom []))
+
+(defonce ^{:doc "Loaded once."} loads 0)
+
+(def ^:private secret 42)
+
+(defn ^:private meta-private [x] (+ x secret))
+
+(defn- dash-private [x] (* 2 x))
+
+(defn call-privates [] [(meta-private 1) (dash-private 2) (semantics/meta-private 3) (map dash-private [5])])
+
+(def counter 0)
+
+(defn bump-counter [] (setq counter (inc counter)) (set! counter (+ counter 10)) counter)

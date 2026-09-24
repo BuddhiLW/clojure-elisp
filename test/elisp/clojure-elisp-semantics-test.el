@@ -153,5 +153,35 @@ three-way comparator."
                   (list (cons :pt (list 1 2))
                         (cons :inner (list (cons :z 3))))))))
 
+;;; Definitions: defonce, private names, assignment
+
+(ert-deftest clel-semantics-defonce ()
+  "defonce is a documented defvar: reloading does not reset it."
+  (should (equal "Registered things."
+                 (documentation-property 'semantics-registry 'variable-documentation)))
+  (should (equal "Loaded once."
+                 (documentation-property 'semantics-loads 'variable-documentation)))
+  (let ((before semantics-registry))
+    (setq semantics-loads 5)
+    (load (expand-file-name "fixtures/semantics.el" clel-semantics-test--dir) nil t)
+    (should (eq before semantics-registry))
+    (should (equal 5 semantics-loads))
+    (setq semantics-loads 0)))
+
+(ert-deftest clel-semantics-private-names-agree ()
+  "^:private and defn- name the defun and every call site ns--name."
+  (should (fboundp 'semantics--meta-private))
+  (should (fboundp 'semantics--dash-private))
+  (should-not (fboundp 'semantics-meta-private))
+  (should (boundp 'semantics--secret))
+  (should (equal '(43 4 45 (10)) (clel-semantics-test--realize (semantics-call-privates)))))
+
+(ert-deftest clel-semantics-setq-reaches-the-def ()
+  "setq and set! of a def assign the namespaced variable."
+  (setq semantics-counter 0)
+  (should (equal 11 (semantics-bump-counter)))
+  (should (equal 11 semantics-counter))
+  (should-not (boundp 'counter)))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

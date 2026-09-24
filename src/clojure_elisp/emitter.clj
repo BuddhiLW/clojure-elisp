@@ -282,12 +282,13 @@
               elisp-name elisp-arglist elisp-body))))
 
 (defmethod emit-node :def
-  [{:keys [name docstring init env]}]
-  (let [elisp-name (ns-qualify-name name env)]
-    (if init
-      (emit-sexp "defvar" elisp-name (emit init)
-                 (when docstring (pr-str docstring)))
-      (format "(defvar %s)" elisp-name))))
+  [{:keys [name docstring init env private?]}]
+  (let [elisp-name (ns-qualify-name name env (boolean private?))]
+    (cond
+      (and init docstring) (emit-sexp "defvar" elisp-name (emit init) (pr-str docstring))
+      init                 (emit-sexp "defvar" elisp-name (emit init))
+      docstring            (emit-sexp "defvar" elisp-name "nil" (pr-str docstring))
+      :else                (format "(defvar %s)" elisp-name))))
 
 (defn- nth-accessor
   "Emit an efficient nth accessor for an args list.
@@ -706,10 +707,19 @@
                          clauses)]
     (format "(pcase %s\n  %s)" expr-str (str/join "\n  " clause-strs))))
 
+(defn- emit-assign-target
+  "The variable name a setq/set! writes: the analyzer's resolved TARGET node
+   when there is one, otherwise NAME as written (a global Elisp variable)."
+  [target name]
+  (cond
+    (nil? target)             (mangle-name name)
+    (= :local (:op target))   (mangle-name (:name target))
+    :else                     (emit-node target)))
+
 (defmethod emit-node :setq
   [{:keys [pairs]}]
-  (let [pair-strs (map (fn [{:keys [name value]}]
-                         (format "%s %s" (mangle-name name) (emit value)))
+  (let [pair-strs (map (fn [{:keys [name target value]}]
+                         (format "%s %s" (emit-assign-target target name) (emit value)))
                        pairs)]
     (format "(setq %s)" (str/join " " pair-strs))))
 
@@ -954,8 +964,8 @@
     (str/join "\n\n" (concat [struct-def ctor-def] method-defs))))
 
 (defmethod emit-node :set!
-  [{:keys [target value]}]
-  (format "(setf %s %s)" (mangle-name target) (emit value)))
+  [{:keys [target target-node value]}]
+  (format "(setf %s %s)" (emit-assign-target target-node target) (emit value)))
 
 ;; Clojure type → Elisp type specializer mapping
 (def ^:private clojure-to-elisp-type

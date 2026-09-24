@@ -87,7 +87,7 @@
 ;; ============================================================================
 
 (deftest gold-def
-  (testing "def"  (is (= "(defvar x 42 )" (ae '(def x 42))))))
+  (testing "def"  (is (= "(defvar x 42)" (ae '(def x 42))))))
 
 (deftest gold-defn
   (testing "defn simple"
