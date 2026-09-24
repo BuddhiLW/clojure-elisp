@@ -451,15 +451,21 @@
                          args)))
        vec))
 
+(defn ns-attrs
+  "The attr-map of an (ns name doc? attr-map? ...) form, merged over the
+   name's metadata."
+  [[_ ns-name & clauses]]
+  (merge (meta ns-name)
+         (first (filter map? (take 2 clauses)))))
+
 (defn analyze-ns
   "Analyze (ns name ...) forms.
    Parses :require clauses into structured data with :as and :refer options.
    Parses :load-path clauses into a :load-paths vector.
    Carries the docstring as :doc and an attr-map's :elisp/package as :package."
-  [[_ ns-name & clauses]]
+  [[_ ns-name & clauses :as ns-form]]
   (let [doc      (when (string? (first clauses)) (first clauses))
-        attrs    (merge (meta ns-name)
-                        (first (filter map? (take 2 clauses))))
+        attrs    (ns-attrs ns-form)
         requires (->> clauses
                       (filter #(and (sequential? %) (= :require (first %))))
                       (mapcat rest)

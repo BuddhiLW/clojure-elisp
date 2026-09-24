@@ -66,9 +66,10 @@
   (cc/leading-ns-source source))
 
 (defn compile-file-string
-  "Compile a string of Clojure code as a file (with namespace context)."
-  [s]
-  (cc/compile-file-string s))
+  "Compile a string of Clojure code as a file (with namespace context).
+   opts: {:package pkg}, the file's effective package map."
+  ([s] (cc/compile-file-string s))
+  ([s opts] (cc/compile-file-string s opts)))
 
 (defn compile-file-string-result
   "Compile a string of Clojure code as a file, returning a Result."
@@ -113,9 +114,12 @@
   ([fs file-paths] (project/build-project-symbol-table fs file-paths)))
 
 (defn compile-project
-  "Compile all .cljel files under source-paths in dependency order."
+  "Compile all .cljel files under source-paths in dependency order.
+   opts: {:package pkg}, the project's package map (clel.edn `:package`)."
   ([source-paths output-dir]    (project/compile-project source-paths output-dir))
-  ([fs source-paths output-dir] (project/compile-project fs source-paths output-dir)))
+  ([fs source-paths output-dir] (project/compile-project fs source-paths output-dir))
+  ([fs source-paths output-dir opts]
+   (project/compile-project fs source-paths output-dir opts)))
 
 (defn bundle-runtime!
   "Write clojure-elisp-runtime.el from the classpath into output-dir.
@@ -162,8 +166,11 @@
 (m/=> emit                       [:=> [:cat :any] :string])
 (m/=> emit-forms                 [:=> [:cat [:sequential :any]] :string])
 (m/=> compile-string             [:=> [:cat :string] :string])
-(m/=> compile-file-string        [:=> [:cat :string] :string])
-(m/=> emit-result                [:=> [:cat :any] errors/string-result-schema])
+(m/=> compile-file-string
+      [:function
+       [:=> [:cat :string] :string]
+       [:=> [:cat :string [:maybe [:map [:package {:optional true} [:maybe :map]]]]] :string]])
+(m/=> emit-result               [:=> [:cat :any] errors/string-result-schema])
 (m/=> emit-forms-result          [:=> [:cat [:sequential :any]] errors/string-result-schema])
 (m/=> compile-file-string-result [:=> [:cat :string] errors/string-result-schema])
 (m/=> compile-file-result        [:=> [:cat :string :string] errors/file-result-schema])

@@ -1,6 +1,8 @@
 (ns clojure-elisp.package-header
-  "Emacs library headers for a namespace that declares `:elisp/package` in its
-   ns attr-map.
+  "Emacs library headers for the files of a package.
+
+   A package is described once, by a map with the keys of `PackageMap`. It comes
+   from the ns attr-map,
 
    (ns my.pkg
      \"One-line summary.
@@ -13,9 +15,20 @@
                       :keywords [\"convenience\"]
                       :license \"GPL-3.0-or-later\"}})
 
-   The docstring's first line becomes the summary and the rest the Commentary
-   section, unless `:commentary` is given. Package-Requires always names
-   `emacs` and the runtime, the latter at `version/minimum-runtime-version`."
+   and/or from the project descriptor (clel.edn `:package`), which lets a
+   multi-file package state author, URL, license, version and requirements
+   ONCE. `project-packages` works out which file is the package's MAIN file
+   and gives every file of the package its effective map.
+
+   The main file (the one named after the package) gets the full header:
+   Version, URL, Keywords and Package-Requires, which always names `emacs` and
+   the runtime at `version/minimum-runtime-version`. Every other file gets the
+   header package-lint and melpazoid require of a SECONDARY file: summary,
+   Copyright/Author, SPDX-License-Identifier and a Commentary section, and no
+   Package-Requires, which package-lint rejects outside the main file.
+
+   In every file the ns docstring's first line is the summary and the rest the
+   Commentary, unless `:commentary` is given."
   (:require [clojure.string :as str]
             [clojure-elisp.version :as version]))
 
@@ -26,6 +39,29 @@
 (def default-emacs-version
   "Emacs version the runtime itself requires."
   "28.1")
+
+(def PackageMap
+  "A package description, from `:elisp/package` or clel.edn `:package`.
+   `:name` is the package name, i.e. the main file's name without .el; a
+   file whose own name differs from it is a secondary file of the package."
+  [:map {:closed false}
+   [:name {:optional true} [:or :string :symbol]]
+   [:author {:optional true} [:or :string [:sequential :string]]]
+   [:maintainer {:optional true} [:or :string [:sequential :string]]]
+   [:url {:optional true} :string]
+   [:version {:optional true} :string]
+   [:package-requires {:optional true}
+    [:sequential [:tuple [:or :symbol :keyword :string] [:or :string :int :double]]]]
+   [:keywords {:optional true} [:sequential :string]]
+   [:license {:optional true} :string]
+   [:copyright {:optional true} :string]
+   [:commentary {:optional true} :string]])
+
+(def package-wide-keys
+  "Keys that describe the whole package. `:commentary` is not one: it belongs
+   to the file whose ns declares it."
+  [:name :author :maintainer :url :version :package-requires :keywords
+   :license :copyright])
 
 (defn- version-parts [v]
   (mapv #(or (parse-long %) 0) (str/split (str v) #"\.")))
@@ -89,29 +125,32 @@
     (map-indexed (fn [i p] (if (zero? i) (str ";; " label ": " p) (str ";;" pad p)))
                  people)))
 
-(defn render
-  "Header text from the file name, ns docstring and :elisp/package map, up to and
-   including the ;;; Code: line."
-  [elisp-name doc {:keys [author maintainer url version keywords
-                          license copyright commentary] :as pkg}]
+;; ============================================================================
+;; Main and secondary files
+;; ============================================================================
+
+(defn main-file?
+  "True when elisp-name is the package's main file: the package has no
+   `:name`, or `:name` is elisp-name."
+  [elisp-name pkg]
+  (let [n (:name pkg)]
+    (or (nil? n) (= (str n) elisp-name))))
+
+(defn- header-lines
+  "Header text from the file name, ns docstring and package map, up to and
+   including the ;;; Code: line. `fields` are the metadata lines."
+  [elisp-name doc pkg fields]
   (let [[summary doc-body] (split-doc doc)
-        commentary         (if commentary
-                             (vec (dedent (str/split-lines commentary)))
-                             doc-body)
-        field              (fn [label v] (when v [(str ";; " label ": " v)]))]
+        commentary         (if-let [c (:commentary pkg)]
+                             (vec (dedent (str/split-lines c)))
+                             doc-body)]
     (str/join
      "\n"
      (concat
       [(str ";;; " elisp-name ".el --- " summary "  -*- lexical-binding: t; -*-")
        ""]
-      (when copyright [(str ";; Copyright (C) " copyright) ""])
-      (when author (people-lines "Author" author))
-      (when maintainer (people-lines "Maintainer" maintainer))
-      (field "URL" url)
-      (field "Version" version)
-      [(str ";; Package-Requires: " (render-requires (package-requires (:package-requires pkg))))]
-      (when (seq keywords) [(str ";; Keywords: " (str/join ", " keywords))])
-      (field "SPDX-License-Identifier" license)
+      (when-let [c (:copyright pkg)] [(str ";; Copyright (C) " c) ""])
+      fields
       [""
        ";; This file is not part of GNU Emacs."
        ";; Generated by ClojureElisp: edit the .cljel source, not this file."
@@ -122,3 +161,85 @@
       [""
        ";;; Code:"
        ""]))))
+
+(defn- people-fields [{:keys [author maintainer]}]
+  (concat (when author (people-lines "Author" author))
+          (when maintainer (people-lines "Maintainer" maintainer))))
+
+(defn- field [label v]
+  (when v [(str ";; " label ": " v)]))
+
+(defn- render-main
+  [elisp-name doc {:keys [url version keywords license] :as pkg}]
+  (header-lines elisp-name doc pkg
+                (concat (people-fields pkg)
+                        (field "URL" url)
+                        (field "Version" version)
+                        [(str ";; Package-Requires: "
+                              (render-requires (package-requires (:package-requires pkg))))]
+                        (when (seq keywords) [(str ";; Keywords: " (str/join ", " keywords))])
+                        (field "SPDX-License-Identifier" license))))
+
+(defn- render-secondary
+  "No URL, Version, Keywords or Package-Requires: those describe the package,
+   and package-lint reports Package-Requires outside the main file as an
+   error. Author and license are per file, melpazoid checks every file."
+  [elisp-name doc {:keys [license] :as pkg}]
+  (header-lines elisp-name doc pkg
+                (concat (people-fields pkg)
+                        (field "SPDX-License-Identifier" license))))
+
+(defn render
+  "Header text from the file name, ns docstring and package map, up to and
+   including the ;;; Code: line: the main file's when elisp-name is the
+   package's main file, a secondary file's otherwise."
+  [elisp-name doc pkg]
+  (if (main-file? elisp-name pkg)
+    (render-main elisp-name doc pkg)
+    (render-secondary elisp-name doc pkg)))
+
+;; ============================================================================
+;; A project's files
+;; ============================================================================
+
+(defn- member?
+  "True when the file elisp-name belongs to package package-name: MELPA wants
+   every file named package-name or package-name-*, and a file whose own
+   :elisp/package names another package belongs to that one."
+  [package-name elisp-name own]
+  (and (or (= elisp-name package-name)
+           (str/starts-with? elisp-name (str package-name "-")))
+       (or (nil? (:name own)) (= (str (:name own)) package-name))))
+
+(defn package-name
+  "The name of the package a project's files make up, or nil when neither the
+   project nor any file declares one. In order: the project's `:name`; a
+   file's own `:name`; the file whose own map carries `:package-requires`
+   (only the main file has them); else the shortest file name, which for
+   tod, tod-sun, tod-util is the package tod."
+  [project-pkg name->own]
+  (let [declared (sort-by key (filter (comp some? val) name->own))]
+    (when (or project-pkg (seq declared))
+      (or (some-> (:name project-pkg) str)
+          (some (fn [[_ own]] (some-> (:name own) str)) declared)
+          (some (fn [[n own]] (when (contains? own :package-requires) n)) declared)
+          (first (sort-by (juxt count identity)
+                          (map key (if project-pkg name->own declared))))))))
+
+(defn project-packages
+  "Effective package map of every file of a project that belongs to its
+   package, as {elisp-name pkg}; files outside it are absent.
+
+   project-pkg is clel.edn's `:package` (or nil); name->own maps each file's
+   elisp name to its ns's own `:elisp/package` (or nil). A file's map is the
+   package-wide keys of the project map and the main file's own map, then its
+   own map, with `:name` set to the package name, which is what makes every
+   file but the main one a secondary file."
+  [project-pkg name->own]
+  (when-let [pname (package-name project-pkg name->own)]
+    (let [package-wide (select-keys (merge project-pkg (get name->own pname))
+                                    package-wide-keys)]
+      (into {}
+            (for [[elisp-name own] name->own
+                  :when (member? pname elisp-name own)]
+              [elisp-name (merge package-wide own {:name pname})])))))

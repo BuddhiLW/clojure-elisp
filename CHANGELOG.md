@@ -33,6 +33,29 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `;;; Code:` now precedes the runtime guard in this mode. Namespaces without
   `:elisp/package` compile byte-for-byte as before. `package-buffer-info` and
   `lm-*` are the oracle in `test/elisp/clojure-elisp-package-header-test.el`.
+- **Headers for every file of a multi-file package.** A package can be
+  described once, in `clel.edn`:
+
+  ```clojure
+  {:source-paths ["src"] :output-dir "."
+   :package {:name "tod" :author "..." :url "..." :version "0.1.0"
+             :package-requires [[emacs "28.1"]] :keywords ["faces"]
+             :license "GPL-3.0-or-later"}}
+  ```
+
+  or by the `:elisp/package` of one namespace; `compile-project` (and
+  `compile-project-from-config`) then gives every file of the package a
+  header. The main file, the one named after the package (`:name`, else the
+  namespace declaring `:package-requires`, else the shortest name), gets the
+  full header. Every other file named `<package>` or `<package>-*` gets the
+  one package-lint and melpazoid want of a secondary file: summary from its
+  ns docstring, Copyright/Author, `SPDX-License-Identifier`, a non-empty
+  `;;; Commentary:` and `;;; Code:` before the runtime guard, and no
+  `Package-Requires`, which package-lint rejects outside the main file. A
+  namespace's own `:elisp/package` overrides per file (e.g. `:commentary`).
+  Projects that declare no package compile byte-for-byte as before. The
+  incremental cache records each file's package map, so a version bump in
+  `clel.edn` recompiles the main file.
 - **`;;;###autoload` cookies.** `^:autoload` on the name of a `defn`,
   `define-minor-mode` or `defcustom` (or `{:autoload true}` in a `defn`
   attr-map) puts the cookie on the line before the definition. package-lint

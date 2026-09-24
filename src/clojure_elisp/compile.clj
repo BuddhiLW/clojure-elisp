@@ -300,16 +300,30 @@
 ;; String Compilation
 ;; ============================================================================
 
+(defn- with-package
+  "ast-nodes with the file's effective package map on its ns node, when one
+   is given: the project knows the package a file belongs to, the file alone
+   only knows its own :elisp/package."
+  [ast-nodes package]
+  (if (and package (= :ns (:op (first ast-nodes))))
+    (assoc-in (vec ast-nodes) [0 :package] package)
+    ast-nodes))
+
 (defn compile-file-string
   "Compile a string of Clojure code as a file (with namespace context).
    (ns ...) establishes aliases/refers for subsequent forms; appends
-   (provide ...) when ns is present."
-  [s]
-  (let [preprocessed (preprocess-elisp-syntax s)
-        forms        (read-all-forms preprocessed)
-        ast-nodes    (ana/analyze-file-forms forms)
-        raw-elisp    (emit/emit-file ast-nodes)]
-    (postprocess-elisp-syntax raw-elisp)))
+   (provide ...) when ns is present.
+
+   opts: {:package pkg} gives the file the package map
+   `package-header/project-packages` worked out for it, in place of its ns's
+   own :elisp/package."
+  ([s] (compile-file-string s nil))
+  ([s {:keys [package]}]
+   (let [preprocessed (preprocess-elisp-syntax s)
+         forms        (read-all-forms preprocessed)
+         ast-nodes    (with-package (ana/analyze-file-forms forms) package)
+         raw-elisp    (emit/emit-file ast-nodes)]
+     (postprocess-elisp-syntax raw-elisp))))
 
 (defn compile-string
   "Compile a string of Clojure code to Elisp.
@@ -392,6 +406,15 @@
                (seq? (first forms))
                (= 'ns (first (first forms))))
       (second (first forms)))))
+
+(defn extract-ns-package
+  "The :elisp/package map in a source string's ns attr-map, or nil."
+  [source]
+  (let [forms (read-all-forms (preprocess-elisp-syntax source))]
+    (when (and (seq forms)
+               (seq? (first forms))
+               (= 'ns (first (first forms))))
+      (:elisp/package (ana/ns-attrs (first forms))))))
 
 (defn ns-derived-output-name
   "Derive an output .el filename from the ns form in source, or nil."
@@ -477,8 +500,12 @@
 (m/=> compile-string-in-ns-result
       [:=> [:cat [:maybe :string] :string] errors/string-result-schema])
 (m/=> leading-ns-source          [:=> [:cat [:maybe :string]] [:maybe :string]])
-(m/=> compile-file-string        [:=> [:cat :string] :string])
-(m/=> emit-result                [:=> [:cat :any] errors/string-result-schema])
+(m/=> compile-file-string
+      [:function
+       [:=> [:cat :string] :string]
+       [:=> [:cat :string [:maybe [:map [:package {:optional true} [:maybe :map]]]]] :string]])
+(m/=> extract-ns-package         [:=> [:cat :string] [:maybe :map]])
+(m/=> emit-result               [:=> [:cat :any] errors/string-result-schema])
 (m/=> emit-forms-result          [:=> [:cat [:sequential :any]] errors/string-result-schema])
 (m/=> compile-file-string-result [:=> [:cat :string] errors/string-result-schema])
 (m/=> read-all-forms             [:=> [:cat :string] [:sequential :any]])

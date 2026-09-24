@@ -11,6 +11,7 @@
             [clojure-elisp.compile :as cc]
             [clojure-elisp.errors :as errors]
             [clojure-elisp.fs :as fs]
+            [clojure-elisp.package-header :as ph]
             [clojure-elisp.version :as version]
             [hive-dsl.result :as r]
             [malli.core :as m]))
@@ -48,19 +49,31 @@
              [:source-mtime :int]
              [:output-path :string]
              [:output-mtime :int]
-             [:deps [:set :symbol]]]]]])
+             [:deps [:set :symbol]]
+             ;; the file's effective package map: a header input that is
+             ;; not in the source, so a change to it must recompile the file
+             [:package {:optional true} [:maybe :map]]]]]])
+
+(def compile-opts-schema
+  "Options for compile-file / compile-project.
+   :package is the project's package map (clel.edn `:package`)."
+  [:maybe [:map [:package {:optional true} [:maybe ph/PackageMap]]]])
 
 ;; ============================================================================
 ;; File Compilation
 ;; ============================================================================
 
 (defn compile-file
-  "Compile a .cljel file to a .el file. Returns {:input :output :size}."
+  "Compile a .cljel file to a .el file. Returns {:input :output :size}.
+   opts: {:package pkg}, the file's effective package map (see
+   `cc/compile-file-string`)."
   ([input-path output-path]
    (compile-file fs/default-fs input-path output-path))
   ([fs input-path output-path]
+   (compile-file fs input-path output-path nil))
+  ([fs input-path output-path opts]
    (let [source (fs/read-file fs input-path)
-         elisp  (cc/compile-file-string source)]
+         elisp  (cc/compile-file-string source opts)]
      (fs/write-file! fs output-path elisp)
      {:input input-path :output output-path :size (count elisp)})))
 
@@ -142,8 +155,9 @@
   (fs/file-mtime fs path))
 
 (defn- needs-recompile?
-  "True if source changed, output missing, not in manifest, or a dep is stale."
-  [fs ns-sym ns->file output-dir manifest stale-set]
+  "True if source changed, output missing, not in manifest, a dep is stale, or
+   the file's package map (a header input outside its source) changed."
+  [fs ns-sym ns->file output-dir manifest stale-set package]
   (let [input-path  (get ns->file ns-sym)
         output-name (str (emit/mangle-name ns-sym) ".el")
         output-path (str output-dir "/" output-name)
@@ -152,15 +166,37 @@
       (nil? entry)
       (not= (file-mtime fs input-path) (:source-mtime entry))
       (not (fs/file-exists? fs output-path))
+      (not= package (:package entry))
       (some stale-set (:deps entry)))))
+
+(defn- file-packages
+  "{ns-sym effective-package-map} for the files that belong to the project's
+   package (see package-header/project-packages)."
+  [project-pkg ns->file path->source]
+  (let [name->ns  (into {} (map (fn [ns-sym] [(emit/mangle-name ns-sym) ns-sym])) (keys ns->file))
+        name->own (into {}
+                        (map (fn [[elisp-name ns-sym]]
+                               [elisp-name (cc/extract-ns-package
+                                            (path->source (ns->file ns-sym)))]))
+                        name->ns)]
+    (into {}
+          (map (fn [[elisp-name pkg]] [(name->ns elisp-name) pkg]))
+          (ph/project-packages project-pkg name->own))))
 
 (defn compile-project
   "Compile all .cljel files under source-paths in dependency order.
    Pass 1 builds a project-wide symbol table; pass 2 compiles each stale file
-   with cross-file symbol checking. Returns a vector of compilation results."
+   with cross-file symbol checking. Returns a vector of compilation results.
+
+   opts: {:package pkg}, the project's package map (clel.edn `:package`).
+   With it, or when a namespace declares :elisp/package, every file of the
+   package gets a library header: the main file the full one, the others a
+   secondary file's (see clojure-elisp.package-header)."
   ([source-paths output-dir]
    (compile-project fs/default-fs source-paths output-dir))
   ([fs source-paths output-dir]
+   (compile-project fs source-paths output-dir nil))
+  ([fs source-paths output-dir opts]
    (let [files        (discover-cljel-files fs source-paths)
          exports      (build-project-symbol-table fs files)
          path->source (into {} (for [path files] [path (fs/read-file fs path)]))
@@ -169,6 +205,7 @@
                                   :let  [ns-name (cc/extract-ns-name source)]
                                   :when ns-name]
                               [ns-name path]))
+         packages     (file-packages (:package opts) ns->file path->source)
          graph        (cc/build-dependency-graph path->source)
          order        (cc/topological-sort graph)
          manifest     (read-manifest fs output-dir)
@@ -177,7 +214,8 @@
                         (if (empty? remaining)
                           stale
                           (let [ns-sym (first remaining)]
-                            (if (needs-recompile? fs ns-sym ns->file output-dir manifest stale)
+                            (if (needs-recompile? fs ns-sym ns->file output-dir manifest stale
+                                                  (packages ns-sym))
                               (recur (rest remaining) (conj stale ns-sym))
                               (recur (rest remaining) stale)))))]
      (fs/make-dirs! fs output-dir)
@@ -189,7 +227,8 @@
                        (let [output-name (str (emit/mangle-name ns-sym) ".el")
                              output-path (str output-dir "/" output-name)]
                          (if (contains? stale-set ns-sym)
-                           (compile-file fs input-path output-path)
+                           (compile-file fs input-path output-path
+                                         {:package (packages ns-sym)})
                            {:input input-path :output output-path :cached true}))))
                    order))
            new-manifest {:version 1
@@ -199,11 +238,13 @@
                                                   output-name (str (emit/mangle-name ns-sym) ".el")
                                                   output-path (str output-dir "/" output-name)]
                                             :when input-path]
-                                        [ns-sym {:source-path input-path
-                                                 :source-mtime (file-mtime fs input-path)
-                                                 :output-path output-path
-                                                 :output-mtime (file-mtime fs output-path)
-                                                 :deps (get graph ns-sym #{})}]))}]
+                                        [ns-sym (cond-> {:source-path input-path
+                                                         :source-mtime (file-mtime fs input-path)
+                                                         :output-path output-path
+                                                         :output-mtime (file-mtime fs output-path)
+                                                         :deps (get graph ns-sym #{})}
+                                                  (packages ns-sym)
+                                                  (assoc :package (packages ns-sym)))]))}]
        (write-manifest fs output-dir new-manifest)
        results))))
 
@@ -269,7 +310,8 @@
 (m/=> compile-file
       [:function
        [:=> [:cat :string :string] artifact-schema]
-       [:=> [:cat fs/Fs :string :string] artifact-schema]])
+       [:=> [:cat fs/Fs :string :string] artifact-schema]
+       [:=> [:cat fs/Fs :string :string compile-opts-schema] artifact-schema]])
 
 (m/=> compile-file-result
       [:function
@@ -289,7 +331,9 @@
 (m/=> compile-project
       [:function
        [:=> [:cat [:sequential :string] :string] [:vector [:maybe compile-result-schema]]]
-       [:=> [:cat fs/Fs [:sequential :string] :string] [:vector [:maybe compile-result-schema]]]])
+       [:=> [:cat fs/Fs [:sequential :string] :string] [:vector [:maybe compile-result-schema]]]
+       [:=> [:cat fs/Fs [:sequential :string] :string compile-opts-schema]
+        [:vector [:maybe compile-result-schema]]]])
 
 (m/=> compile-runtime
       [:function
