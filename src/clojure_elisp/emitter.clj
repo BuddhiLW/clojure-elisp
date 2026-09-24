@@ -1419,7 +1419,10 @@
 
 (defmethod emit-node :default
   [node]
-  (str ";; Unknown node: " (pr-str node)))
+  ;; A comment spliced into a form comments out the rest of its line, so the
+  ;; output silently loses code; refuse instead.
+  (throw (ex-info (str "No Emacs Lisp emitter for AST node :op " (pr-str (:op node)))
+                  (select-keys node [:op :form :line :column]))))
 
 ;; ============================================================================
 ;; Source Location Comments

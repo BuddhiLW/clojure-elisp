@@ -1161,8 +1161,10 @@
       (is (re-find #"clel-str-join\s+sep\s+coll" code)))))
 
 (deftest clojure-string-split-test
+  ;; The separator is an Emacs regexp STRING: a #"..." literal is an analysis
+  ;; error (it used to splice a ";; Unknown node" comment into the call).
   (testing "clojure.string/split compiles to clel-str-split"
-    (is (str/includes? (clel/emit '(clojure.string/split s #",")) "clel-str-split")))
+    (is (= "(clel-str-split s \",\")" (clel/emit '(clojure.string/split s ",")))))
 
   (testing "split preserves argument order"
     (let [code (clel/emit '(clojure.string/split text pattern))]
@@ -1219,14 +1221,15 @@
     (is (str/includes? (clel/emit '(clojure.string/last-index-of s "x")) "clel-str-last-index-of"))))
 
 (deftest regex-string-functions-test
+  ;; Patterns are Emacs regexp strings; see unsupported-literal tests for #"...".
   (testing "re-find compiles to clel-str-re-find"
-    (is (str/includes? (clel/emit '(re-find #"\\d+" s)) "clel-str-re-find")))
+    (is (= "(clel-str-re-find \"[0-9]+\" s)" (clel/emit '(re-find "[0-9]+" s)))))
 
   (testing "re-matches compiles to clel-str-re-matches"
-    (is (str/includes? (clel/emit '(re-matches #"\\d+" s)) "clel-str-re-matches")))
+    (is (= "(clel-str-re-matches \"[0-9]+\" s)" (clel/emit '(re-matches "[0-9]+" s)))))
 
   (testing "re-seq compiles to clel-str-re-seq"
-    (is (str/includes? (clel/emit '(re-seq #"\\w+" s)) "clel-str-re-seq"))))
+    (is (= "(clel-str-re-seq \"[[:alnum:]]+\" s)" (clel/emit '(re-seq "[[:alnum:]]+" s))))))
 
 (deftest string-function-composition-test
   (testing "chained string operations"

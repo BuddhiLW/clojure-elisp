@@ -283,3 +283,32 @@
   (let [out (emit-form '(condp (fn [a b] (> b a)) n 10 :big :small))]
     (is (re-find #"\(condp__pred\d+ \(lambda \(a b\)" out))
     (is (re-find #"\(funcall condp__pred\d+ 10 condp__v\d+\)" out))))
+
+;;; Literals without an Elisp counterpart
+
+(deftest unsupported-literals-are-analysis-errors
+  (testing "regex, with the Emacs spelling to use instead"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Regex literal #\"\\d\+\" is not supported.*Write the Emacs regexp as a string"
+                          (emit-form '(re-find #"\d+" s)))))
+  (testing "character"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Character literal \\a is not supported.*string \"a\""
+                          (emit-form '(str \a)))))
+  (testing "ratio"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Ratio literal 1/3 is not supported"
+                          (emit-form '(* 1/3 x)))))
+  (testing "a tagged literal"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"of type java.util.UUID has no Emacs Lisp equivalent"
+                          (emit-form (list 'identity (java.util.UUID/randomUUID)))))))
+
+(deftest unsupported-literal-error-carries-the-location
+  (let [ex (try (clel/compile-file-string "(ns x)\n(defn f [s]\n  (re-find #\"a\" s))")
+                (catch clojure.lang.ExceptionInfo e e))]
+    (is (= 3 (:line (ex-data ex))))
+    (is (str/ends-with? (ex-message ex) "at 3:3"))))
+
+(deftest big-numbers-are-plain-numbers
+  (is (= "(+ 1 1.5)" (emit-form '(+ 1N 1.5M)))))
+
+(deftest unknown-ast-node-is-refused-not-commented
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"No Emacs Lisp emitter for AST node :op :bogus"
+                        (emit/emit {:op :bogus :env {}}))))

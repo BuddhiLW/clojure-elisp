@@ -42,11 +42,11 @@
       (is (= :const (:op result)))
       (is (= 3.14 (:val result)))
       (is (= :number (:type result)))))
-  (testing "ratio"
-    (let [result (analyze 1/2)]
-      (is (= :const (:op result)))
-      (is (= 1/2 (:val result)))
-      (is (= :number (:type result))))))
+  ;; A ratio used to analyze as a :const and emit 1/2, which Emacs reads as a
+  ;; symbol; there is no Elisp rational to emit.
+  (testing "ratio is an analysis error"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Ratio literal 1/2 is not supported"
+                          (analyze 1/2)))))
 
 (deftest analyze-string-test
   (testing "simple string"

@@ -1867,6 +1867,29 @@
       (ast-node :function-quote :expr node)
       node)))
 
+(defn- unsupported-literal-error
+  "The analysis error for a reader literal Emacs Lisp has no counterpart
+   for. Splicing a placeholder into the output instead is how a regex once
+   compiled to a comment in the middle of a form."
+  [form]
+  (analysis-error
+   (cond
+     (instance? java.util.regex.Pattern form)
+     (str "Regex literal #\"" form "\" is not supported: Java and Emacs regexps differ "
+          "in syntax (groups, alternation, \\d, \\s, \\w). Write the Emacs regexp as a "
+          "string, e.g. \"^[0-9]+$\" for #\"^\\d+$\", or \"\\\\(a\\\\|b\\\\)\" for #\"(a|b)\".")
+
+     (char? form)
+     (str "Character literal " (pr-str form)
+          " is not supported: Emacs characters are integers, and a Clojure character is "
+          "not. Write the string " (pr-str (str form)) ", or Emacs ?c syntax for the "
+          "character's integer code.")
+
+     :else
+     (str "Literal " (pr-str form) " of type " (.getName (class form))
+          " has no Emacs Lisp equivalent."))
+   {:form form}))
+
 (defn- analyze-seq
   "Analyze a seq form: dispatch to special form, macro, or invocation.
    An empty seq () is the empty-list literal, not an invocation — analyze it
@@ -1916,6 +1939,14 @@
           (boolean? form)
           (ast-node :const :val form :type :bool)
 
+          ;; Ratio: Elisp has no rational numbers
+          (ratio? form)
+          (throw (analysis-error
+                  (str "Ratio literal " form " is not supported: Emacs Lisp has no "
+                       "rational numbers. Write a float (" (double form) ") or "
+                       "a division such as (/ " (numerator form) ".0 " (denominator form) ").")
+                  {:form form}))
+
           ;; Number
           (number? form)
           (ast-node :const :val form :type :number)
@@ -1949,7 +1980,7 @@
           (analyze-seq form)
 
           :else
-          (ast-node :unknown :form form))))))
+          (throw (unsupported-literal-error form)))))))
 
 ;; ============================================================================
 ;; File-Level Analysis
