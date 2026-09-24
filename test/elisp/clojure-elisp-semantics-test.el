@@ -65,5 +65,54 @@ shadows them."
   (should (equal :none (semantics-kw-default (list (cons :j 1)))))
   (should (equal 1 (semantics-map-as-fn))))
 
+;;; Keywords, maps and sets as function arguments
+
+(ert-deftest clel-semantics-keyword-as-hof-fn ()
+  "Higher-order fns accept a keyword where Clojure accepts one."
+  (should (equal '(:night :golden :civil)
+                 (clel-semantics-test--realize (semantics-kw-map))))
+  (should (equal '(:night :civil :golden)
+                 (clel-semantics-test--realize (semantics-kw-sort-by))))
+  (should (equal '(:golden :civil :night)
+                 (clel-semantics-test--realize (semantics-kw-sort-by-desc))))
+  (should (equal '(1 3) (mapcar (lambda (m) (clel-get m :n))
+                                (clel-semantics-test--realize (semantics-kw-filter)))))
+  (let ((groups (semantics-kw-group-by)))
+    (should (equal '(1 3) (mapcar (lambda (m) (clel-get m :n)) (clel-get groups :a))))
+    (should (equal '(2) (mapcar (lambda (m) (clel-get m :n)) (clel-get groups :b))))))
+
+(ert-deftest clel-semantics-collections-as-hof-fn ()
+  "A set literal is a membership predicate and a map is a lookup."
+  (should (equal '(:a :c) (clel-semantics-test--realize (semantics-set-as-pred))))
+  (should (equal '(1 2 nil) (clel-semantics-test--realize (semantics-map-as-mapper)))))
+
+;;; Comparators and sorting
+
+(ert-deftest clel-semantics-sort-arities ()
+  "(sort coll) uses compare; (sort cmp coll) takes a predicate or a
+three-way comparator."
+  (should (equal '(1 2 3) (semantics-sort-default)))
+  (should (equal '(1 2 3) (semantics-sort-lt)))
+  (should (equal '(3 2 1) (semantics-sort-gt)))
+  (should (equal '("a" "b" "c") (semantics-sort-compare)))
+  (should (equal '(3 2 1) (semantics-sort-reverse-compare)))
+  (should (equal '(:a :b :c) (semantics-sort-keywords))))
+
+(ert-deftest clel-semantics-compare ()
+  (should (equal '(-1 1 0 -1) (semantics-compare-values))))
+
+(ert-deftest clel-semantics-sort-does-not-mutate ()
+  "Sorting returns a new list and leaves its argument alone."
+  (let ((xs (list 3 1 2)))
+    (should (equal '(1 2 3) (clel-sort xs)))
+    (should (equal '(3 1 2) xs))))
+
+;;; Extra function arguments
+
+(ert-deftest clel-semantics-swap-update-extra-args ()
+  "swap! threads update and its function argument through the atom."
+  (should (equal 12 (clel-get (semantics-swap-update) :count)))
+  (should (equal 11 (clel-get (semantics-update-extra-args) :a))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

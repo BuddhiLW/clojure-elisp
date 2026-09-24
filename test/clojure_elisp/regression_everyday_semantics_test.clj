@@ -67,3 +67,29 @@
 
 (deftest map-literal-in-function-position-is-get
   (is (str/starts-with? (emit-form '({:a 1} :a)) "(clel-get ")))
+
+;;; Function arguments of higher-order fns
+
+(deftest arity-dependent-function-slots
+  (testing "(sort cmp coll) quotes the comparator; (sort coll) does not"
+    (is (= "(clel-sort #'my-cmp xs)" (emit-form '(sort my-cmp xs))))
+    (is (= "(clel-sort xs)" (emit-form '(sort xs)))))
+  (testing "(sort-by keyfn cmp coll) quotes both"
+    (is (= "(clel-sort-by #'k #'my-cmp xs)" (emit-form '(sort-by k my-cmp xs))))
+    (is (= "(clel-sort-by :k #'> xs)" (emit-form '(sort-by :k > xs))))))
+
+(deftest swap-threads-the-inner-fns-slots
+  (is (= "(clel-swap! a #'clel-update :k #'my-f)" (emit-form '(swap! a update :k my-f))))
+  (is (= "(clel-swap! a #'clel-update-in (list :k) #'my-f 1)"
+         (emit-form '(swap! a update-in [:k] my-f 1))))
+  (is (= "(clel-swap! a #'clel-assoc :k my-v)" (emit-form '(swap! a assoc :k my-v)))
+      "assoc has no function slot, so its value stays a value"))
+
+(deftest elisp-higher-order-fns-quote-function-names
+  (is (= "(mapcar #'my-f xs)" (emit-form '(mapcar my-f xs))))
+  (is (= "(add-hook 'after-save-hook #'my-f)" (emit-form '(add-hook 'after-save-hook my-f))))
+  (is (= "(run-at-time 1 nil #'my-f)" (emit-form '(run-at-time 1 nil my-f)))))
+
+(deftest compare-is-mapped
+  (is (= "(clel-compare a b)" (emit-form '(compare a b))))
+  (is (= "(clel-sort #'clel-compare xs)" (emit-form '(sort compare xs)))))

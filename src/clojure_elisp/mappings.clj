@@ -49,7 +49,8 @@
    '< "<"
    '> ">"
    '<= "<="
-   '>= ">="})
+   '>= ">="
+   'compare "clel-compare"})
 
 ;; ============================================================================
 ;; Logic
@@ -748,13 +749,56 @@
    'comp         :all
    'juxt         :all
    'every-pred   :all
-   'some-fn      :all})
+   'some-fn      :all
+   ;; Elisp higher-order fns called from cljel
+   'mapcar             #{0}
+   'mapc               #{0}
+   'mapcan             #{0}
+   'mapconcat          #{0}
+   'maphash            #{0}
+   'seq-map            #{0}
+   'seq-do             #{0}
+   'seq-filter         #{0}
+   'seq-remove         #{0}
+   'seq-reduce         #{0}
+   'seq-find           #{0}
+   'seq-some           #{0}
+   'seq-every-p        #{0}
+   'seq-sort           #{0}
+   'seq-sort-by        #{0 1}
+   'seq-group-by       #{0}
+   'cl-remove-if       #{0}
+   'cl-remove-if-not   #{0}
+   'cl-find-if         #{0}
+   'cl-position-if     #{0}
+   'cl-count-if        #{0}
+   'cl-some            #{0}
+   'cl-every           #{0}
+   'cl-reduce          #{0}
+   'apply-partially    #{0}
+   'add-hook           #{1}
+   'remove-hook        #{1}
+   'advice-add         #{2}
+   'advice-remove      #{1}
+   'run-at-time        #{2}
+   'run-with-timer     #{2}
+   'run-with-idle-timer #{2}})
+
+(def arity-arg-slots
+  "Higher-order fns whose function positions depend on the call's arity:
+   fn -> {arg-count slots}. Merged over `higher-order-fn-arg-slots`."
+  {'sort    {2 #{0}}
+   'sort-by {3 #{1}}})
 
 (def ArgSlots
   "Schema for `higher-order-fn-arg-slots`: each higher-order fn maps to either
    `:all` (every argument is a function position) or a set of 0-based argument
    indices (`nat-int?`) that are function positions."
   [:map-of :symbol [:or [:= :all] [:set nat-int?]]])
+
+(def ArityArgSlots
+  "Schema for `arity-arg-slots`."
+  [:map-of :symbol [:map-of nat-int? [:set nat-int?]]])
 
 (defn validate-arg-slots!
   "Checked invariant for `higher-order-fn-arg-slots`: asserts it conforms to
@@ -765,7 +809,21 @@
   (when-not (m/validate ArgSlots higher-order-fn-arg-slots)
     (throw (ex-info "higher-order-fn-arg-slots violates ArgSlots schema"
                     {:explanation (m/explain ArgSlots higher-order-fn-arg-slots)})))
+  (when-not (m/validate ArityArgSlots arity-arg-slots)
+    (throw (ex-info "arity-arg-slots violates ArityArgSlots schema"
+                    {:explanation (m/explain ArityArgSlots arity-arg-slots)})))
   true)
+
+(defn fn-arg-slots
+  "The function-position argument indices of a call to F with ARGC
+   arguments: a set, :all, or nil."
+  [f argc]
+  (let [base  (get higher-order-fn-arg-slots f)
+        extra (get-in arity-arg-slots [f argc])]
+    (cond
+      (= :all base) :all
+      (or base extra) (into (or base #{}) extra)
+      :else nil)))
 
 ;; ============================================================================
 ;; Load-Time Invariant Enforcement

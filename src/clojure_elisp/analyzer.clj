@@ -1477,6 +1477,23 @@
           analyzed)))
     args)))
 
+(defn- hof-slots
+  "Function-position arg indices of (hof args...). swap! applies its fn to
+   the atom's value and the trailing args, so (swap! a update :k f) also
+   quotes f: the inner fn's slots, shifted past the atom."
+  [hof args]
+  (let [slots (mappings/fn-arg-slots hof (count args))
+        inner (second args)]
+    (if (and (#{'swap! 'swap-vals!} hof)
+             (symbol? inner)
+             (or (nil? (namespace inner)) (= "clojure.core" (namespace inner))))
+      (let [inner-slots (mappings/fn-arg-slots (symbol (name inner)) (dec (count args)))]
+        (cond
+          (= :all inner-slots) (into slots (range 2 (count args)))
+          inner-slots          (into slots (keep #(when (pos? %) (inc %))) inner-slots)
+          :else                slots))
+      slots)))
+
 (defn- collection-call-form
   "Rewrite a keyword or map literal in function position into the `get` it
    means: (:k m) and ({:k 1} :k). nil when F is neither."
@@ -1533,7 +1550,7 @@
                              (or (nil? f-ns) (= f-ns "clojure.core"))
                              (not (contains? (:locals *env*) f))
                              (not (contains? (:fn-locals *env*) f)))
-                    (get mappings/higher-order-fn-arg-slots (symbol f-name)))]
+                    (hof-slots (symbol f-name) args))]
         (ast-node :invoke
                   ;; Callee position: a symbol names the function itself,
                   ;; never its #' value.

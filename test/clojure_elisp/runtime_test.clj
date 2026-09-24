@@ -403,8 +403,8 @@
   (testing "sort compiles to clel-sort"
     (is (str/includes? (clel/emit '(sort < xs)) "clel-sort")))
 
-  (testing "sort preserves argument order"
-    (is (re-find #"clel-sort\s+cmp\s+coll" (clel/emit '(sort cmp coll))))))
+  (testing "sort preserves argument order; a free comparator names a function"
+    (is (re-find #"clel-sort\s+#'cmp\s+coll" (clel/emit '(sort cmp coll))))))
 
 (deftest seq-sort-by-compilation-test
   (testing "sort-by compiles to clel-sort-by"

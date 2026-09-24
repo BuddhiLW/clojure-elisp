@@ -2033,14 +2033,19 @@
 ;; ============================================================================
 
 (deftest test-cl-lib-mappings
+  ;; `pred' is free here, so it names a global function and is #'-quoted in
+  ;; the function slot; a local `pred' would pass through as a value.
   (testing "cl-remove-if passes through"
-    (is (= "(cl-remove-if pred xs)" (analyze-and-emit '(cl-remove-if pred xs)))))
+    (is (= "(cl-remove-if #'pred xs)" (analyze-and-emit '(cl-remove-if pred xs)))))
   (testing "cl-remove-if-not passes through"
-    (is (= "(cl-remove-if-not pred xs)" (analyze-and-emit '(cl-remove-if-not pred xs)))))
+    (is (= "(cl-remove-if-not #'pred xs)" (analyze-and-emit '(cl-remove-if-not pred xs)))))
   (testing "cl-every passes through"
-    (is (= "(cl-every pred xs)" (analyze-and-emit '(cl-every pred xs)))))
+    (is (= "(cl-every #'pred xs)" (analyze-and-emit '(cl-every pred xs)))))
   (testing "cl-some passes through"
-    (is (= "(cl-some pred xs)" (analyze-and-emit '(cl-some pred xs)))))
+    (is (= "(cl-some #'pred xs)" (analyze-and-emit '(cl-some pred xs)))))
+  (testing "a local predicate stays a value"
+    (is (= "(lambda (pred xs)\n    (cl-some pred xs))"
+           (analyze-and-emit '(fn [pred xs] (cl-some pred xs))))))
   (testing "cl-subseq passes through"
     (is (= "(cl-subseq xs 1 3)" (analyze-and-emit '(cl-subseq xs 1 3)))))
   (testing "cl-generic-p passes through"
@@ -2075,8 +2080,8 @@
     (is (= "(copy-hash-table table)"
            (analyze-and-emit '(copy-hash-table table)))))
 
-  (testing "maphash passes through"
-    (is (= "(maphash f table)"
+  (testing "maphash passes through (a free `f' names a function)"
+    (is (= "(maphash #'f table)"
            (analyze-and-emit '(maphash f table)))))
 
   (testing "hash-table-keys passes through"

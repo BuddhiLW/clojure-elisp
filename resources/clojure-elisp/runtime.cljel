@@ -120,7 +120,7 @@ Creates intermediate maps as needed."
 
 (defn clel-update [m k f & args]
   "Update value at K in M by applying F to old value and ARGS."
-  (clel-assoc m k (apply f (clel-get m k) args)))
+  (clel-assoc m k (apply (clel--fn f) (clel-get m k) args)))
 
 (defn clel-update-in [m ks f & args]
   "Update value at nested path KS in M by applying F to old value and ARGS."
@@ -451,10 +451,27 @@ Optional FROM-INDEX specifies starting position."
 
 (defn clel-comp [& fns]
   "Compose functions FNS right-to-left."
-  (fn [x]
-    (seq-reduce (fn [v f] (funcall f v))
-                (reverse fns)
-                x)))
+  (let [fns (mapcar #'clel--fn fns)]
+    (fn [x]
+      (seq-reduce (fn [v f] (funcall f v))
+                  (reverse fns)
+                  x))))
+
+;;; Invocable Values
+;; Clojure calls keywords, maps and sets as functions. Elisp cannot, so every
+;; higher-order fn passes its function argument through `clel--fn'.
+
+(defn clel--fn [f]
+  "Return F as a function, the way Clojure invokes it.
+A keyword looks itself up in its map argument, a map looks up its key
+argument, and a set literal (a list) answers the member it contains."
+  (cond
+    (functionp f) f
+    (keywordp f) (fn [m & default] (clel-get m f (car default)))
+    (hash-table-p f) (fn [k & default] (clel-get f k (car default)))
+    (and (consp f) (consp (car f))) (fn [k & default] (clel-get f k (car default)))
+    (consp f) (fn [x] (car (member x f)))
+    :else f))
 
 ;;; Atoms
 ;; Structure: (list 'clel-atom value watchers-alist)
@@ -489,7 +506,7 @@ Optional FROM-INDEX specifies starting position."
 (defn clel-swap-bang [atom f & args]
   "Swap ATOM by applying F to current value and ARGS, calling watchers."
   (let [old-val (clel-deref atom)
-        new-val (apply f old-val args)]
+        new-val (apply (clel--fn f) old-val args)]
     (setcar (nthcdr 1 atom) new-val)
     (clel--notify-watchers atom old-val new-val)
     new-val))
@@ -661,20 +678,23 @@ such as `length', `apply', `sort' or `reverse', which cannot force."
 
 (defn clel-remove [pred coll]
   "Lazily return the items of COLL for which PRED is false."
-  (clel-filter (fn [x] (not (funcall pred x))) coll))
+  (let [pred (clel--fn pred)]
+    (clel-filter (fn [x] (not (funcall pred x))) coll)))
 
 (defn clel-apply [f & args]
   "Apply F to ARGS, whose final element is a sequence of trailing arguments."
-  (if (nil? args)
-    (funcall f)
-    (let [leading (elisp/butlast args)
-          trailing (clel-realize (car (elisp/last args)))]
-      (elisp/apply f (append leading trailing)))))
+  (let [f (clel--fn f)]
+    (if (nil? args)
+      (funcall f)
+      (let [leading (elisp/butlast args)
+            trailing (clel-seq (car (elisp/last args)))]
+        (elisp/apply f (append leading trailing))))))
 
 ;;; Lazy Sequence Functions
 
 (defn clel-map [f & colls]
   "Lazily map F over COLLS. With one coll, returns lazy seq."
+  (let [f (clel--fn f)]
   (if (== 1 (count colls))
     (let [s (clel-seq-force (car colls))]
       (clel-lazy-seq-create
@@ -688,11 +708,12 @@ such as `length', `apply', `sort' or `reverse', which cannot force."
        (fn []
          (when (cl-every #'identity seqs)
            (cons (apply f (mapcar #'clel-first seqs))
-                 (apply #'clel-map f (mapcar #'clel-rest seqs)))))))))
+                 (apply #'clel-map f (mapcar #'clel-rest seqs))))))))))
 
 (defn clel-filter [pred s]
   "Lazily filter S by PRED."
-  (let [s (clel-seq-force s)]
+  (let [s (clel-seq-force s)
+        pred (clel--fn pred)]
     (clel-lazy-seq-create
      (fn []
        (let [cur s]
@@ -727,7 +748,8 @@ such as `length', `apply', `sort' or `reverse', which cannot force."
   "Lazily take elements from S while PRED is true."
   (clel-lazy-seq-create
    (fn []
-     (let [forced (clel-seq-force s)]
+     (let [forced (clel-seq-force s)
+           pred (clel--fn pred)]
        (when (and forced (funcall pred (clel-first forced)))
          (cons (clel-first forced)
                (clel-take-while pred (clel-rest forced))))))))
@@ -736,7 +758,8 @@ such as `length', `apply', `sort' or `reverse', which cannot force."
   "Drop elements from S while PRED is true, return rest lazily."
   (clel-lazy-seq-create
    (fn []
-     (let [cur (clel-seq-force s)]
+     (let [cur (clel-seq-force s)
+           pred (clel--fn pred)]
        (while (and cur (funcall pred (clel-first cur)))
          (setq cur (clel-rest cur)))
        cur))))
@@ -791,7 +814,8 @@ such as `length', `apply', `sort' or `reverse', which cannot force."
 Each group contains consecutive elements with the same (F elem) value."
   (clel-lazy-seq-create
    (fn []
-     (let [forced (clel-seq-force s)]
+     (let [forced (clel-seq-force s)
+           f (clel--fn f)]
        (when forced
          (let [first-elem (clel-first forced)
                first-val (funcall f first-elem)
@@ -835,25 +859,63 @@ Returns list of (take-while pred s) and (drop-while pred s)."
         (setq cur (clel-rest cur)))
       acc)))
 
-(defn clel-sort [cmp coll]
-  "Sort COLL using comparator CMP. Returns a new list."
-  (let [lst (copy-sequence (clel-realize coll))]
-    (elisp-sort lst cmp)))
+(defn clel-compare [x y]
+  "Compare X and Y the way `clojure.core/compare' does: -1, 0 or 1.
+nil sorts first; numbers, strings, keywords and symbols compare by value;
+lists compare by length, then element by element."
+  (cond
+    (equal x y) 0
+    (nil? x) -1
+    (nil? y) 1
+    (and (number? x) (number? y)) (cond (< x y) -1 (> x y) 1 :else 0)
+    (and (stringp x) (stringp y)) (if (string< x y) -1 1)
+    (and (symbolp x) (symbolp y))
+    (let [a (symbol-name x) b (symbol-name y)]
+      (cond (string< a b) -1 (string= a b) 0 :else 1))
+    (and (clel-sequential-p x) (clel-sequential-p y))
+    (let [a (clel-seq x) b (clel-seq y)
+          la (length a) lb (length b)]
+      (if (not (== la lb))
+        (if (< la lb) -1 1)
+        (let [result 0]
+          (while (and a (== 0 result))
+            (setq result (clel-compare (car a) (car b)))
+            (setq a (cdr a) b (cdr b)))
+          result)))
+    :else (error "clel-compare: cannot compare %S with %S" x y)))
 
-(defn clel-sort-by [keyfn coll]
-  "Sort COLL by KEYFN. Uses < for comparison on key values."
-  (let [lst (copy-sequence (clel-realize coll))]
-    (elisp-sort lst (fn [a b]
-                      (let [ka (funcall keyfn a)
-                            kb (funcall keyfn b)]
-                        (cond
-                          (and (number? ka) (number? kb)) (< ka kb)
-                          (and (string? ka) (string? kb)) (string< ka kb)
-                          :else (string< (format "%s" ka) (format "%s" kb))))))))
+(defn clel--sort-pred [cmp]
+  "Return an Elisp sort predicate for the Clojure comparator CMP.
+A nil CMP is `clel-compare'. A comparator may answer a boolean (x before
+y) or a number (negative when x is before y), as in Clojure."
+  (if (nil? cmp)
+    (fn [a b] (< (clel-compare a b) 0))
+    (let [cmp (clel--fn cmp)]
+      (fn [a b]
+        (let [r (funcall cmp a b)]
+          (if (number? r) (< r 0) r))))))
+
+(cl-defun clel-sort (a &optional (b nil b-p))
+  "Clojure `sort': (sort COLL) or (sort COMPARATOR COLL).
+Returns a new sorted list; the sort is stable."
+  (let [cmp (if b-p a nil)
+        coll (if b-p b a)
+        lst (copy-sequence (clel-seq coll))]
+    (elisp-sort lst (clel--sort-pred cmp))))
+
+(cl-defun clel-sort-by (keyfn a &optional (b nil b-p))
+  "Clojure `sort-by': (sort-by KEYFN COLL) or (sort-by KEYFN COMPARATOR COLL).
+KEYFN may be a keyword. Returns a new sorted list; the sort is stable."
+  (let [keyfn (clel--fn keyfn)
+        pred (clel--sort-pred (if b-p a nil))
+        coll (if b-p b a)
+        lst (copy-sequence (clel-seq coll))]
+    (elisp-sort lst (fn [x y] (funcall pred (funcall keyfn x) (funcall keyfn y))))))
 
 (defn clel-group-by [f coll]
   "Group elements of COLL by the result of F. Returns alist."
   (let [result nil
+        f (clel--fn f)
         cur (clel-seq-force coll)]
     (while cur
       (let [item (clel-first cur)
@@ -883,6 +945,7 @@ Returns list of (take-while pred s) and (drop-while pred s)."
 (defn clel-every-p [pred coll]
   "Return t if PRED is true for every element in COLL."
   (let [cur (clel-seq-force coll)
+        pred (clel--fn pred)
         result true]
     (while (and cur result)
       (unless (funcall pred (clel-first cur))
@@ -893,6 +956,7 @@ Returns list of (take-while pred s) and (drop-while pred s)."
 (defn clel-some [pred coll]
   "Return the first truthy value of (PRED item) for items in COLL, or nil."
   (let [cur (clel-seq-force coll)
+        pred (clel--fn pred)
         result nil]
     (while (and cur (not result))
       (setq result (funcall pred (clel-first cur)))
@@ -1088,7 +1152,8 @@ Returns a hash-table where each item is a key with value t."
 
 (defn clel-set-select [pred s]
   "Return a set of items in S for which PRED returns true."
-  (let [result (make-hash-table :test 'equal)]
+  (let [result (make-hash-table :test 'equal)
+        pred (clel--fn pred)]
     (if (map? s)
       (maphash (fn [k v]
                  (when (funcall pred k)
@@ -1386,39 +1451,43 @@ Usage: (clel-transduce xform f coll) or (clel-transduce xform f init coll)"
 
 (defn clel-map-xf [f]
   "Return a mapping transducer that applies F to each element."
-  (fn [rf]
-    (fn [& args]
-      (pcase (count args)
-        (0 (funcall rf))
-        (1 (funcall rf (car args)))
-        (2 (funcall rf (car args) (funcall f (cadr args))))))))
+  (let [f (clel--fn f)]
+    (fn [rf]
+      (fn [& args]
+        (pcase (count args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (funcall rf (car args) (funcall f (cadr args)))))))))
 
 (defn clel-filter-xf [pred]
   "Return a filtering transducer that keeps elements where PRED is true."
-  (fn [rf]
-    (fn [& args]
-      (pcase (count args)
-        (0 (funcall rf))
-        (1 (funcall rf (car args)))
-        (2 (if (funcall pred (cadr args))
-             (funcall rf (car args) (cadr args))
-             (car args)))))))
+  (let [pred (clel--fn pred)]
+    (fn [rf]
+      (fn [& args]
+        (pcase (count args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (if (funcall pred (cadr args))
+               (funcall rf (car args) (cadr args))
+               (car args))))))))
 
 (defn clel-remove-xf [pred]
   "Return a transducer that removes elements where PRED is true."
-  (clel-filter-xf (fn [x] (not (funcall pred x)))))
+  (let [pred (clel--fn pred)]
+    (clel-filter-xf (fn [x] (not (funcall pred x))))))
 
 (defn clel-keep-xf [f]
   "Return a transducer that keeps non-nil results of (F item)."
-  (fn [rf]
-    (fn [& args]
-      (pcase (count args)
-        (0 (funcall rf))
-        (1 (funcall rf (car args)))
-        (2 (let [v (funcall f (cadr args))]
-             (if v
-               (funcall rf (car args) v)
-               (car args))))))))
+  (let [f (clel--fn f)]
+    (fn [rf]
+      (fn [& args]
+        (pcase (count args)
+          (0 (funcall rf))
+          (1 (funcall rf (car args)))
+          (2 (let [v (funcall f (cadr args))]
+               (if v
+                 (funcall rf (car args) v)
+                 (car args)))))))))
 
 (defn clel-keep-indexed-xf [f]
   "Return a transducer that keeps non-nil results of (F index item)."
@@ -1654,6 +1723,7 @@ With one argument, returns a transducer."
     (clel-lazy-seq-create
      (fn []
        (let [cur (clel-seq-force coll)
+             f (clel--fn f)
              result nil]
          (while (and cur (not result))
            (setq result (funcall f (clel-first cur)))
@@ -1859,9 +1929,10 @@ CUR is the current position in S, the original forced sequence."
 
 (defn clel-iterate [f x]
   "Return a lazy sequence of x, (f x), (f (f x)), etc."
-  (clel-lazy-seq-create
-   (fn []
-     (cons x (clel-iterate f (funcall f x))))))
+  (let [f (clel--fn f)]
+    (clel-lazy-seq-create
+     (fn []
+       (cons x (clel-iterate f (funcall f x)))))))
 
 (defn clel--reductions-helper [f acc s]
   "Recursive helper for `clel-reductions'.

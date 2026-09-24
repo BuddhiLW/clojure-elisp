@@ -29,3 +29,47 @@
 (defn kw-default [m] (:k m :none))
 
 (defn map-as-fn [] ({:a 1} :a))
+
+;;; Keywords, maps and sets as function arguments
+
+(def phases [{:id :night :elev -18} {:id :golden :elev 6} {:id :civil :elev -6}])
+
+(defn kw-map [] (map :id phases))
+
+(defn kw-sort-by [] (map :id (sort-by :elev phases)))
+
+(defn kw-sort-by-desc [] (map :id (sort-by :elev > phases)))
+
+(defn kw-filter [] (filter :on [{:on true :n 1} {:n 2} {:on 1 :n 3}]))
+
+(defn kw-group-by [] (group-by :kind [{:kind :a :n 1} {:kind :b :n 2} {:kind :a :n 3}]))
+
+(defn set-as-pred [] (filter #{:a :c} [:a :b :c :d]))
+
+(defn map-as-mapper [] (map {:a 1 :b 2} [:a :b :z]))
+
+;;; Comparators and sorting
+
+(defn sort-default [] (sort [3 1 2]))
+
+(defn sort-lt [] (sort < [3 1 2]))
+
+(defn sort-gt [] (sort > [3 1 2]))
+
+(defn sort-compare [] (sort compare ["b" "a" "c"]))
+
+(defn sort-reverse-compare [] (sort (fn [a b] (compare b a)) [1 3 2]))
+
+(defn sort-keywords [] (sort [:b :c :a]))
+
+(defn compare-values [] [(compare 1 2) (compare "b" "a") (compare :a :a) (compare nil 1)])
+
+;;; Extra function arguments
+
+(defn swap-update []
+  (let [a (atom {:count 1})]
+    (swap! a update :count inc)
+    (swap! a update :count + 10)
+    @a))
+
+(defn update-extra-args [] (update {:a 1} :a + 10))
