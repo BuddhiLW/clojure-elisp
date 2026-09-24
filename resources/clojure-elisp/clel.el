@@ -1,6 +1,7 @@
-;;; clel.el --- Runtime library for ClojureElisp -*- lexical-binding: t; -*-
+;;; clel.el --- Runtime library for ClojureElisp  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025 Pedro G. Branquinho
+;; Copyright (C) 2025-2026 Pedro G. Branquinho
+
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
@@ -9,16 +10,30 @@
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
 
+;; This file is not part of GNU Emacs.
+
 ;;; Commentary:
+
+;; The runtime library of ClojureElisp, a compiler from Clojure syntax
+;; (.cljel files) to Emacs Lisp.  Compiled code calls these functions for
+;; what Clojure has and Emacs Lisp lacks: Clojure's collection functions
+;; over lists, vectors, alists and hash tables, lazy sequences, atoms,
+;; transducers, protocols and multimethods, and the clojure.string and
+;; clojure.set functions.
 ;;
-;; Runtime support library for ClojureElisp compiled code.
-;; Provides Clojure-like functions that don't have direct Elisp equivalents.
-;; Auto-generated from runtime.cljel — do not edit by hand.
+;; You do not call it directly.  A package compiled with ClojureElisp
+;; lists clel in its Package-Requires, and each of its files requires
+;; clel and refuses to load when `clel-runtime-version' is older than
+;; the compiler that produced it expects.
+;;
+;; This file is generated from runtime.cljel in the ClojureElisp
+;; repository: edit that, not this file.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'seq)
+(require 'subr-x)
 
 (defconst clel-runtime-version "0.8.0"
   "Version of the ClojureElisp runtime library.
@@ -48,7 +63,7 @@ were emitted against.")
   ((hash-table-p coll) (let* ((new (copy-hash-table coll)))
     (puthash (car item) (cdr item) new)
     new))
-  (t (error "clel-conj: unsupported collection type")))))
+  (t (error "Unsupported collection type for clel-conj: %s" (type-of coll))))))
 
 (cl-defun clel-get (coll key &optional default)
   "Get KEY from COLL, returning DEFAULT only when KEY is ABSENT.
@@ -73,7 +88,7 @@ deliberately falsy value."
   ((hash-table-p coll) (let* ((new (copy-hash-table coll)))
     (puthash key val new)
     new))
-  (t (error "clel-assoc: unsupported collection type"))))
+  (t (error "Unsupported collection type for clel-assoc: %s" (type-of coll)))))
 
 (defun clel-dissoc (coll key)
   "Remove KEY from COLL, returning new collection.
@@ -85,7 +100,7 @@ Works with alists and hash-tables."
   ((hash-table-p coll) (let* ((new (copy-hash-table coll)))
     (remhash key new)
     new))
-  (t (error "clel-dissoc: unsupported collection type"))))
+  (t (error "Unsupported collection type for clel-dissoc: %s" (type-of coll)))))
 
 (cl-defun clel-get-in (m ks &optional not-found)
   "Get nested value from M following keys KS.
@@ -124,7 +139,7 @@ depending on the first map."
   ((null first-map) nil)
   ((hash-table-p first-map) (copy-hash-table first-map))
   ((listp first-map) (copy-alist first-map))
-  (t (error "clel-merge: unsupported type")))))
+  (t (error "Unsupported map type for clel-merge: %s" (type-of first-map))))))
     (dolist (m (cdr maps))
     (when m
     (cond
@@ -157,7 +172,7 @@ args. With NOT-FOUND supplied, return it for an out-of-range index instead
 of signalling, matching clojure.core/nth's 3-arity."
   (let* ((coll (clel-realize coll))
         (len (if (sequencep coll) (clel-count coll) 0)))
-    (if (and (integerp n) (>= n 0) (< n len)) (elt coll n) (if not-found-p not-found (error "clel-nth: index %s out of bounds (length %d)" n len)))))
+    (if (and (integerp n) (>= n 0) (< n len)) (elt coll n) (if not-found-p not-found (error "Index %s out of bounds for clel-nth (length %d)" n len)))))
 
 (defun clel-contains-p (coll key)
   "Return t if KEY exists in COLL.
@@ -169,7 +184,7 @@ For vectors, checks if index is valid."
   ((null coll) nil)
   ((hash-table-p coll) (let* ((not-found (gensym)))
     (not (eq (gethash key coll not-found) not-found))))
-  ((listp coll) (if (and (consp (car coll)) (not (listp (cdr (car coll))))) (not (null (assoc key coll))) (not (null (member key coll)))))
+  ((listp coll) (if (and (consp (car coll)) (not (listp (cdr (car coll))))) (if (assoc key coll) t nil) (if (member key coll) t nil)))
   ((vectorp coll) (and (integerp key) (>= key 0) (< key (clel-count coll))))
   (t nil))))
 
@@ -216,7 +231,7 @@ Supports vectors, lists, and hash-tables."
     (dolist (pair (clel-seq from))
     (puthash (car pair) (cdr pair) new))
     new))
-  (t (error "clel-into: unsupported target collection type: %s" (type-of to))))))
+  (t (error "Unsupported target collection type for clel-into: %s" (type-of to))))))
 
 (defun clel-coll-p (x)
   "Return t if X is a collection (list, vector, or hash-table)."
@@ -232,7 +247,7 @@ Supports vectors, lists, and hash-tables."
 
 (defun clel-some-p (x)
   "Return t if X is not nil."
-  (not (null x)))
+  (if x t nil))
 
 (defun clel-true-p (x)
   "Return t if X is exactly t."
@@ -299,7 +314,7 @@ MATCH is treated as a literal string."
 
 (defun clel-str-includes-p (s substr)
   "Return t if S contains SUBSTR."
-  (if (or (null s) (null substr)) nil (not (null (string-match-p (regexp-quote substr) s)))))
+  (if (or (null s) (null substr)) nil (if (string-match-p (regexp-quote substr) s) t nil)))
 
 (defun clel-str-starts-with-p (s prefix)
   "Return t if S starts with PREFIX."
@@ -669,7 +684,8 @@ Returns list of (take-while pred s) and (drop-while pred s)."
   (list (clel-doall (clel-take-while pred s)) (clel-doall (clel-drop-while pred s))))
 
 (defun clel-reduce (f &rest args)
-  "Reduce S with F. (clel-reduce f coll) or (clel-reduce f init coll)."
+  "Reduce the collection in ARGS with F, as Clojure's reduce does.
+ARGS is COLL, reduced from its first element, or INIT and COLL."
   (let* ((init nil)
         (s nil))
     (if (= 1 (clel-count args)) (let* ((coll (clel-seq-force (car args))))
@@ -755,11 +771,10 @@ Returns list of (take-while pred s) and (drop-while pred s)."
   (null (clel-seq-force coll)))
 
 (defun clel-range (&rest args)
-  "Generate a range of numbers.
-\(range) - returns empty list (infinite range not supported)
-\(range end) - returns (0 1 ... end-1)
-\(range start end) - returns (start start+1 ... end-1)
-\(range start end step) - returns (start start+step ...) up to but not including end"
+  "Return a range of numbers; ARGS is END, START END, or START END STEP.
+The range runs from START (default 0) by STEP (default 1) up to but not
+including END.  With no ARGS, return the empty list: an infinite range
+is not supported."
   (let* ((start 0)
         (end nil)
         (step 1))
@@ -811,14 +826,14 @@ Returns a hash-table where each item is a key with value t."
 (defun clel-set-p (x)
   "Return t if X is a set (hash-table with all values t)."
   (and (hash-table-p x) (let* ((is-set t))
-    (maphash (lambda (k v)
+    (maphash (lambda (_k v)
     (unless (eq v t)
     (setq is-set nil))) x)
     is-set)))
 
 (defun clel-set-contains-p (s item)
   "Return t if set S contains ITEM."
-  (if (hash-table-p s) (gethash item s nil) (not (null (member item s)))))
+  (if (hash-table-p s) (gethash item s nil) (if (member item s) t nil)))
 
 (defun clel-set-add (s item)
   "Add ITEM to set S, returning new set."
@@ -836,7 +851,7 @@ Returns a hash-table where each item is a key with value t."
   "Return the union of SETS."
   (let* ((result (make-hash-table :test 'equal)))
     (dolist (s sets)
-    (if (hash-table-p s) (maphash (lambda (k v)
+    (if (hash-table-p s) (maphash (lambda (k _v)
     (puthash k t result)) s) (dolist (item (clel-seq-force s))
     (puthash item t result))))
     result))
@@ -846,7 +861,7 @@ Returns a hash-table where each item is a key with value t."
   (if (null sets) (make-hash-table :test 'equal) (let* ((first-set (car sets))
         (rest-sets (cdr sets))
         (result (make-hash-table :test 'equal)))
-    (if (hash-table-p first-set) (maphash (lambda (k v)
+    (if (hash-table-p first-set) (maphash (lambda (k _v)
     (when (cl-every (lambda (s)
     (if (hash-table-p s) (gethash k s) (member k s))) rest-sets)
     (puthash k t result))) first-set) (dolist (item (clel-seq-force first-set))
@@ -858,7 +873,7 @@ Returns a hash-table where each item is a key with value t."
 (defun clel-set-difference (s1 &rest sets)
   "Return items in S1 not in any of SETS."
   (let* ((result (make-hash-table :test 'equal)))
-    (if (hash-table-p s1) (maphash (lambda (k v)
+    (if (hash-table-p s1) (maphash (lambda (k _v)
     (unless (cl-some (lambda (s)
     (if (hash-table-p s) (gethash k s) (member k s))) sets)
     (puthash k t result))) s1) (dolist (item (clel-seq-force s1))
@@ -870,7 +885,7 @@ Returns a hash-table where each item is a key with value t."
 (defun clel-set-subset-p (s1 s2)
   "Return t if S1 is a subset of S2."
   (let* ((result t))
-    (if (hash-table-p s1) (maphash (lambda (k v)
+    (if (hash-table-p s1) (maphash (lambda (k _v)
     (unless (if (hash-table-p s2) (gethash k s2) (member k s2))
     (setq result nil))) s1) (dolist (item (clel-seq-force s1))
     (unless (if (hash-table-p s2) (gethash item s2) (member item s2))
@@ -884,7 +899,7 @@ Returns a hash-table where each item is a key with value t."
 (defun clel-set-select (pred s)
   "Return a set of items in S for which PRED returns true."
   (let* ((result (make-hash-table :test 'equal)))
-    (if (hash-table-p s) (maphash (lambda (k v)
+    (if (hash-table-p s) (maphash (lambda (k _v)
     (when (funcall pred k)
     (puthash k t result))) s) (dolist (item (clel-seq-force s))
     (when (funcall pred item)
@@ -895,7 +910,7 @@ Returns a hash-table where each item is a key with value t."
   "Project a relation XREL (set of maps) onto the keys in KS."
   (let* ((result (make-hash-table :test 'equal))
         (key-list (clel-realize ks)))
-    (if (hash-table-p xrel) (maphash (lambda (m v)
+    (if (hash-table-p xrel) (maphash (lambda (m _v)
     (let* ((projected nil))
     (dolist (k key-list)
     (let* ((val (clel-get m k)))
@@ -917,7 +932,7 @@ Returns a hash-table where each item is a key with value t."
     (dolist (pair kmap)
     (puthash (car pair) (cdr pair) ht))
     ht))))
-    (if (hash-table-p xrel) (maphash (lambda (m v)
+    (if (hash-table-p xrel) (maphash (lambda (m _v)
     (let* ((renamed nil))
     (cond
   ((hash-table-p m) (maphash (lambda (k val)
@@ -963,11 +978,11 @@ Returns a hash-table where each item is a key with value t."
 If KM is provided, it maps keys from XREL to keys in YREL."
   (let* ((result (make-hash-table :test 'equal))
         (x-list (if (hash-table-p xrel) (let* ((items nil))
-    (maphash (lambda (k v)
+    (maphash (lambda (k _v)
     (push k items)) xrel)
     items) (clel-seq-force xrel)))
         (y-list (if (hash-table-p yrel) (let* ((items nil))
-    (maphash (lambda (k v)
+    (maphash (lambda (k _v)
     (push k items)) yrel)
     items) (clel-seq-force yrel))))
     (dolist (xm x-list)
@@ -997,7 +1012,7 @@ Returns a map from key-values to sets of matching maps."
   (let* ((result nil)
         (key-list (clel-realize ks))
         (x-list (if (hash-table-p xrel) (let* ((items nil))
-    (maphash (lambda (k v)
+    (maphash (lambda (k _v)
     (push k items)) xrel)
     items) (clel-realize xrel))))
     (dolist (m x-list)
@@ -1032,7 +1047,8 @@ Values must be unique, or later entries will overwrite earlier ones."
   (error nil)))
 
 (defun clel--reducing-fn-complete (rf result)
-  "Call RF with 1 argument for completion."
+  "Call RF with RESULT alone, its completion arity.
+Return RESULT unchanged when RF has no such arity."
   (condition-case nil
     (funcall rf result)
   (error result)))
@@ -1058,8 +1074,9 @@ Values must be unique, or later entries will overwrite earlier ones."
   (if (clel-reduced-p x) (cadr x) x))
 
 (defun clel-transduce (xform f &rest args)
-  "Transduce COLL with transducer XFORM and reducing function F.
-Usage: (clel-transduce xform f coll) or (clel-transduce xform f init coll)"
+  "Transduce a collection with transducer XFORM and reducing function F.
+ARGS is COLL, reduced from the init value F returns when called with no
+arguments, or INIT and COLL."
   (let* ((init nil)
         (coll nil))
     (if (= 1 (clel-count args)) (progn
@@ -1462,9 +1479,8 @@ Returns the Elisp equivalent."
   (if (null s) nil (split-string s "\n")))
 
 (defun clel-peek (coll)
-  "Return the last element of a vector, or first element of a list.
-For vectors (represented as lists in ClojureElisp), returns last element.
-For lists, returns first element."
+  "Return the element of COLL that `clel-pop' removes.
+That is the last element of a vector and the first element of a list."
   (let* ((coll (clel-realize coll)))
     (cond
   ((null coll) nil)
@@ -1473,8 +1489,8 @@ For lists, returns first element."
   (t nil))))
 
 (defun clel-pop (coll)
-  "Return collection without the peek element.
-For vectors, returns all but last. For lists, returns rest."
+  "Return COLL without the element `clel-peek' returns.
+That is all but the last element of a vector, and the rest of a list."
   (let* ((coll (clel-realize coll)))
     (cond
   ((null coll) nil)
@@ -1501,7 +1517,7 @@ CUR is the current position in S, the original forced sequence."
     (clel--cycle-helper s s))))
 
 (defun clel-iterate (f x)
-  "Return a lazy sequence of x, (f x), (f (f x)), etc."
+  "Return the lazy sequence X, (F X), (F (F X)), and so on."
   (clel-lazy-seq-create (lambda ()
     (cons x (clel-iterate f (funcall f x))))))
 
@@ -1513,8 +1529,8 @@ F is the reducing function, ACC the accumulator, S the remaining sequence."
     (cons new-acc (clel--reductions-helper f new-acc (clel-rest s)))) nil))))
 
 (defun clel-reductions (f &rest args)
-  "Return a lazy seq of intermediate reduce values.
-Usage: (clel-reductions f coll) or (clel-reductions f init coll)."
+  "Return a lazy seq of the intermediate values of reducing with F.
+ARGS is COLL, reduced from its first element, or INIT and COLL."
   (let* ((init nil)
         (coll nil))
     (if (= 1 (clel-count args)) (let* ((s (clel-seq-force (car args))))
@@ -1540,7 +1556,7 @@ Usage: (clel-reductions f coll) or (clel-reductions f init coll)."
 
 (defun clel-drop-last (&rest args)
   "Return all but the last N elements of COLL.
-Usage: (clel-drop-last coll) or (clel-drop-last n coll)."
+ARGS is COLL, dropping one element, or N and COLL."
   (let* ((n nil)
         (coll nil))
     (if (= 1 (clel-count args)) (progn
@@ -1559,7 +1575,7 @@ Usage: (clel-drop-last coll) or (clel-drop-last n coll)."
   "Registry mapping (protocol . type) pairs to t if implemented.")
 
 (defun clel--register-protocol (protocol-name methods)
-  "Register PROTOCOL-NAME with its METHOD names."
+  "Register PROTOCOL-NAME with METHODS, the list of its method names."
   (puthash protocol-name methods clel--protocol-registry))
 
 (defun clel--register-impl (protocol-name type-name)
