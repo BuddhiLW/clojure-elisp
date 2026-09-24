@@ -16,7 +16,8 @@
      `fresh`                   names the compiler itself makes (destructuring);
      `renumber-reader-gensyms` `p1__N#`, `rest__N#` and `x__N__auto__` that the
                                reader put into a form before analysis saw it;
-     `renumber-expansion`      gensyms a macro expansion introduced.")
+     `renumber-expansion`      gensyms a macro expansion introduced."
+  (:require [clojure.walk :as walk]))
 
 (def ^:dynamic *counter*
   "Counter atom of the current top-level-form scope, or nil outside one."
@@ -48,18 +49,10 @@
   (into #{} (filter symbol?) (tree-seq coll? seq form)))
 
 (defn- rename
-  "form with every symbol in smap replaced, keeping collection and symbol
-   metadata (source lines ride on list metadata)."
+  "form with every symbol in smap replaced. clojure.walk keeps collection
+   metadata, which is where source line numbers ride."
   [form smap]
-  (letfn [(walk [x]
-            (cond
-              (symbol? x)                        (if-let [s (get smap x)] (with-meta s (meta x)) x)
-              (map-entry? x)                     (clojure.lang.MapEntry/create (walk (key x)) (walk (val x)))
-              (seq? x)                           (with-meta (apply list (map walk x)) (meta x))
-              (instance? clojure.lang.IRecord x) x
-              (coll? x)                          (into (empty x) (map walk) x)
-              :else                              x))]
-    (if (empty? smap) form (walk form))))
+  (if (empty? smap) form (walk/postwalk-replace smap form)))
 
 (defn- renumber
   "form with the unqualified symbols `generated?` accepts renamed, in order of
