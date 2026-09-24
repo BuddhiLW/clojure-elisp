@@ -43,10 +43,13 @@
 (def PackageMap
   "A package description, from `:elisp/package` or clel.edn `:package`.
    `:name` is the package name, i.e. the main file's name without .el; a
-   file whose own name differs from it is a secondary file of the package."
+   file whose own name differs from it is a secondary file of the package.
+   `:assisted-by` names the coding assistants, as AGENT:MODEL, that MELPA
+   asks a package to credit under its Author line."
   [:map {:closed false}
    [:name {:optional true} [:or :string :symbol]]
    [:author {:optional true} [:or :string [:sequential :string]]]
+   [:assisted-by {:optional true} [:or :string [:sequential :string]]]
    [:maintainer {:optional true} [:or :string [:sequential :string]]]
    [:url {:optional true} :string]
    [:version {:optional true} :string]
@@ -60,8 +63,8 @@
 (def package-wide-keys
   "Keys that describe the whole package. `:commentary` is not one: it belongs
    to the file whose ns declares it."
-  [:name :author :maintainer :url :version :package-requires :keywords
-   :license :copyright])
+  [:name :author :assisted-by :maintainer :url :version :package-requires
+   :keywords :license :copyright])
 
 (defn- version-parts [v]
   (mapv #(or (parse-long %) 0) (str/split (str v) #"\.")))
@@ -162,8 +165,13 @@
        ";;; Code:"
        ""]))))
 
-(defn- people-fields [{:keys [author maintainer]}]
+(defn- people-fields
+  "Author, one Assisted-by line per assistant (right under Author, as MELPA's
+   CONTRIBUTING asks), then Maintainer."
+  [{:keys [author assisted-by maintainer]}]
   (concat (when author (people-lines "Author" author))
+          (map #(str ";; Assisted-by: " %)
+               (if (string? assisted-by) [assisted-by] assisted-by))
           (when maintainer (people-lines "Maintainer" maintainer))))
 
 (defn- field [label v]

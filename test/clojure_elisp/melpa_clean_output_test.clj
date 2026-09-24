@@ -81,7 +81,7 @@
     (is (= "(defun f ()\n  \"First.\nSecond.\n  Example.\n\nLast.\"\n  1)"
            (clel/emit '(defn f "First.\n   Second.\n     Example.\n\n   Last." [] 1)))))
   (testing "quotes and backslashes are escaped; a paren opening a line is \\("
-    (is (= "(defvar x 1 \"Say \\\"hi\\\" \\\\ now.\n\\(not code)\")"
+    (is (= "(defvar x 1\n  \"Say \\\"hi\\\" \\\\ now.\n\\(not code)\")"
            (clel/emit '(def x "Say \"hi\" \\ now.\n(not code)" 1)))))
   (testing "Elisp style, a string opening a body that goes on is the docstring"
     (is (= "(defun v (&rest items)\n  \"Make a list of ITEMS.\"\n  items)"

@@ -442,7 +442,9 @@ file gets the library headers package.el and MELPA read:
 
 `Package-Requires` gains `(clel "<minimum>")` automatically.
 Other keys: `:maintainer`, `:copyright`, `:commentary`; `:author` and
-`:maintainer` also take a vector.
+`:maintainer` also take a vector. `:assisted-by` (`"Agent:model"`, or a
+vector of them) writes the `;; Assisted-by:` line MELPA's CONTRIBUTING asks
+for under Author when an AI assistant helped write the code.
 
 A multi-file package states this once, in `clel.edn` (or in its main
 namespace's attr-map), and `compile-project` gives every file a header:

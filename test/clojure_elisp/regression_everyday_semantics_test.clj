@@ -159,8 +159,8 @@
 
 (deftest defonce-is-a-documented-defvar
   (let [out (compile-ns defs-src)]
-    (is (re-find #"\(defvar a-b-cache \(clel-atom .*\) \"The cache.\"\)" out))
-    (is (str/includes? out "(defvar a-b-once 1 \"Once.\")"))
+    (is (re-find #"\(defvar a-b-cache \(clel-atom .*\)\n  \"The cache.\"\)" out))
+    (is (str/includes? out "(defvar a-b-once 1\n  \"Once.\")"))
     (is (not (str/includes? out "hasRoot")))))
 
 (deftest def-nil-binds-and-bare-def-declares

@@ -62,6 +62,17 @@
   (let [out (ph/render "x" "S." {:author ["A <a@x>" "B <b@x>"]})]
     (is (str/includes? out ";; Author: A <a@x>\n;;         B <b@x>\n"))))
 
+(deftest assisted-by-lines-follow-the-author
+  (testing "MELPA's CONTRIBUTING asks for the line right under Author"
+    (is (str/includes? (ph/render "x" "S." {:author "A <a@x>" :assisted-by "Agent:model-1"})
+                       ";; Author: A <a@x>\n;; Assisted-by: Agent:model-1\n")))
+  (testing "one line per assistant, in secondary files too"
+    (let [out (ph/render "x-y" "S." {:name "x" :author "A <a@x>"
+                                     :assisted-by ["One:m1" "Two:m2"]})]
+      (is (str/includes? out ";; Assisted-by: One:m1\n;; Assisted-by: Two:m2\n"))))
+  (testing "absent unless declared"
+    (is (not (str/includes? (ph/render "x" "S." {:author "A <a@x>"}) "Assisted-by")))))
+
 (deftest explicit-commentary-wins-over-the-docstring-body
   (let [out (ph/render "x" "S.\n\n  Body." {:commentary "Custom."})]
     (is (str/includes? out ";;; Commentary:\n\n;; Custom.\n"))
