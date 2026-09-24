@@ -75,6 +75,11 @@
             sentence, which an escaped \\n hides"
     (is (= "(defun f ()\n  \"First line.\nSecond line.\"\n  1)"
            (clel/emit '(defn f "First line.\nSecond line." [] 1)))))
+  (testing "Clojure indents continuation lines under the quote; Emacs shows
+            them as written and checkdoc wants them flush left. The shared
+            indentation goes, relative indentation stays."
+    (is (= "(defun f ()\n  \"First.\nSecond.\n  Example.\n\nLast.\"\n  1)"
+           (clel/emit '(defn f "First.\n   Second.\n     Example.\n\n   Last." [] 1)))))
   (testing "quotes and backslashes are escaped; a paren opening a line is \\("
     (is (= "(defvar x 1 \"Say \\\"hi\\\" \\\\ now.\n\\(not code)\")"
            (clel/emit '(def x "Say \"hi\" \\ now.\n(not code)" 1)))))

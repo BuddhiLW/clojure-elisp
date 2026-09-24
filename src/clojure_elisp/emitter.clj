@@ -71,14 +71,27 @@
          (map #(str prefix %))
          (str/join "\n"))))
 
+(defn dedent-docstring
+  "docstring with the indentation its continuation lines share removed.
+   Clojure indents them under the opening quote; Emacs shows a docstring's
+   lines as written, and checkdoc wants the second line flush left. Relative
+   indentation (an indented example) is kept."
+  [s]
+  (let [[head & more] (str/split s #"\n" -1)
+        indents (->> more (remove str/blank?) (map #(count (re-find #"^ *" %))))
+        n       (if (seq indents) (apply min indents) 0)]
+    (if (zero? n)
+      s
+      (str/join "\n" (cons head (map #(if (str/blank? %) "" (subs % n)) more))))))
+
 (defn docstring-literal
-  "Elisp string literal for a docstring. Newlines stay newlines: checkdoc
-   reads a docstring line by line and wants its first line to be a sentence.
-   A `(` opening a line is written `\\(`, as Emacs requires of a paren in
-   column 0 inside a string."
+  "Elisp string literal for a docstring, dedented (`dedent-docstring`).
+   Newlines stay newlines: checkdoc reads a docstring line by line and wants
+   its first line to be a sentence. A `(` opening a line is written `\\(`, as
+   Emacs requires of a paren in column 0 inside a string."
   [s]
   (str "\""
-       (-> s
+       (-> (dedent-docstring s)
            (str/replace "\\" "\\\\")
            (str/replace "\"" "\\\"")
            (str/replace #"(?m)^\(" "\\\\("))
@@ -438,9 +451,9 @@
    `docstring-literal` writes it `\\(fn ...)`, a paren opening a line."
   [docstring usage]
   (when docstring
-    (if (re-find #"(?m)^\\?\(fn[ )]" docstring)
+    (if (re-find #"(?m)^\s*\\?\(fn[ )]" docstring)
       docstring
-      (str docstring "\n\n" usage))))
+      (str (dedent-docstring docstring) "\n\n" usage))))
 
 (defn- emit-multi-arity-defn
   "Emit a multi-arity defun with cl-case dispatch on arg count. The dispatch

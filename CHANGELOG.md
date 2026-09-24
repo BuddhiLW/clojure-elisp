@@ -104,6 +104,9 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   physical line with `\n` escapes, so checkdoc saw its whole text as the
   first line ("First sentence should end with punctuation"). Docstrings are
   now written with real newlines, and a `(` opening a line is written `\(`.
+  The indentation Clojure puts on continuation lines (aligned under the
+  opening quote) is removed, relative indentation kept: Emacs shows docstring
+  lines as written, and checkdoc wants the second line flush left.
   An Elisp-style `(defn f [x] "Doc." body)`, a string opening a body that goes
   on, is taken as the docstring. The regenerated runtime's checkdoc
   diagnostics drop from 36 to 16.
