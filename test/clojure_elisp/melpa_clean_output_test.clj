@@ -108,7 +108,7 @@
              (defn g [s] (clojure.string/upper-case (d/h (helper s))))")]
     (testing "no Emacs feature named clojure-* exists, so requiring one fails
               with \"Cannot open load file\""
-      (is (not (re-find #"\(require 'clojure-(?!elisp-runtime)" el))))
+      (is (not (re-find #"\(require 'clojure-" el))))
     (testing "calls through the alias still compile to the runtime"
       (is (str/includes? el "(clel-str-join \",\" (clel-set-union xs xs))"))
       (is (str/includes? el "(clel-str-upper ")))

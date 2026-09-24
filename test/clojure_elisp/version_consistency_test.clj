@@ -16,7 +16,7 @@
 (def ^:private el-packages
   "Every .el file carrying a MELPA `;; Version:` header. Mirrors build/el-packages;
    `el-package-list-covers-every-el-file` fails if a new .el escapes both."
-  ["resources/clojure-elisp/clojure-elisp-runtime.el"
+  ["resources/clojure-elisp/clel.el"
    "resources/clojure-elisp/clojure-elisp-mode.el"
    "resources/clojure-elisp/cider-clojure-elisp.el"])
 

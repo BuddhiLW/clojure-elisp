@@ -16,7 +16,7 @@
             [clojure-elisp.version :as version]))
 
 (deftest runtime-announces-its-own-version
-  (let [el (slurp "resources/clojure-elisp/clojure-elisp-runtime.el")]
+  (let [el (slurp "resources/clojure-elisp/clel.el")]
     (testing "the runtime defines the constant compiled files read"
       (is (str/includes? el (str "(defconst " version/runtime-version-symbol " \""))))
     (testing "the constant carries the project version, not a placeholder"
@@ -25,8 +25,11 @@
 
 (deftest emitted-files-guard-the-runtime-version
   (let [el (clel/compile-file-string "(ns my.pkg)\n(defn f [] 1)")]
-    (testing "the runtime is still required"
-      (is (str/includes? el "(require 'clojure-elisp-runtime)")))
+    (testing "the runtime is required by its package name, clel: MELPA wants
+              every definition to start with the package name, and the
+              runtime's all start with clel"
+      (is (str/includes? el "(require 'clel)"))
+      (is (not (str/includes? el "clojure-elisp-runtime"))))
     (testing "the guard names the minimum runtime this compiler emits against"
       (is (str/includes? el (str "(version<= \"" version/minimum-runtime-version "\" "
                                  version/runtime-version-symbol ")"))))

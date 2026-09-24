@@ -327,7 +327,7 @@
     (let [result (analyze-and-emit '(ns my.package))]
       (is (clojure.string/includes? result "my-package"))
       (is (clojure.string/includes? result "lexical-binding: t"))
-      (is (clojure.string/includes? result "clojure-elisp-runtime")))))
+      (is (clojure.string/includes? result "(require 'clel)")))))
 
 (deftest emit-ns-require-test
   (testing "emits require for simple dependency"
@@ -353,7 +353,7 @@
     (let [code (analyze-and-emit '(ns my.app (:require [foo.bar])))]
       (is (clojure.string/includes? code ";;; my-app.el"))
       (is (clojure.string/includes? code "lexical-binding: t"))
-      (is (clojure.string/includes? code "(require 'clojure-elisp-runtime)")))))
+      (is (clojure.string/includes? code "(require 'clel)")))))
 
 (deftest emit-ns-load-path-test
   (testing "load-path emitted before requires"

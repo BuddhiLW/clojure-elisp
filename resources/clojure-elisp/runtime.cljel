@@ -1,10 +1,11 @@
 ;;; ClojureElisp Runtime — self-hosted in cljel
 ;;
-;; Compiles to clojure-elisp-runtime.el via:
+;; Compiles to clel.el, the Emacs package clel, via `make runtime', i.e.
 ;;   (clel/compile-runtime "resources/clojure-elisp/runtime.cljel"
-;;                         "resources/clojure-elisp/clojure-elisp-runtime.el")
+;;                         "resources/clojure-elisp/clel.el")
 ;;
 ;; No (ns ...) form — runtime functions must NOT be namespace-prefixed.
+;; Every definition starts with clel-, the package name, as MELPA requires.
 ;; The compile-runtime function adds the MELPA header and (provide ...).
 
 ;;; Persistent-ish Data Structures

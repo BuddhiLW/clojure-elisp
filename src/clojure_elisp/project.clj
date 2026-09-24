@@ -259,10 +259,14 @@
     (str/trim r)
     (str/trim (fs/read-file fs "VERSION"))))
 
+(def runtime-file-name
+  "File name of the runtime library: the feature it provides, plus .el."
+  (str version/runtime-feature ".el"))
+
 (defn- runtime-header
   "MELPA-compatible header for the compiled runtime .el file."
   [fs]
-  (str ";;; clojure-elisp-runtime.el --- Runtime library for ClojureElisp -*- lexical-binding: t; -*-\n"
+  (str ";;; " runtime-file-name " --- Runtime library for ClojureElisp -*- lexical-binding: t; -*-\n"
        "\n"
        ";; Copyright (C) 2025 Pedro G. Branquinho\n"
        ";; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>\n"
@@ -298,8 +302,8 @@
    (let [source (fs/read-file fs input-path)
          code   (cc/compile-file-string source)
          elisp  (str (runtime-header fs) "\n" code
-                     "\n\n(provide 'clojure-elisp-runtime)\n"
-                     ";;; clojure-elisp-runtime.el ends here\n")]
+                     "\n\n(provide '" version/runtime-feature ")\n"
+                     ";;; " runtime-file-name " ends here\n")]
      (fs/write-file! fs output-path elisp)
      {:input input-path :output output-path :size (count elisp)})))
 

@@ -32,7 +32,7 @@
     (testing "summary line from the docstring's first line, period dropped"
       (is (str/starts-with? out ";;; my-pkg.el --- Do a useful thing  -*- lexical-binding: t; -*-\n")))
     (testing "declared emacs kept, runtime appended at the minimum version"
-      (is (str/includes? out (str ";; Package-Requires: ((emacs \"29.1\") (seq \"2.24\") (clojure-elisp-runtime \""
+      (is (str/includes? out (str ";; Package-Requires: ((emacs \"29.1\") (seq \"2.24\") (clel \""
                                   version/minimum-runtime-version "\"))"))))
     (testing "fields"
       (is (str/includes? out ";; Author: Jane Doe <jane@example.org>\n"))
@@ -52,11 +52,11 @@
           [ph/runtime-package version/minimum-runtime-version]]
          (ph/package-requires nil)))
   (is (= [['emacs "30.1"] [ph/runtime-package "9.0.0"]]
-         (ph/package-requires [['emacs "30.1"] ['clojure-elisp-runtime "9.0.0"]]))))
+         (ph/package-requires [['emacs "30.1"] ['clel "9.0.0"]]))))
 
 (deftest package-requires-refuses-a-runtime-older-than-emitted-code-needs
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"compiled code needs"
-                        (ph/package-requires [['clojure-elisp-runtime "0.1"]]))))
+                        (ph/package-requires [['clel "0.1"]]))))
 
 (deftest multiple-authors-align-under-the-label
   (let [out (ph/render "x" "S." {:author ["A <a@x>" "B <b@x>"]})]
@@ -105,7 +105,7 @@
       (is (str/starts-with? main ";;; tod.el --- Themes that follow the sun  -*- lexical-binding: t; -*-\n"))
       (is (str/includes? main ";; Version: 0.2.0\n"))
       (is (str/includes? main ";; URL: https://example.org/tod\n"))
-      (is (str/includes? main (str ";; Package-Requires: ((emacs \"29.1\") (clojure-elisp-runtime \""
+      (is (str/includes? main (str ";; Package-Requires: ((emacs \"29.1\") (clel \""
                                    version/minimum-runtime-version "\"))\n")))
       (is (str/includes? main ";;; Commentary:\n\n;; Main commentary.\n")))
     (testing "a secondary file: summary, author, SPDX, Commentary, then Code"

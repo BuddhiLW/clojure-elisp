@@ -34,7 +34,7 @@
 
 (def runtime-package
   "Package that provides the runtime every compiled file requires."
-  'clojure-elisp-runtime)
+  version/runtime-feature)
 
 (def default-emacs-version
   "Emacs version the runtime itself requires."

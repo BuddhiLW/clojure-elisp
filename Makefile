@@ -9,9 +9,17 @@ INSTALL_JAR := $(INSTALL_DIR)/clel.jar
 BIN_DIR     := $(HOME)/.local/bin/blw
 BIN_LINK    := $(BIN_DIR)/clel
 
-.PHONY: build install uninstall test test-clj test-elisp clean
+.PHONY: build install uninstall runtime test test-clj test-elisp clean
+
+RUNTIME_EL := resources/clojure-elisp/clel.el
 
 build: $(TARGET_JAR)
+
+# The runtime, the Emacs package clel, is compiled from its cljel source. The
+# .el is committed: MELPA builds packages from the repository as it is.
+runtime:
+	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
+	  (clel/compile-runtime \"resources/clojure-elisp/runtime.cljel\" \"$(RUNTIME_EL)\")"
 
 $(TARGET_JAR): src/**/*.clj deps.edn VERSION
 	clojure -T:build uber

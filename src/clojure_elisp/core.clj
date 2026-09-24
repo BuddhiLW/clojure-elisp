@@ -122,7 +122,7 @@
    (project/compile-project fs source-paths output-dir opts)))
 
 (defn bundle-runtime!
-  "Write clojure-elisp-runtime.el from the classpath into output-dir.
+  "Write the runtime library, clel.el, from the classpath into output-dir.
    Returns {:runtime-output path} or nil when the resource is absent."
   ([output-dir] (bundle-runtime! fs/default-fs output-dir))
   ([fs output-dir] (config/bundle-runtime fs output-dir)))
@@ -211,4 +211,4 @@
   (emit '(defn foo [x] (+ x 1)))
   (emit '(let [a 1 b 2] (+ a b)))
   (compile-runtime "resources/clojure-elisp/runtime.cljel"
-                   "resources/clojure-elisp/clojure-elisp-runtime.el"))
+                   "resources/clojure-elisp/clel.el"))

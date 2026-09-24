@@ -53,12 +53,12 @@
      config)))
 
 (defn bundle-runtime
-  "Write clojure-elisp-runtime.el from the classpath into output-dir.
+  "Write the runtime library, clel.el, from the classpath into output-dir.
    Returns {:runtime-output path}, or nil when the resource is absent."
   [fs output-dir]
-  (when-let [content (fs/read-resource fs "clojure-elisp/clojure-elisp-runtime.el")]
+  (when-let [content (fs/read-resource fs (str "clojure-elisp/" project/runtime-file-name))]
     (fs/make-dirs! fs output-dir)
-    (let [dest (str output-dir "/clojure-elisp-runtime.el")]
+    (let [dest (str output-dir "/" project/runtime-file-name)]
       (fs/write-file! fs dest content)
       {:runtime-output dest})))
 

@@ -1,10 +1,10 @@
-;;; clojure-elisp-runtime.el --- Runtime library for ClojureElisp -*- lexical-binding: t; -*-
+;;; clel.el --- Runtime library for ClojureElisp -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2025 Pedro G. Branquinho
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.7.2
+;; Version: 0.8.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
@@ -20,7 +20,7 @@
 (require 'cl-lib)
 (require 'seq)
 
-(defconst clel-runtime-version "0.7.2"
+(defconst clel-runtime-version "0.8.0"
   "Version of the ClojureElisp runtime library.
 Compiled files check this to refuse a runtime older than the one they
 were emitted against.")
@@ -1587,5 +1587,5 @@ Usage: (clel-drop-last coll) or (clel-drop-last n coll)."
     (and methods (cl-some (lambda (method)
     (and (fboundp method) (cl-generic-p method))) methods))))))
 
-(provide 'clojure-elisp-runtime)
-;;; clojure-elisp-runtime.el ends here
+(provide 'clel)
+;;; clel.el ends here

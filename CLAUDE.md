@@ -45,7 +45,7 @@ Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen) → Elisp (.el
    - Public API: `emit`, `emit-forms`, `compile-string`, `compile-file`, `compile-ns`
    - Entry point for compilation
 
-4. **Runtime** (`resources/clojure-elisp/clojure-elisp-runtime.el`)
+4. **Runtime** (`resources/clojure-elisp/clel.el`)
    - Elisp runtime library required by compiled code
    - Provides Clojure-like functions: `clel-conj`, `clel-get`, `clel-assoc`, `clel-str`, `clel-atom`, etc.
    - Requires Emacs 28.1+
@@ -176,7 +176,7 @@ absent from ClojureWasm. Transport is ready; card 20260905132610-70d34b63.
 **Files modified:**
 - `src/clojure_elisp/analyzer.clj` — Added analyzers for extend-type, extend-protocol, satisfies?, reify
 - `src/clojure_elisp/emitter.clj` — Added emitters with type mapping and reify counter
-- `resources/clojure-elisp/clojure-elisp-runtime.el` — Added protocol registry and `clel-satisfies-p`
+- `resources/clojure-elisp/clel.el` — Added protocol registry and `clel-satisfies-p`
 - `test/clojure_elisp/analyzer_test.clj` — Added 4 test functions for new forms
 - `test/clojure_elisp/emitter_test.clj` — Added 4 test functions for emission
 - `test/clojure_elisp/runtime_test.clj` — Added 4 test functions for end-to-end compilation
@@ -213,7 +213,7 @@ absent from ClojureWasm. Transport is ready; card 20260905132610-70d34b63.
 **Test stats:** 94 tests, 595 assertions, 0 failures
 
 **Files modified:**
-- `resources/clojure-elisp/clojure-elisp-runtime.el` - Updated atom structure, added watch functions
+- `resources/clojure-elisp/clel.el` - Updated atom structure, added watch functions
 - `src/clojure_elisp/emitter.clj` - Added 7 atom-related core-fn-mapping entries
 - `test/clojure_elisp/runtime_test.clj` - Added 4 atom watch test functions (28 assertions)
 
@@ -227,7 +227,7 @@ absent from ClojureWasm. Transport is ready; card 20260905132610-70d34b63.
 **Test stats:** 90 tests, 556 assertions, 0 failures
 
 **Files modified:**
-- `resources/clojure-elisp/clojure-elisp-runtime.el` - Added 6 runtime functions
+- `resources/clojure-elisp/clel.el` - Added 6 runtime functions
 - `src/clojure_elisp/emitter.clj` - Added 11 core-fn-mapping entries
 - `test/clojure_elisp/runtime_test.clj` - Added numeric, boolean, collection predicate tests
 

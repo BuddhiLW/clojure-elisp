@@ -11,7 +11,7 @@ bb demo
 
 ```
 Compiled src/demo/greeter.cljel -> out/demo-greeter.el (963 chars)
-out/clojure-elisp-runtime.el
+out/clel.el
 greet:     Hello, world!
 shout:     HELLO, CLJEL!
 region:    Hello, alpha!
@@ -29,7 +29,7 @@ both into a real Emacs, and called the functions. The last line is `commandp`:
 | `bb compile` | `src/demo/greeter.cljel` to `out/demo-greeter.el` |
 | `bb show` | compile to stdout |
 | `bb eval-form '<form>'` | compile one form the way `C-c C-c` does |
-| `bb runtime` | write `clojure-elisp-runtime.el` into `out/` |
+| `bb runtime` | write the runtime, `clel.el`, into `out/` |
 | `bb demo` | all of the above, then run it in Emacs |
 | `bb nrepl [port]` | ClojureElisp nREPL server for CIDER, default 7888 |
 
@@ -74,7 +74,7 @@ Elsewhere, take the published coordinate:
            :task (server/start-server! 7888)}}}
 ```
 
-`clel/bundle-runtime!` writes `clojure-elisp-runtime.el` out of the dependency
+`clel/bundle-runtime!` writes the runtime, `clel.el`, out of the dependency
 into a directory you choose, so nothing has to name a path into the
 ClojureElisp checkout.
 

@@ -31,7 +31,7 @@
       (should (equal (package-desc-version desc) '(0 1 0)))
       (should (equal (package-desc-summary desc) "A packaged fixture"))
       (should (assq 'emacs (package-desc-reqs desc)))
-      (should (assq 'clojure-elisp-runtime (package-desc-reqs desc))))))
+      (should (assq 'clel (package-desc-reqs desc))))))
 
 (ert-deftest clel-package-header-parsed-by-lisp-mnt ()
   (clel-package-header-test--in-fixture

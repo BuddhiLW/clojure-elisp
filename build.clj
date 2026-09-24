@@ -58,7 +58,7 @@
 (def el-packages
   "Every .el file carrying a MELPA `;; Version:` header. MELPA Stable reads
    that header, so a stale one ships the wrong version."
-  ["resources/clojure-elisp/clojure-elisp-runtime.el"
+  ["resources/clojure-elisp/clel.el"
    "resources/clojure-elisp/clojure-elisp-mode.el"
    "resources/clojure-elisp/cider-clojure-elisp.el"])
 

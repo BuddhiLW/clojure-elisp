@@ -638,7 +638,7 @@
               "(ns hello)\n(defn greet [] \"hi\")")
         (clel/compile-project-from-config (.getAbsolutePath config-file))
         ;; Runtime should be bundled
-        (is (.exists (io/file out-dir "clojure-elisp-runtime.el")))
+        (is (.exists (io/file out-dir "clel.el")))
         (finally
           (doseq [f (reverse (file-seq project-dir))]
             (.delete f)))))))

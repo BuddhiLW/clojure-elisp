@@ -7,6 +7,29 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: the runtime is the Emacs package `clel`.** The library is
+  `resources/clojure-elisp/clel.el`, provides the feature `clel` and is the
+  package `clel`; it was `clojure-elisp-runtime`. MELPA requires every
+  definition in a package to start with the package's name, and the runtime's
+  all start with `clel`: under the old name package-lint reported 186 of its
+  188 definitions. What this means for you:
+  - **Compiled output requires `clel`.** The guard in every compiled file now
+    reads `(require 'clel)`, and a package's `Package-Requires` names
+    `(clel "0.8.0")`. Put `clel.el` on `load-path` in place of
+    `clojure-elisp-runtime.el`, and recompile code compiled by an earlier
+    version, which still requires `clojure-elisp-runtime`.
+  - **`minimum-runtime-version` is 0.8.0**, and so is VERSION: code that
+    requires `clel` cannot run on a runtime that does not provide it, and
+    none before 0.8.0 does. The guard does not fall back to the old feature:
+    every runtime shipped under that name is older than 0.8.0, so a fallback
+    would only change which error you see.
+  - **Paths:** `bundle-runtime!` (and `clel.edn`'s `:runtime :bundled`)
+    writes `clel.el`; `cider-cljel-runtime-file` names `clel.el`; build
+    scripts that copy `resources/clojure-elisp/clojure-elisp-runtime.el` must
+    copy `clel.el`. `make runtime` regenerates it from `runtime.cljel`.
+
 ### Added
 
 - **Package library headers from ns metadata.** A namespace whose attr-map
@@ -27,7 +50,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   The docstring's first line is the summary and the rest is `;;; Commentary:`
   (or pass `:commentary`). `Package-Requires` always names `emacs` (default
-  `"28.1"`) and `clojure-elisp-runtime` at `minimum-runtime-version`, because
+  `"28.1"`) and `clel` (the runtime) at `minimum-runtime-version`, because
   every compiled file loads the runtime; declaring the runtime older than that
   is a compile error rather than a file that refuses to load after install.
   `;;; Code:` now precedes the runtime guard in this mode. Namespaces without
@@ -72,7 +95,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **The runtime guard's error message starts with a capital letter**
-  (`Installed clojure-elisp-runtime %s is too old ...`). checkdoc, which
+  (`Installed clel runtime %s is too old ...`). checkdoc, which
   MELPA's melpazoid runs, reported "Messages should start with a capital
   letter" once in every compiled file.
 - **`when-let` / `if-let` emit `when-let*` / `if-let*`.** The unstarred Emacs
