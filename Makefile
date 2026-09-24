@@ -9,7 +9,7 @@ INSTALL_JAR := $(INSTALL_DIR)/clel.jar
 BIN_DIR     := $(HOME)/.local/bin/blw
 BIN_LINK    := $(BIN_DIR)/clel
 
-.PHONY: build install uninstall runtime test test-clj test-elisp parity parity-cljw clean
+.PHONY: build install uninstall runtime test test-clj test-elisp lint-elisp parity parity-cljw clean
 
 RUNTIME_EL := resources/clojure-elisp/clel.el
 
@@ -20,6 +20,16 @@ build: $(TARGET_JAR)
 runtime:
 	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
 	  (clel/compile-runtime \"resources/clojure-elisp/runtime.cljel\" \"$(RUNTIME_EL)\")"
+
+# The runtime as MELPA reviews it: byte-compiled with warnings as errors, then
+# checkdoc and package-lint. CI runs it on every Emacs release clel supports,
+# since checkdoc's rules differ between them.
+lint-elisp:
+	emacs -Q --batch --eval '(setq byte-compile-error-on-warn t)' \
+	  -f batch-byte-compile $(RUNTIME_EL)
+	rm -f $(RUNTIME_EL)c
+	emacs -Q --batch -l scripts/lint-checkdoc.el $(RUNTIME_EL)
+	emacs -Q --batch -l scripts/lint-package.el $(RUNTIME_EL)
 
 $(TARGET_JAR): src/**/*.clj deps.edn VERSION
 	clojure -T:build uber

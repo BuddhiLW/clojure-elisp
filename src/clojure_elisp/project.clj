@@ -43,6 +43,8 @@
    <output-dir>/.clel-cache/manifest.edn."
   [:map
    [:version :int]
+   ;; the fingerprint of the compiler that wrote it (see compiler-sources)
+   [:compiler {:optional true} :string]
    [:files [:map-of :symbol
             [:map
              [:source-path :string]
@@ -138,14 +140,41 @@
 (defn- manifest-path [output-dir]
   (str output-dir "/.clel-cache/manifest.edn"))
 
-(defn- read-manifest [fs output-dir]
+(def compiler-sources
+  "Classpath paths of the compiler's own sources, and VERSION. What they
+   hold identifies the compiler that wrote a cache; the test suite keeps the
+   list equal to src/clojure_elisp."
+  (into ["clojure-elisp/VERSION"]
+        (map #(str "clojure_elisp/" %))
+        ["analyzer.clj" "ast.clj" "cli.clj" "compile.clj" "config.clj" "core.clj"
+         "core_macros.clj" "destructure.clj" "emitter.clj" "errors.clj" "fs.cljc"
+         "gensym.clj" "jvm_names.clj" "layout.clj" "macros.clj" "main.clj"
+         "mappings.clj" "mcp.clj" "names.clj" "nrepl.clj" "nrepl_kernel.clj"
+         "package_header.clj" "project.clj" "reader.clj" "repl.clj" "schema.clj"
+         "version.clj"]))
+
+(defn- compiler-fingerprint
+  "A hash of the compiler's sources as fs reads them: two compilers with the
+   same fingerprint emit the same output. A source fs cannot read counts as
+   absent."
+  [fs]
+  (str (hash (mapv #(fs/read-resource fs %) compiler-sources))))
+
+(defn- read-manifest
+  "The cache manifest in output-dir, or an empty one when there is none, it
+   is not a manifest, or it was written by a compiler whose fingerprint is not
+   fingerprint: a cache vouches only for its own compiler's output."
+  [fs output-dir fingerprint]
   (let [path  (manifest-path output-dir)
         empty {:version 1 :files {}}]
     (if (fs/file-exists? fs path)
       ;; A corrupt/stale-shaped manifest must not crash the build — treat it as
       ;; a cold cache and rebuild from scratch.
       (let [parsed (edn/read-string (fs/read-file fs path))]
-        (if (m/validate manifest-schema parsed) parsed empty))
+        (if (and (m/validate manifest-schema parsed)
+                 (= fingerprint (:compiler parsed)))
+          parsed
+          empty))
       empty)))
 
 (defn- write-manifest [fs output-dir manifest]
@@ -213,7 +242,8 @@
          packages     (file-packages (:package opts) ns->file path->source)
          graph        (cc/build-dependency-graph path->source)
          order        (cc/topological-sort graph)
-         manifest     (read-manifest fs output-dir)
+         fingerprint  (compiler-fingerprint fs)
+         manifest     (read-manifest fs output-dir fingerprint)
          stale-set    (loop [remaining order
                              stale     #{}]
                         (if (empty? remaining)
@@ -223,6 +253,7 @@
                                                   (packages ns-sym))
                               (recur (rest remaining) (conj stale ns-sym))
                               (recur (rest remaining) stale)))))]
+     (cc/assert-no-name-collisions path->source)
      (fs/make-dirs! fs output-dir)
      (let [results
            (binding [ana/*project-exports* exports]
@@ -237,6 +268,7 @@
                            {:input input-path :output output-path :cached true}))))
                    order))
            new-manifest {:version 1
+                         :compiler fingerprint
                          :files (into {}
                                       (for [ns-sym order
                                             :let [input-path (get ns->file ns-sym)
