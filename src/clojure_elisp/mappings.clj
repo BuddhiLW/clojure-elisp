@@ -43,13 +43,15 @@
 ;; ============================================================================
 
 (def comparison-mappings
-  {'= "equal"
+  {'= "clel-equal"
    '== "="
-   'not= "/="
+   'not= "clel-not-equal"
+   'identical? "eq"
    '< "<"
    '> ">"
    '<= "<="
-   '>= ">="})
+   '>= ">="
+   'compare "clel-compare"})
 
 ;; ============================================================================
 ;; Logic
@@ -70,10 +72,15 @@
    'number? "numberp"
    'symbol? "symbolp"
    'list? "listp"
-   'vector? "vectorp"
-   'map? "hash-table-p"
+   'vector? "clel-vector-p"
+   'map? "clel-map-p"
+   'map-entry? "clel-map-entry-p"
    'fn? "functionp"
-   'keyword? "keywordp"})
+   'keyword? "keywordp"
+   'integer? "integerp"
+   'int? "integerp"
+   'float? "floatp"
+   'double? "floatp"})
 
 ;; ============================================================================
 ;; Numeric Predicates
@@ -111,11 +118,21 @@
    'rest "clel-rest"
    'next "clel-next"
    'list "list"
+   ;; Elisp's own vector. Listed so that `clojure.core/vector', which the
+   ;; reader writes for a syntax-quoted [...], resolves as the bare name does.
+   'vector "vector"
    'cons "cons"
    'conj "clel-conj"
    'count "clel-count"
    'nth "clel-nth"
+   'nthnext "clel-nthnext"
+   'nthrest "clel-nthrest"
    'get "clel-get"
+   'key "car"
+   'val "cdr"
+   'hash-map "clel-array-map"
+   'array-map "clel-array-map"
+   'not-empty "clel-not-empty"
    'contains? "clel-contains-p"
    'assoc "clel-assoc"
    'dissoc "clel-dissoc"
@@ -133,7 +150,11 @@
    'flatten "clel-flatten"
    'peek "clel-peek"
    'pop "clel-pop"
-   'subvec "clel-subvec"})
+   'subvec "clel-subvec"
+   'vec "clel-vec"
+   'mapv "clel-mapv"
+   'filterv "clel-filterv"
+   'map-indexed "clel-map-indexed"})
 
 ;; ============================================================================
 ;; Sequence Functions
@@ -261,6 +282,18 @@
    'clojure.set/map-invert "clel-map-invert"})
 
 ;; ============================================================================
+;; Runtime-provided namespaces
+;; ============================================================================
+
+(defn runtime-provided-ns?
+  "True for a `clojure.*` namespace such as clojure.string or clojure.set.
+   Their functions compile to runtime calls through the tables above
+   (str/join -> clel-str-join), so there is no Emacs feature to load:
+   `(require 'clojure-string)` fails with \"Cannot open load file\"."
+  [ns-sym]
+  (clojure.string/starts-with? (str ns-sym) "clojure."))
+
+;; ============================================================================
 ;; Math
 ;; ============================================================================
 
@@ -283,9 +316,66 @@
    'constantly "clel-constantly"
    'partial "apply-partially"
    'comp "clel-comp"
-   'name "symbol-name"
+   'name "clel-name"
+   'namespace "clel-namespace"
+   'keyword "clel-keyword"
+   'symbol "clel-symbol"
+   'boolean "clel-boolean"
+   'int "truncate"
+   'long "truncate"
+   'double "float"
    'juxt "clel-juxt"
-   'complement "clel-complement"})
+   'complement "clel-complement"
+   'min-key "clel-min-key"
+   'max-key "clel-max-key"
+   'ex-message "clel-ex-message"
+   'ex-data "clel-ex-data"
+   'parse-long "clel-parse-long"
+   'parse-double "clel-parse-double"})
+
+;; ============================================================================
+;; Java static members
+;; ============================================================================
+
+(def java-static-mappings
+  "Class/member references Clojure code reaches for, mapped onto Elisp. A
+   field (Math/PI) maps to a variable, a method to a function. Deliberately
+   outside `clojure-fn-names`: Math/PI in value position is a variable."
+  {'Math/PI "float-pi"
+   'Math/E "float-e"
+   'Math/abs "abs"
+   'Math/sqrt "sqrt"
+   'Math/cbrt "clel-math-cbrt"
+   'Math/sin "sin"
+   'Math/cos "cos"
+   'Math/tan "tan"
+   'Math/asin "asin"
+   'Math/acos "acos"
+   'Math/atan "atan"
+   'Math/atan2 "atan"
+   'Math/exp "exp"
+   'Math/log "log"
+   'Math/log10 "clel-math-log10"
+   'Math/pow "clel-math-pow"
+   'Math/floor "clel-math-floor"
+   'Math/ceil "clel-math-ceil"
+   'Math/rint "clel-math-rint"
+   'Math/round "clel-math-round"
+   'Math/signum "clel-math-signum"
+   'Math/hypot "clel-math-hypot"
+   'Math/max "max"
+   'Math/min "min"
+   'Math/floorDiv "floor"
+   'Math/floorMod "mod"
+   'Math/toRadians "degrees-to-radians"
+   'Math/toDegrees "radians-to-degrees"
+   'Math/random "clel-rand"
+   'Long/parseLong "clel-parse-long"
+   'Integer/parseInt "clel-parse-long"
+   'Double/parseDouble "clel-parse-double"
+   'Long/MAX_VALUE "most-positive-fixnum"
+   'Long/MIN_VALUE "most-negative-fixnum"
+   'System/currentTimeMillis "clel-current-time-millis"})
 
 ;; ============================================================================
 ;; Atoms
@@ -557,6 +647,7 @@
          set-mappings
          math-mappings
          function-mappings
+         java-static-mappings
          atom-mappings
          emacs-buffer-mappings
          emacs-text-prop-mappings
@@ -593,6 +684,7 @@
    "set-mappings"                   set-mappings
    "math-mappings"                  math-mappings
    "function-mappings"              function-mappings
+   "java-static-mappings"           java-static-mappings
    "atom-mappings"                  atom-mappings
    "emacs-buffer-mappings"          emacs-buffer-mappings
    "emacs-text-prop-mappings"       emacs-text-prop-mappings
@@ -623,6 +715,29 @@
                   (when (> (count (distinct (map #(nth % 2) es))) 1)
                     [k (mapv (fn [[_ table-name v]] [table-name v]) es)])))
           (group-by first entries))))
+
+(def clojure-fn-names
+  "Clojure-vocabulary symbols whose mapping names a FUNCTION. A Lisp-2 reads
+   such a symbol in value position as a variable, so the analyzer quotes it
+   (#'f) there. The Emacs passthrough tables are excluded on purpose: a name
+   like `buffer-file-name' is both a function and a variable in Elisp, and
+   code that mentions it in value position means the variable."
+  (into #{}
+        (mapcat keys)
+        [arithmetic-mappings comparison-mappings logic-mappings
+         type-predicate-mappings numeric-predicate-mappings
+         collection-predicate-mappings collection-mappings sequence-mappings
+         transducer-mappings string-mappings set-mappings math-mappings
+         function-mappings atom-mappings utility-mappings io-mappings]))
+
+(defn clojure-fn?
+  "True when SYM (unqualified, or qualified by clojure.core) names a mapped
+   Clojure function."
+  [sym]
+  (and (symbol? sym)
+       (or (contains? clojure-fn-names sym)
+           (and (= "clojure.core" (namespace sym))
+                (contains? clojure-fn-names (symbol (name sym)))))))
 
 (def lazy-seq-consuming-fns
   "Clojure fns that read a sequence argument which may be a `clel-lazy-seq' at
@@ -725,13 +840,56 @@
    'comp         :all
    'juxt         :all
    'every-pred   :all
-   'some-fn      :all})
+   'some-fn      :all
+   ;; Elisp higher-order fns called from cljel
+   'mapcar             #{0}
+   'mapc               #{0}
+   'mapcan             #{0}
+   'mapconcat          #{0}
+   'maphash            #{0}
+   'seq-map            #{0}
+   'seq-do             #{0}
+   'seq-filter         #{0}
+   'seq-remove         #{0}
+   'seq-reduce         #{0}
+   'seq-find           #{0}
+   'seq-some           #{0}
+   'seq-every-p        #{0}
+   'seq-sort           #{0}
+   'seq-sort-by        #{0 1}
+   'seq-group-by       #{0}
+   'cl-remove-if       #{0}
+   'cl-remove-if-not   #{0}
+   'cl-find-if         #{0}
+   'cl-position-if     #{0}
+   'cl-count-if        #{0}
+   'cl-some            #{0}
+   'cl-every           #{0}
+   'cl-reduce          #{0}
+   'apply-partially    #{0}
+   'add-hook           #{1}
+   'remove-hook        #{1}
+   'advice-add         #{2}
+   'advice-remove      #{1}
+   'run-at-time        #{2}
+   'run-with-timer     #{2}
+   'run-with-idle-timer #{2}})
+
+(def arity-arg-slots
+  "Higher-order fns whose function positions depend on the call's arity:
+   fn -> {arg-count slots}. Merged over `higher-order-fn-arg-slots`."
+  {'sort    {2 #{0}}
+   'sort-by {3 #{1}}})
 
 (def ArgSlots
   "Schema for `higher-order-fn-arg-slots`: each higher-order fn maps to either
    `:all` (every argument is a function position) or a set of 0-based argument
    indices (`nat-int?`) that are function positions."
   [:map-of :symbol [:or [:= :all] [:set nat-int?]]])
+
+(def ArityArgSlots
+  "Schema for `arity-arg-slots`."
+  [:map-of :symbol [:map-of nat-int? [:set nat-int?]]])
 
 (defn validate-arg-slots!
   "Checked invariant for `higher-order-fn-arg-slots`: asserts it conforms to
@@ -742,7 +900,21 @@
   (when-not (m/validate ArgSlots higher-order-fn-arg-slots)
     (throw (ex-info "higher-order-fn-arg-slots violates ArgSlots schema"
                     {:explanation (m/explain ArgSlots higher-order-fn-arg-slots)})))
+  (when-not (m/validate ArityArgSlots arity-arg-slots)
+    (throw (ex-info "arity-arg-slots violates ArityArgSlots schema"
+                    {:explanation (m/explain ArityArgSlots arity-arg-slots)})))
   true)
+
+(defn fn-arg-slots
+  "The function-position argument indices of a call to F with ARGC
+   arguments: a set, :all, or nil."
+  [f argc]
+  (let [base  (get higher-order-fn-arg-slots f)
+        extra (get-in arity-arg-slots [f argc])]
+    (cond
+      (= :all base) :all
+      (or base extra) (into (or base #{}) extra)
+      :else nil)))
 
 ;; ============================================================================
 ;; Load-Time Invariant Enforcement

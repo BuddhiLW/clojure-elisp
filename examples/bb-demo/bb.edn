@@ -9,7 +9,7 @@
              [babashka.process :as process])
 
   runtime
-  {:doc "Write clojure-elisp-runtime.el from the dependency into out/"
+  {:doc "Write the runtime, clel.el, from the dependency into out/"
    :requires ([clojure-elisp.core :as clel])
    :task (println (:runtime-output (clel/bundle-runtime! "out")))}
 
@@ -41,7 +41,7 @@
    :task (let [{:keys [exit out err]}
                (process/sh
                 ["emacs" "-Q" "--batch" "-L" "out"
-                 "-l" "clojure-elisp-runtime.el"
+                 "-l" "clel.el"
                  "-l" "demo-greeter.el"
                  "--eval"
                  (str "(progn"

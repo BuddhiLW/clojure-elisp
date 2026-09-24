@@ -4,7 +4,7 @@
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.7.2
+;; Version: 0.8.0
 ;; Package-Requires: ((emacs "28.1") (cider "1.0"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
@@ -50,7 +50,7 @@
   :prefix "cider-cljel-")
 
 (defcustom cider-cljel-runtime-file nil
-  "Path to `clojure-elisp-runtime.el', used when it is not on `load-path'.
+  "Path to the runtime library `clel.el', used when it is not on `load-path'.
 Compiled ClojureElisp calls runtime functions such as `clel-str', so the
 runtime must be loaded before the first evaluation."
   :type '(choice (const :tag "Rely on load-path" nil) file)
@@ -62,15 +62,15 @@ runtime must be loaded before the first evaluation."
 ;;; --- Runtime ---
 
 (defun cider-cljel-ensure-runtime ()
-  "Ensure `clojure-elisp-runtime' is loaded.
+  "Ensure the runtime library, the feature `clel', is loaded.
 Returns non-nil on success.  Tries `load-path' first, then
 `cider-cljel-runtime-file'."
-  (or (featurep 'clojure-elisp-runtime)
-      (require 'clojure-elisp-runtime nil t)
+  (or (featurep 'clel)
+      (require 'clel nil t)
       (and cider-cljel-runtime-file
            (file-readable-p cider-cljel-runtime-file)
            (progn (load cider-cljel-runtime-file nil t)
-                  (featurep 'clojure-elisp-runtime)))))
+                  (featurep 'clel)))))
 
 ;;; --- Namespace Context ---
 
@@ -104,7 +104,7 @@ and evaluate the result locally in Emacs."
   (interactive)
   (cider-ensure-connected)
   (unless (cider-cljel-ensure-runtime)
-    (message "ClojureElisp: clojure-elisp-runtime.el not found. \
+    (message "ClojureElisp: the runtime clel.el was not found. \
 Add it to load-path or set `cider-cljel-runtime-file'; \
 compiled code calling clel-str, clel-conj etc. will fail without it."))
   (let ((buf (current-buffer)))

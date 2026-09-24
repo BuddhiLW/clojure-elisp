@@ -1,0 +1,11 @@
+(ns packaged
+  "A packaged fixture.
+
+   Commentary body for lisp-mnt."
+  {:elisp/package {:author "Jane Doe <jane@example.org>"
+                   :url "https://example.org/packaged"
+                   :version "0.1.0"
+                   :keywords ["lisp"]
+                   :license "MIT"}})
+
+(defn ok [] :ok)

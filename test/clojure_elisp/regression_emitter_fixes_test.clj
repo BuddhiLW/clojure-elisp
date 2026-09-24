@@ -55,10 +55,12 @@
 ;; ============================================================================
 
 (deftest map-literal-evaluates-pairs
+  ;; The constructor is clel-array-map since the map-entry fix: it records the
+  ;; entries it makes, which (list (cons k v)) could not.
   (testing "keys and values are evaluated, not frozen in a quoted alist"
-    (is (= "(list (cons :a 1) (cons :b 2))" (emit-form '{:a 1 :b 2})))
-    (is (= "(list (cons :a (+ 1 2)))"       (emit-form '{:a (+ 1 2)})))
-    (is (= "(list )"                        (emit-form '{})))))
+    (is (= "(clel-array-map :a 1 :b 2)"     (emit-form '{:a 1 :b 2})))
+    (is (= "(clel-array-map :a (+ 1 2))"    (emit-form '{:a (+ 1 2)})))
+    (is (= "nil"                            (emit-form '{})))))
 
 ;; ============================================================================
 ;; Fix 2: nth arg-order + & rest destructuring
@@ -69,10 +71,11 @@
     (is (= "(clel-nth coll 2)" (emit-form '(nth coll 2)))))
   (testing "vector destructuring element access uses clel-nth"
     (is (str/includes? (emit-form '(let [[a b] xs] a)) "(clel-nth")))
-  (testing "& rest destructuring uses (nthcdr idx coll) — elisp arg order, not (nthrest coll idx)"
+  (testing "& rest destructuring uses the runtime's (clel-nthnext coll idx)"
+    ;; Not (nthcdr idx coll): a raw nthcdr reads a lazy seq's struct, not its items.
     (let [out (emit-form '(let [[a & r] xs] r))]
-      (is (str/includes? out "(nthcdr 1 "))
-      (is (not (str/includes? out "nthrest"))))))
+      (is (re-find #"\(clel-nthnext vec__\d+ 1\)" out))
+      (is (not (str/includes? out "(nthcdr "))))))
 
 ;; ============================================================================
 ;; Fix 3: variadic fn & rest
@@ -89,13 +92,13 @@
   ;;   (let ((args (nthcdr 1 args))) ...) — under lexical-binding this reads the
   ;; WHOLE list, not the tail (silent corruption; broke clel-reduce et al.).
   ;; Fix: synthetic arglist is `clel--args`; the user `args` binds from it.
+  ;; A single-arity variadic defn now has no synthetic arglist at all: it
+  ;; emits its real one, so `args` IS the tail and nothing can shadow it.
   (testing "single-arity variadic with a user param literally named `args`"
     (let [out (emit-form '(defn clel-reduce [f & args] (list f args)))]
-      (is (str/includes? out "(&rest clel--args)"))
-      (is (str/includes? out "(f (nth 0 clel--args))"))
-      (is (str/includes? out "(args (nthcdr 1 clel--args))"))
+      (is (str/starts-with? out "(defun clel-reduce (f &rest args)\n"))
       (is (not (str/includes? out "(nthcdr 1 args)")))
-      (is (not (str/includes? out "(&rest args)")))))
+      (is (not (str/includes? out "clel--args")))))
   (testing "multi-arity with a user param literally named `args`"
     (let [out (emit-form '(defn f ([args] args) ([a & args] (list a args))))]
       (is (str/includes? out "(&rest clel--args)"))
@@ -240,9 +243,11 @@
   (prop/for-all [m (gen/map gen/keyword gen/small-integer {:max-elements 6})]
     (let [out (emit-form m)]
       (and (string? out)
-           (str/starts-with? out "(list")
-           ;; one (cons k v) per entry — keys/values genuinely emitted
-           (= (count m) (count (re-seq #"\(cons " out)))))))
+           (if (empty? m)
+             (= "nil" out)
+             (and (str/starts-with? out "(clel-array-map ")
+                  ;; every key genuinely emitted
+                  (every? #(str/includes? out (str % " ")) (keys m))))))))
 
 (defspec case-emits-pcase-never-cl-case 100
   (prop/for-all [ks (gen/fmap distinct (gen/not-empty (gen/vector gen/small-integer)))]

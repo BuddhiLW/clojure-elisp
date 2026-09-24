@@ -6,6 +6,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure-elisp.project :as project]
+            [clojure-elisp.package-header :as ph]
             [clojure-elisp.fs :as fs]
             [malli.core :as m]
             [malli.error :as me]))
@@ -18,11 +19,19 @@
 
 (def project-config-schema
   "Schema for a resolved clel.edn descriptor (after defaults are merged).
-   Open — projects may carry extra keys the compiler ignores."
+   Open — projects may carry extra keys the compiler ignores.
+
+   :package describes the Emacs package the project compiles to, once for
+   all its files (see clojure-elisp.package-header):
+
+     {:package {:name \"my-pkg\" :author \"...\" :url \"...\" :version \"0.1.0\"
+                :package-requires [[emacs \"28.1\"]]
+                :keywords [\"convenience\"] :license \"GPL-3.0-or-later\"}}"
   [:map {:closed false}
    [:source-paths [:vector :string]]
    [:output-dir :string]
-   [:runtime [:enum :bundled :require]]])
+   [:runtime [:enum :bundled :require]]
+   [:package {:optional true} ph/PackageMap]])
 
 (defn read-project-config
   "Read a clel.edn project config file. Returns a map with :source-paths,
@@ -44,19 +53,20 @@
      config)))
 
 (defn bundle-runtime
-  "Write clojure-elisp-runtime.el from the classpath into output-dir.
+  "Write the runtime library, clel.el, from the classpath into output-dir.
    Returns {:runtime-output path}, or nil when the resource is absent."
   [fs output-dir]
-  (when-let [content (fs/read-resource fs "clojure-elisp/clojure-elisp-runtime.el")]
+  (when-let [content (fs/read-resource fs (str "clojure-elisp/" project/runtime-file-name))]
     (fs/make-dirs! fs output-dir)
-    (let [dest (str output-dir "/clojure-elisp-runtime.el")]
+    (let [dest (str output-dir "/" project/runtime-file-name)]
       (fs/write-file! fs dest content)
       {:runtime-output dest})))
 
 (defn compile-project-from-config
   "Compile a project using a clel.edn config file. With no arguments, reads
    clel.edn from the current directory. Resolves source-paths and output-dir
-   relative to the config file's directory."
+   relative to the config file's directory. Its :package, if any, gives every
+   file of the package its library header."
   ([] (compile-project-from-config "clel.edn"))
   ([config-path]
    (compile-project-from-config fs/default-fs config-path))
@@ -67,7 +77,8 @@
          source-paths (mapv #(.getAbsolutePath (io/file base-dir %))
                             (:source-paths config))
          output-dir   (.getAbsolutePath (io/file base-dir (:output-dir config)))
-         results      (project/compile-project fs source-paths output-dir)]
+         results      (project/compile-project fs source-paths output-dir
+                                               {:package (:package config)})]
      (when (= :bundled (:runtime config))
        (bundle-runtime fs output-dir))
      results)))

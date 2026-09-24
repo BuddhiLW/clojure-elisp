@@ -5,6 +5,264 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking: the runtime is the Emacs package `clel`.** The library is
+  `resources/clojure-elisp/clel.el`, provides the feature `clel` and is the
+  package `clel`; it was `clojure-elisp-runtime`. MELPA requires every
+  definition in a package to start with the package's name, and the runtime's
+  all start with `clel`: under the old name package-lint reported 186 of its
+  188 definitions. What this means for you:
+  - **Compiled output requires `clel`.** The guard in every compiled file now
+    reads `(require 'clel)`, and a package's `Package-Requires` names
+    `(clel "0.8.0")`. Put `clel.el` on `load-path` in place of
+    `clojure-elisp-runtime.el`, and recompile code compiled by an earlier
+    version, which still requires `clojure-elisp-runtime`.
+  - **`minimum-runtime-version` is 0.8.0**, and so is VERSION: code that
+    requires `clel` cannot run on a runtime that does not provide it, and
+    none before 0.8.0 does. The guard does not fall back to the old feature:
+    every runtime shipped under that name is older than 0.8.0, so a fallback
+    would only change which error you see.
+  - **Paths:** `bundle-runtime!` (and `clel.edn`'s `:runtime :bundled`)
+    writes `clel.el`; `cider-cljel-runtime-file` names `clel.el`; build
+    scripts that copy `resources/clojure-elisp/clojure-elisp-runtime.el` must
+    copy `clel.el`. `make runtime` regenerates it from `runtime.cljel`.
+
+### Added
+
+- **The compiler runs on ClojureWasm (cljw).** cljw starts in about 20 ms, so
+  compiling one file takes 143 ms there against 239 ms on Babashka and 662 ms
+  from the uberjar (median wall time, `examples/demo.cljel`):
+
+  ```bash
+  cljw -A:cljw -m clojure-elisp.main compile src/app.cljel -o out/app.el
+  ```
+
+  `compile-string`, `compile-file-string`, `compile-file`, `compile-project`,
+  `compile-project-from-config` and `bundle-runtime!` all work. cljw fetches
+  no Maven artifacts, so the new `:cljw` alias in `deps.edn` takes hive-dsl,
+  malli and dynaload from Git at the commits their Maven releases were cut
+  from. On the large `runtime.cljel` Babashka is still quicker (440 ms against
+  597 ms): cljw's advantage is startup.
+
+  A self-contained binary (`cljw build -A:cljw -m clojure-elisp.main`) is not
+  possible yet, for reasons upstream in cljw 1.14.7:
+  - `cljw build` cannot serialize some compile-time constants: an integer
+    outside the immediate range (`(def x Long/MAX_VALUE)`), a host enum
+    (`TimeUnit/MILLISECONDS`), a protocol named as its interface
+    (`(instance? my.ns.Proto x)`), and hash-backed map and set literals.
+    malli uses the first three; `clojure-elisp.mappings` is made of the last.
+  - With those rewritten in a scratch copy the build succeeds (10.5 MB), but
+    the binary aborts at startup: `clojure-elisp.mappings` runs
+    `validate-tables!` at load, which panics cljw's bytecode VM. The same
+    panic is reproducible without a build:
+    `cljw --compare` on `(require 'clojure-elisp.mappings)` reports
+    `index out of bounds: index 16, len 16` (the tree-walking evaluator,
+    which a plain `cljw` run uses, is fine).
+- **`clojure-elisp.main`: one command line for every host.** `compile <file>
+  [-o out]`, `compile <dir> [-o dir]`, `compile` (the project in `./clel.edn`)
+  and `version`, the same under `cljw -m`, `bb -m` and `clojure -M -m`. `run`
+  returns the exit code, so the CLI is tested without exiting.
+- **`make parity`.** Compiles every `.cljel` under `examples/` and `test/`, and
+  the runtime, on the JVM, Babashka and cljw, and diffs the three output
+  trees. All eleven files are byte-identical, including
+  `test/parity/kitchen_sink.cljel`, which exercises every reader macro,
+  destructuring, `#()`, syntax-quote, sets and large maps.
+
+- **Package library headers from ns metadata.** A namespace whose attr-map
+  carries `:elisp/package` compiles to a file package.el, lisp-mnt and MELPA
+  can read:
+
+  ```clojure
+  (ns my.pkg
+    "One-line summary.
+
+     Commentary paragraphs."
+    {:elisp/package {:author "Jane Doe <jane@example.org>"
+                     :url "https://example.org/my-pkg"
+                     :version "0.1.0"
+                     :keywords ["convenience"]
+                     :license "GPL-3.0-or-later"}})
+  ```
+
+  The docstring's first line is the summary and the rest is `;;; Commentary:`
+  (or pass `:commentary`). `Package-Requires` always names `emacs` (default
+  `"28.1"`) and `clel` (the runtime) at `minimum-runtime-version`, because
+  every compiled file loads the runtime; declaring the runtime older than that
+  is a compile error rather than a file that refuses to load after install.
+  `;;; Code:` now precedes the runtime guard in this mode. Namespaces without
+  `:elisp/package` compile byte-for-byte as before. `package-buffer-info` and
+  `lm-*` are the oracle in `test/elisp/clojure-elisp-package-header-test.el`.
+- **Headers for every file of a multi-file package.** A package can be
+  described once, in `clel.edn`:
+
+  ```clojure
+  {:source-paths ["src"] :output-dir "."
+   :package {:name "tod" :author "..." :url "..." :version "0.1.0"
+             :package-requires [[emacs "28.1"]] :keywords ["faces"]
+             :license "GPL-3.0-or-later"}}
+  ```
+
+  or by the `:elisp/package` of one namespace; `compile-project` (and
+  `compile-project-from-config`) then gives every file of the package a
+  header. The main file, the one named after the package (`:name`, else the
+  namespace declaring `:package-requires`, else the shortest name), gets the
+  full header. Every other file named `<package>` or `<package>-*` gets the
+  one package-lint and melpazoid want of a secondary file: summary from its
+  ns docstring, Copyright/Author, `SPDX-License-Identifier`, a non-empty
+  `;;; Commentary:` and `;;; Code:` before the runtime guard, and no
+  `Package-Requires`, which package-lint rejects outside the main file. A
+  namespace's own `:elisp/package` overrides per file (e.g. `:commentary`).
+  Projects that declare no package compile byte-for-byte as before. The
+  incremental cache records each file's package map, so a version bump in
+  `clel.edn` recompiles the main file.
+- **A MELPA gate in `make test-elisp`.** `test/elisp/clojure-elisp-melpa-test.el`
+  compiles a three-file package from its `clel.edn` and holds it to what
+  MELPA runs: byte-compile with warnings as errors, checkdoc as melpazoid
+  configures it, main and secondary headers as package.el and lisp-mnt read
+  them, autoloads as loaddefs generates them, and the signatures `help` and
+  eldoc show.
+- **`;;;###autoload` cookies.** `^:autoload` on the name of a `defn`,
+  `define-minor-mode` or `defcustom` (or `{:autoload true}` in a `defn`
+  attr-map) puts the cookie on the line before the definition. package-lint
+  errors on a global minor mode that is not autoloaded. `defn` now accepts
+  Clojure's `(defn name doc? attr-map? ...)` shape; an attr-map used to be
+  read as the parameter vector.
+
+### Fixed
+
+- **The runtime guard's error message starts with a capital letter**
+  (`Installed clel runtime %s is too old ...`). checkdoc, which
+  MELPA's melpazoid runs, reported "Messages should start with a capital
+  letter" once in every compiled file.
+- **`when-let` / `if-let` emit `when-let*` / `if-let*`.** The unstarred Emacs
+  macros are obsolete since Emacs 31.1, so every use drew a byte-compile
+  warning, and MELPA asks for a clean byte-compile.
+- **`(:require [clojure.string :as str])` no longer emits
+  `(require 'clojure-string)`**, which failed with "Cannot open load file".
+  `clojure.*` namespaces compile to runtime calls (`str/join` →
+  `clel-str-join`), so there is nothing to load; the alias keeps resolving. A
+  namespace required with both `:as` and `:refer` is now required once.
+- **Compiling the same source twice yields byte-identical output.** Generated
+  names came from the JVM-wide gensym counter (destructuring's `p__31976`,
+  `#()`'s `p1__N#`, `cond->`'s `G__N`, the global reify counter), so committed
+  `.el` files churned on every build. Names are now numbered per top-level
+  form (`clojure-elisp.gensym`): `p__1`, `map__3`, `G__1`; editing one form
+  does not renumber another. Reify types are numbered per file and carry the
+  namespace prefix (`my-pkg--reify-1`). A destructured parameter with `:as`
+  takes that name, so `help` and checkdoc see `state`, not `p__1`.
+- **Variadic `defn` emits its real arglist**, `(defun f (a &rest more) "doc"
+  ...)`, instead of `(&rest clel--args)` plus a `let`. The docstring used to
+  land inside that `let`, where it is not a docstring: 24 public runtime
+  functions (`clel-map`, `clel-merge`, `clel-apply`, ...) had none, and
+  checkdoc demanded that every docstring mention `CLEL--ARGS`. The runtime is
+  regenerated and has them back. A multi-arity `defn`, which must dispatch on
+  `(&rest clel--args)`, ends its docstring with the signature `help` and eldoc
+  show, `\(fn START &optional END)`, and a `;; checkdoc-params:` line exempts
+  the compiler's own parameter names (`clel--args`, `p__1`) from checkdoc.
+- **Docstrings keep their lines.** A multi-line docstring was emitted on one
+  physical line with `\n` escapes, so checkdoc saw its whole text as the
+  first line ("First sentence should end with punctuation"). Docstrings are
+  now written with real newlines, and a `(` opening a line is written `\(`.
+  The indentation Clojure puts on continuation lines (aligned under the
+  opening quote) is removed, relative indentation kept: Emacs shows docstring
+  lines as written, and checkdoc wants the second line flush left.
+  An Elisp-style `(defn f [x] "Doc." body)`, a string opening a body that goes
+  on, is taken as the docstring. The regenerated runtime's checkdoc
+  diagnostics drop from 36 to 16.
+- **An unmapped `clojure.core/NAME` is a compile error** instead of a call to
+  `clojure-core-NAME`, a function nothing defines, which failed only when the
+  code ran. Such names come mostly from syntax-quote and from macros expanded
+  on the JVM (`with-out-str` writes `clojure.core/push-thread-bindings`); the
+  error names the symbol and its line. `clojure.core/vector`, which the
+  reader writes for a syntax-quoted `[...]`, now resolves to Elisp's
+  `vector`, as the bare name always did: a syntax-quoted vector used to
+  compile to `(clel-apply #'clojure-core-vector ...)`, a void-function error
+  at macro-expansion time. The runtime's `clojure-core-vector` and
+  `clojure-core-list` bridge variables are gone. Emitted code named them as
+  functions (`#'clojure-core-vector`), which a variable never satisfied, and
+  package-lint rejects their names.
+
+### Changed
+
+- **`.cljel` source is read by the compiler's own reader.**
+  `clojure-elisp.reader` replaces `clojure.core/read` over a
+  `LineNumberingPushbackReader`. ClojureWasm has neither; Babashka has both,
+  but its syntax-quote and `#()` expand to different forms than the JVM's, so
+  a `defmacro` compiled to different Elisp there. `clojure.tools.reader` does
+  not load on cljw (its number regex has eight capture groups; cljw allows
+  seven), and `edamame` depends on it. The new reader follows `LispReader`:
+  lists carry `{:line :column}`, syntax-quote expands to the same
+  `clojure.core/seq`/`concat` forms, `#()` to `fn*`. A new test checks that it
+  reads the examples, the runtime and a set of snippets to the same forms and
+  locations as `LispReader`. `#?` is rejected as before; `#=` is now rejected
+  instead of evaluated.
+- **Output is a pure function of the source.** Generated names (`#()`
+  parameters, `foo#`, destructuring temporaries) are numbered per compilation
+  from 1 (`p1__1`, `vec__7`) instead of from gensym's process-wide counter, so
+  a warm REPL, a fresh process and every host agree. A `reify` type is named
+  by a hash of its definition (`clel--reify-3fa2b1c0`) instead of a
+  process-wide counter; the counter restarted at 1 in every process, so two
+  files compiled separately could both define `clel--reify-1` and clobber each
+  other in one Emacs.
+- **Keyword options, sets and large maps are emitted in source order.**
+  `defcustom`, `defgroup` and `define-minor-mode` options came out in hash
+  order (`:group` before `:type`), and hash order differs per host. Only the
+  option order of `examples/hive-mcp-eca`, `hive-mcp-log` and `olympus-ui`
+  changes. `reify` struct slots are sorted by name for the same reason.
+- `compile-project` compiles independent namespaces in name order.
+- `clojure-elisp.core` no longer loads `malli.instrument`, and with it
+  test.check, when it loads; `instrument!` and `unstrument!` resolve it when
+  called.
+- The filesystem port runs on cljw: resources are found on the classpath
+  directories when `io/resource` finds nothing, and `file-mtime` may return
+  nil when the host cannot tell, which the project build treats as changed.
+- `;; Unknown node:` comments no longer print the whole analysis environment.
+- **`cond->`, `cond->>`, `some->`, `some->>`, `as->`, `doto`, `if-not`,
+  `when-some`, `if-some`, `when-first` and `condp` expand in the compiler**,
+  following clojure.core's definitions, instead of through the host's
+  `macroexpand`. Their temporaries were named from the host's gensym counter
+  (`G__8237` in one process, `G__19400` in the next), and ClojureWasm expands
+  several of them differently (its `if-not` swaps the branches). A
+  syntax-quoted `clojure.core/when-let`, `clojure.core/cond` and the like in a
+  macro's expansion now goes to the compiler's own analyzer rather than the
+  host's `macroexpand`, for the same reason.
+- **Syntax-quote resolves names from a fixed table**
+  (`clojure-elisp.jvm-names`): the clojure.core vars and java.lang classes of
+  a fresh JVM `user` namespace. It used the host's ns-map, so `` `(binding
+  ...) `` and `` `(catch Exception ...) `` read as `user/binding` and
+  `user/Exception` on ClojureWasm, and `` `(pp x) `` as `clojure.pprint/pp`
+  on Babashka.
+- Quoted sets and maps (`'#{...}`) print in source order, and strings print
+  as the JVM prints them (`\f`, `\b` escaped) on every host.
+
+### Fixed
+
+- Elisp syntax preprocessing no longer indexes the source string char by
+  char. On ClojureWasm, where string indexing is O(n), that made compiling the
+  64 KB runtime quadratic; the scanners now walk a char vector.
+- String and character literals are decoded by the reader, with
+  `LispReader`'s escapes and error messages. ClojureWasm rejected octal
+  escapes (`"\101"`, `"\0"`) and reported every bad escape as
+  `EDN error (StringError)`.
+- Two syntax-quotes in one file no longer share an auto-gensym: `x#` in
+  `` `(a x#) `` and in `` `(b x#) `` are now different names, as with
+  `LispReader`. The expansion was lazy, so names were drawn when the analyzer
+  first walked the form rather than while the syntax-quote was read.
+
+### Known issues
+
+- On ClojureWasm 1.14.7, a file whose `defmacro` the compiler evaluates can
+  crash the process (segmentation fault or "General protection exception").
+  `eval` of any `fn` form corrupts cljw's heap: `(eval '(fn [x] x))` followed
+  by `(dotimes [_ 20000] (vec (range 50)))` crashes a bare `cljw`. Whether a
+  given file survives depends on how much it allocates afterwards;
+  `kitchen_sink.cljel` does, a file with six small macros does not. An `fn`
+  with keyword-argument destructuring (`[a & {:keys [b]}]`) crashes `eval`
+  immediately. Files without `defmacro` are unaffected.
+
 ## [0.7.2] - 2026-09-05
 
 A runtime correctness release. `map` and `filter` have always returned a lazy

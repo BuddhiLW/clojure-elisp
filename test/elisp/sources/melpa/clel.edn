@@ -1,0 +1,9 @@
+{:source-paths ["src"]
+ :output-dir   "../../fixtures/melpa"
+ :package      {:name "clelfix"
+                :author "Jane Doe <jane@example.org>"
+                :url "https://example.org/clelfix"
+                :version "0.1.0"
+                :package-requires [[emacs "28.1"]]
+                :keywords ["lisp"]
+                :license "GPL-3.0-or-later"}}

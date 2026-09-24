@@ -1,0 +1,77 @@
+(ns parity.kitchen-sink
+  "Host-parity fixture: one of everything the reader and analyzer must treat
+   identically on the JVM, Babashka and ClojureWasm. Compiled output of this
+   file is compared byte for byte across hosts; it is not loaded into Emacs."
+  (:require [clojure.string :as str]))
+
+;; ---------------------------------------------------------------------------
+;; Reader: literals
+
+(def ^:private numbers [0 -7 +3 42N 0x1F 017 2r1010 36rZZ 1.5 -0.25 1e3 6.02E23 1.5M])
+(def chars [?a ?\s ?\n ?\t ?\\ ?é ?A])
+(def strings ["plain" "tab\there" "quote \" inside" "unicode é \u00e9" "backslash \\"])
+(def keywords [:a :ns/b :c.d/e ::local])
+(def small-set #{:b :a :c})
+(def string-set #{"zeta" "alpha" "mid" "beta" "omega" "delta" "pi" "rho" "tau" "chi"})
+(defn vowel? [c] (contains? #{"a" "e" "i" "o" "u"} c))
+(def pattern "^[a-z]+[0-9]*$")
+#_(def discarded "never compiled")
+(def big-map {:k1 1 :k2 2 :k3 3 :k4 4 :k5 5 :k6 6 :k7 7 :k8 8 :k9 9 :k10 10})
+(def quoted '(a b [c d] {:e f}))
+(def nested '(1 (2 (3 (4)))))
+
+;; ---------------------------------------------------------------------------
+;; Reader macros
+
+(defn deref-it [a] @a)
+(defn var-of [] #'deref-it)
+(def anon-fns [#(+ % 1) #(* %1 %2) #(apply str %&) #(list %2 %1)])
+
+(defmacro unless [test & body]
+  `(if ~test nil (do ~@body)))
+
+(defmacro with-temp [binding-form & body]
+  `(let [tmp# ~binding-form
+         result# (do ~@body)]
+     (list tmp# result#)))
+
+;; ---------------------------------------------------------------------------
+;; Destructuring (generated names must number identically on every host)
+
+(defn swap-pair [[a b]] [b a])
+
+(defn describe [{:keys [name age] :or {age 0} :as person}]
+  (str name " is " age " (" (count person) " keys)"))
+
+(defn head-tail [[x & xs] {:strs [label]}]
+  (list label x (count xs)))
+
+(defn nested-destructure [{[p q] :pair {:keys [r]} :inner}]
+  (+ p q r))
+
+(let [[one two & more] [1 2 3 4]
+      {:keys [k1 k10]} big-map]
+  (list one two more k1 k10))
+
+;; ---------------------------------------------------------------------------
+;; Forms whose options come from keyword/value pairs
+
+(defgroup parity nil
+  "Parity fixture group."
+  :prefix "parity-"
+  :group 'tools
+  :tag "Parity")
+
+(defcustom parity-level 3
+  "How much parity."
+  :type 'integer
+  :group 'parity
+  :safe 'integerp)
+
+(define-minor-mode parity-mode
+  "A mode for parity."
+  :init-value nil
+  :lighter " P"
+  :global t
+  :group 'parity
+  (message "toggled"))

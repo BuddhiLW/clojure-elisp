@@ -1,0 +1,64 @@
+(ns parity.kitchen-sink-forms
+  "Host-parity fixture, second half of parity.kitchen-sink: control flow and
+   definitions. Compiled output of this file is compared byte for byte
+   across the JVM, Babashka and ClojureWasm; it is not loaded into Emacs."
+  (:require [clojure.string :as str]))
+
+;; ---------------------------------------------------------------------------
+;; Control flow and definitions
+
+(defn classify [n]
+  (cond
+    (neg? n) :negative
+    (zero? n) :zero
+    :else :positive))
+
+(defn pick [k]
+  (case k
+    :a "alpha"
+    (:b :c) "beta-or-gamma"
+    "other"))
+
+(defn sum-to [n]
+  (loop [i 0 acc 0]
+    (if (> i n) acc (recur (inc i) (+ acc i)))))
+
+(defn safe-div [a b]
+  (try
+    (/ a b)
+    (catch Exception e
+      (str "failed: " (ex-message e)))
+    (finally
+      (message "done"))))
+
+(defn pipeline [xs]
+  (->> xs
+       (map inc)
+       (filter even?)
+       (reduce +)))
+
+(defn words [s]
+  (str/split s "[ \t\n]+"))
+
+(defprotocol Shape
+  (area [this]))
+
+(defrecord Square [side]
+  Shape
+  (area [_] (* side side)))
+
+(defmulti render :kind)
+(defmethod render :circle [s] (str "circle " (:r s)))
+(defmethod render :default [s] (str "shape " (:kind s)))
+
+(defn make-counter [start step]
+  (let [label "counter"]
+    (reify Shape
+      (area [_] (list label start step)))))
+
+(letfn [(ev? [n] (if (zero? n) true (od? (dec n))))
+        (od? [n] (if (zero? n) false (ev? (dec n))))]
+  (ev? 10))
+
+(def counter (atom 0))
+(swap! counter inc)

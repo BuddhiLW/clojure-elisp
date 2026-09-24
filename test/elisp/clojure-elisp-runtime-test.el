@@ -5,7 +5,7 @@
 ;; Behavioural cover for the runtime library. The Clojure suite asserts on
 ;; EMITTED STRINGS, which cannot see a runtime defect: emitted code that reads
 ;; correctly still returned 4 for (count (map inc '(1 2 3))). These tests load
-;; clojure-elisp-runtime.el and call it.
+;; clel.el and call it.
 ;;
 ;; The central law: an eager consumer must answer the same for a lazy sequence
 ;; as for the realized list it stands for.
@@ -21,7 +21,7 @@
 (require 'subr-x)
 
 (load (expand-file-name
-       "../../resources/clojure-elisp/clojure-elisp-runtime.el"
+       "../../resources/clojure-elisp/clel.el"
        (file-name-directory (or load-file-name buffer-file-name)))
       nil t)
 

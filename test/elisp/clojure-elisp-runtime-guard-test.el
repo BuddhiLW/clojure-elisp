@@ -26,7 +26,7 @@
   "Repository root, so the runtime and a compiled fixture can be found.")
 
 (defvar clel-guard-test--runtime
-  (expand-file-name "resources/clojure-elisp/clojure-elisp-runtime.el"
+  (expand-file-name "resources/clojure-elisp/clel.el"
                     clel-guard-test--root))
 
 (defvar clel-guard-test--fixture
@@ -49,7 +49,7 @@ Returns (EXIT-CODE . OUTPUT). Success is read from the exit code, not from the
 output: a batch backtrace echoes the --eval string, so any marker printed on
 success also appears in the text of a failure."
   (let* ((dir (make-temp-file "clel-guard" t))
-         (runtime (expand-file-name "clojure-elisp-runtime.el" dir))
+         (runtime (expand-file-name "clel.el" dir))
          (target (expand-file-name "guarded.el" dir)))
     (unwind-protect
         (progn

@@ -16,7 +16,7 @@
             [clojure-elisp.version :as version]))
 
 (deftest runtime-announces-its-own-version
-  (let [el (slurp "resources/clojure-elisp/clojure-elisp-runtime.el")]
+  (let [el (slurp "resources/clojure-elisp/clel.el")]
     (testing "the runtime defines the constant compiled files read"
       (is (str/includes? el (str "(defconst " version/runtime-version-symbol " \""))))
     (testing "the constant carries the project version, not a placeholder"
@@ -25,8 +25,11 @@
 
 (deftest emitted-files-guard-the-runtime-version
   (let [el (clel/compile-file-string "(ns my.pkg)\n(defn f [] 1)")]
-    (testing "the runtime is still required"
-      (is (str/includes? el "(require 'clojure-elisp-runtime)")))
+    (testing "the runtime is required by its package name, clel: MELPA wants
+              every definition to start with the package name, and the
+              runtime's all start with clel"
+      (is (str/includes? el "(require 'clel)"))
+      (is (not (str/includes? el "clojure-elisp-runtime"))))
     (testing "the guard names the minimum runtime this compiler emits against"
       (is (str/includes? el (str "(version<= \"" version/minimum-runtime-version "\" "
                                  version/runtime-version-symbol ")"))))
@@ -38,7 +41,10 @@
               stale combination fails too"
       (is (str/includes? el "(eval-and-compile")))
     (testing "the error says which runtime is installed and which is needed"
-      (is (str/includes? el "is too old for this file")))))
+      (is (str/includes? el "is too old for this file")))
+    (testing "the message starts with a capital letter: checkdoc flags an
+              `error' string that does not, in every compiled file"
+      (is (re-find #"\(error \"[A-Z]" el)))))
 
 (deftest minimum-runtime-version-is-not-the-project-version
   (testing "the minimum is a deliberate constant, never derived from VERSION:

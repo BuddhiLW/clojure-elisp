@@ -85,12 +85,15 @@
 (deftest emit-var-test
   (testing "simple var"
     (is (= "foo" (analyze-and-emit 'foo))))
-  (testing "core function maps to elisp"
-    (is (= "clel-first" (analyze-and-emit 'first)))
-    (is (= "clel-rest" (analyze-and-emit 'rest)))
-    (is (= "1+" (analyze-and-emit 'inc)))
-    (is (= "1-" (analyze-and-emit 'dec)))
-    (is (= "clel-count" (analyze-and-emit 'count)))))
+  (testing "core function in value position is its function value (Lisp-2)"
+    (is (= "#'clel-first" (analyze-and-emit 'first)))
+    (is (= "#'clel-rest" (analyze-and-emit 'rest)))
+    (is (= "#'1+" (analyze-and-emit 'inc)))
+    (is (= "#'1-" (analyze-and-emit 'dec)))
+    (is (= "#'clel-count" (analyze-and-emit 'count))))
+  (testing "core function in call position maps to elisp"
+    (is (= "(clel-first xs)" (analyze-and-emit '(first xs))))
+    (is (= "(1+ x)" (analyze-and-emit '(inc x))))))
 
 (deftest emit-local-test
   (testing "local in let"
@@ -108,8 +111,8 @@
     (is (= "(list 1 2 3)" (analyze-and-emit [1 2 3])))))
 
 (deftest emit-map-test
-  (testing "empty map"
-    (is (= "(list )" (analyze-and-emit {}))))
+  (testing "empty map is nil"
+    (is (= "nil" (analyze-and-emit {}))))
   (testing "map with entries"
     (let [result (analyze-and-emit {:a 1})]
       (is (clojure.string/includes? result ":a"))
@@ -184,13 +187,11 @@
       (is (clojure.string/includes? result "nthcdr")))))
 
 (deftest emit-defn-variadic-test
-  (testing "single-arity variadic uses &rest"
+  (testing "single-arity variadic emits its real arglist: help, eldoc and
+            checkdoc see the Clojure parameters, not a synthetic clel--args"
     (let [result (analyze-and-emit '(defn varargs [x & rest] (cons x rest)))]
-      (is (clojure.string/includes? result "defun"))
-      (is (clojure.string/includes? result "&rest clel--args"))
-      (is (clojure.string/includes? result "let"))
-      (is (clojure.string/includes? result "(nth 0 clel--args)"))
-      (is (clojure.string/includes? result "nthcdr")))))
+      (is (clojure.string/starts-with? result "(defun varargs (x &rest rest)\n"))
+      (is (not (clojure.string/includes? result "clel--args"))))))
 
 ;; ============================================================================
 ;; fn (lambda)
@@ -329,7 +330,7 @@
     (let [result (analyze-and-emit '(ns my.package))]
       (is (clojure.string/includes? result "my-package"))
       (is (clojure.string/includes? result "lexical-binding: t"))
-      (is (clojure.string/includes? result "clojure-elisp-runtime")))))
+      (is (clojure.string/includes? result "(require 'clel)")))))
 
 (deftest emit-ns-require-test
   (testing "emits require for simple dependency"
@@ -341,8 +342,8 @@
       (is (clojure.string/includes? code "(require 'foo-bar)"))))
 
   (testing "emits require for bare symbol"
-    (let [code (analyze-and-emit '(ns my.app (:require clojure.set)))]
-      (is (clojure.string/includes? code "(require 'clojure-set)"))))
+    (let [code (analyze-and-emit '(ns my.app (:require subr-x)))]
+      (is (clojure.string/includes? code "(require 'subr-x)"))))
 
   (testing "emits multiple requires"
     (let [code (analyze-and-emit '(ns my.app
@@ -355,7 +356,7 @@
     (let [code (analyze-and-emit '(ns my.app (:require [foo.bar])))]
       (is (clojure.string/includes? code ";;; my-app.el"))
       (is (clojure.string/includes? code "lexical-binding: t"))
-      (is (clojure.string/includes? code "(require 'clojure-elisp-runtime)")))))
+      (is (clojure.string/includes? code "(require 'clel)")))))
 
 (deftest emit-ns-load-path-test
   (testing "load-path emitted before requires"
@@ -894,6 +895,22 @@
                                     (perimeter [this] 20)))]
       (is (clojure.string/includes? code "cl-defmethod area"))
       (is (clojure.string/includes? code "cl-defmethod perimeter")))))
+
+(deftest reify-names-are-content-addressed
+  (let [type-name   #(re-find #"clel--reify-[0-9a-f]{8}" %)
+        greeter     '(reify IGreeter (greet [this] "hello"))
+        other       '(reify IGreeter (greet [this] "bye"))]
+    (testing "the same form gets the same name, however much was emitted before"
+      (is (= (type-name (analyze-and-emit greeter))
+             (do (analyze-and-emit other)
+                 (type-name (analyze-and-emit greeter))))))
+    (testing "different forms get different names"
+      (is (not= (type-name (analyze-and-emit greeter))
+                (type-name (analyze-and-emit other)))))
+    (testing "every reference to the type uses the one name"
+      (let [code (analyze-and-emit greeter)]
+        (is (= #{(type-name code)} (set (re-seq #"clel--reify-[0-9a-f]{8}" code))))
+        (is (not (clojure.string/includes? code "SELF")))))))
 
 ;; ============================================================================
 ;; Macro System (clel-027)
@@ -2030,14 +2047,19 @@
 ;; ============================================================================
 
 (deftest test-cl-lib-mappings
+  ;; `pred' is free here, so it names a global function and is #'-quoted in
+  ;; the function slot; a local `pred' would pass through as a value.
   (testing "cl-remove-if passes through"
-    (is (= "(cl-remove-if pred xs)" (analyze-and-emit '(cl-remove-if pred xs)))))
+    (is (= "(cl-remove-if #'pred xs)" (analyze-and-emit '(cl-remove-if pred xs)))))
   (testing "cl-remove-if-not passes through"
-    (is (= "(cl-remove-if-not pred xs)" (analyze-and-emit '(cl-remove-if-not pred xs)))))
+    (is (= "(cl-remove-if-not #'pred xs)" (analyze-and-emit '(cl-remove-if-not pred xs)))))
   (testing "cl-every passes through"
-    (is (= "(cl-every pred xs)" (analyze-and-emit '(cl-every pred xs)))))
+    (is (= "(cl-every #'pred xs)" (analyze-and-emit '(cl-every pred xs)))))
   (testing "cl-some passes through"
-    (is (= "(cl-some pred xs)" (analyze-and-emit '(cl-some pred xs)))))
+    (is (= "(cl-some #'pred xs)" (analyze-and-emit '(cl-some pred xs)))))
+  (testing "a local predicate stays a value"
+    (is (= "(lambda (pred xs)\n    (cl-some pred xs))"
+           (analyze-and-emit '(fn [pred xs] (cl-some pred xs))))))
   (testing "cl-subseq passes through"
     (is (= "(cl-subseq xs 1 3)" (analyze-and-emit '(cl-subseq xs 1 3)))))
   (testing "cl-generic-p passes through"
@@ -2056,24 +2078,25 @@
     (is (= "(make-hash-table :test 'equal)"
            (analyze-and-emit '(make-hash-table :test 'equal)))))
 
+  ;; `k'/`v', not `key'/`val': free, those name clojure.core/key and val.
   (testing "puthash passes through"
-    (is (= "(puthash key val table)"
-           (analyze-and-emit '(puthash key val table)))))
+    (is (= "(puthash k v table)"
+           (analyze-and-emit '(puthash k v table)))))
 
   (testing "gethash passes through"
-    (is (= "(gethash key table)"
-           (analyze-and-emit '(gethash key table)))))
+    (is (= "(gethash k table)"
+           (analyze-and-emit '(gethash k table)))))
 
   (testing "remhash passes through"
-    (is (= "(remhash key table)"
-           (analyze-and-emit '(remhash key table)))))
+    (is (= "(remhash k table)"
+           (analyze-and-emit '(remhash k table)))))
 
   (testing "copy-hash-table passes through"
     (is (= "(copy-hash-table table)"
            (analyze-and-emit '(copy-hash-table table)))))
 
-  (testing "maphash passes through"
-    (is (= "(maphash f table)"
+  (testing "maphash passes through (a free `f' names a function)"
+    (is (= "(maphash #'f table)"
            (analyze-and-emit '(maphash f table)))))
 
   (testing "hash-table-keys passes through"
@@ -2123,8 +2146,8 @@
 
 (deftest emit-elisp-builtin-conflicts-test
   (testing "assoc maps to clel-assoc (Clojure semantics, not Elisp alist)"
-    (is (= "(clel-assoc m :key val)"
-           (analyze-and-emit '(assoc m :key val)))))
+    (is (= "(clel-assoc m :key v)"
+           (analyze-and-emit '(assoc m :key v)))))
 
   (testing "concat maps to clel-concat (Clojure semantics)"
     (is (= "(clel-concat xs ys)"
@@ -2144,12 +2167,12 @@
 
 (deftest emit-mutation-mappings-test
   (testing "setcar passes through"
-    (is (= "(setcar cell val)"
-           (analyze-and-emit '(setcar cell val)))))
+    (is (= "(setcar cell v)"
+           (analyze-and-emit '(setcar cell v)))))
 
   (testing "setcdr passes through"
-    (is (= "(setcdr cell val)"
-           (analyze-and-emit '(setcdr cell val)))))
+    (is (= "(setcdr cell v)"
+           (analyze-and-emit '(setcdr cell v)))))
 
   (testing "nthcdr passes through"
     (is (= "(nthcdr 2 xs)"
@@ -2173,20 +2196,21 @@
       (is (= "(setf x 42)" code))))
 
   (testing "setf with generalized place (car)"
-    (let [code (analyze-and-emit '(setf (car cell) val))]
+    ;; `v', not `val': a free `val' names clojure.core/val, a function.
+    (let [code (analyze-and-emit '(setf (car cell) v))]
       (is (clojure.string/starts-with? code "(setf"))
       (is (clojure.string/includes? code "(car cell)"))
-      (is (clojure.string/includes? code "val"))))
+      (is (clojure.string/includes? code " v)"))))
 
   (testing "setf with multiple pairs"
     (let [code (analyze-and-emit '(setf x 1 y 2))]
       (is (= "(setf x 1 y 2)" code))))
 
   (testing "setf with aref place"
-    (let [code (analyze-and-emit '(setf (aref arr 0) val))]
+    (let [code (analyze-and-emit '(setf (aref arr 0) v))]
       (is (clojure.string/starts-with? code "(setf"))
       (is (clojure.string/includes? code "(aref arr 0)"))
-      (is (clojure.string/includes? code "val")))))
+      (is (clojure.string/includes? code " v)")))))
 
 (deftest emit-push-test
   (testing "push value onto list variable"
@@ -2391,5 +2415,6 @@
   (testing "explicit #'f is not double-quoted"
     (is (= "(clel-map #'1+ xs)"              (analyze-and-emit '(map #'inc xs)))))
 
-  (testing "non-HOF invocations leave symbol args bare"
-    (is (= "(foo 1+ bar)"                    (analyze-and-emit '(foo inc bar))))))
+  (testing "non-HOF invocations: a known function is still a function value"
+    ;; `1+' read as a variable is void; Clojure passes the fn itself.
+    (is (= "(foo #'1+ bar)"                  (analyze-and-emit '(foo inc bar))))))

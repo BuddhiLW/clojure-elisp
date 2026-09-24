@@ -20,8 +20,7 @@
             [clojure-elisp.config :as config]
             [clojure-elisp.fs :as fs]
             [clojure-elisp.errors :as errors]
-            [malli.core :as m]
-            [malli.instrument :as mi]))
+            [malli.core :as m]))
 
 ;; ============================================================================
 ;; Public API — instrumentable pipeline entry points
@@ -66,9 +65,10 @@
   (cc/leading-ns-source source))
 
 (defn compile-file-string
-  "Compile a string of Clojure code as a file (with namespace context)."
-  [s]
-  (cc/compile-file-string s))
+  "Compile a string of Clojure code as a file (with namespace context).
+   opts: {:package pkg}, the file's effective package map."
+  ([s] (cc/compile-file-string s))
+  ([s opts] (cc/compile-file-string s opts)))
 
 (defn compile-file-string-result
   "Compile a string of Clojure code as a file, returning a Result."
@@ -113,12 +113,15 @@
   ([fs file-paths] (project/build-project-symbol-table fs file-paths)))
 
 (defn compile-project
-  "Compile all .cljel files under source-paths in dependency order."
+  "Compile all .cljel files under source-paths in dependency order.
+   opts: {:package pkg}, the project's package map (clel.edn `:package`)."
   ([source-paths output-dir]    (project/compile-project source-paths output-dir))
-  ([fs source-paths output-dir] (project/compile-project fs source-paths output-dir)))
+  ([fs source-paths output-dir] (project/compile-project fs source-paths output-dir))
+  ([fs source-paths output-dir opts]
+   (project/compile-project fs source-paths output-dir opts)))
 
 (defn bundle-runtime!
-  "Write clojure-elisp-runtime.el from the classpath into output-dir.
+  "Write the runtime library, clel.el, from the classpath into output-dir.
    Returns {:runtime-output path} or nil when the resource is absent."
   ([output-dir] (bundle-runtime! fs/default-fs output-dir))
   ([fs output-dir] (config/bundle-runtime fs output-dir)))
@@ -162,8 +165,11 @@
 (m/=> emit                       [:=> [:cat :any] :string])
 (m/=> emit-forms                 [:=> [:cat [:sequential :any]] :string])
 (m/=> compile-string             [:=> [:cat :string] :string])
-(m/=> compile-file-string        [:=> [:cat :string] :string])
-(m/=> emit-result                [:=> [:cat :any] errors/string-result-schema])
+(m/=> compile-file-string
+      [:function
+       [:=> [:cat :string] :string]
+       [:=> [:cat :string [:maybe [:map [:package {:optional true} [:maybe :map]]]]] :string]])
+(m/=> emit-result               [:=> [:cat :any] errors/string-result-schema])
 (m/=> emit-forms-result          [:=> [:cat [:sequential :any]] errors/string-result-schema])
 (m/=> compile-file-string-result [:=> [:cat :string] errors/string-result-schema])
 (m/=> compile-file-result        [:=> [:cat :string :string] errors/file-result-schema])
@@ -189,19 +195,29 @@
    'clojure-elisp.emitter
    'clojure-elisp.nrepl-kernel])
 
+(defn- instrumentation-opts
+  "Options selecting the boundary namespaces for malli.instrument.
+
+   malli.instrument is resolved on demand: it requires malli.generator and so
+   test.check, which the compile path must not carry (a host without
+   test.check, such as ClojureWasm, could not load clojure-elisp.core)."
+  []
+  {:filters [(apply (requiring-resolve 'malli.instrument/-filter-ns)
+                    instrumented-nses)]})
+
 (defn instrument!
   "Enable Malli instrumentation of the boundary fn contracts (core + compile +
    project). Call unstrument! to disable. Intended for dev/test."
   []
-  (mi/instrument! {:filters [(apply mi/-filter-ns instrumented-nses)]}))
+  ((requiring-resolve 'malli.instrument/instrument!) (instrumentation-opts)))
 
 (defn unstrument!
   "Disable Malli instrumentation of the boundary fn contracts."
   []
-  (mi/unstrument! {:filters [(apply mi/-filter-ns instrumented-nses)]}))
+  ((requiring-resolve 'malli.instrument/unstrument!) (instrumentation-opts)))
 
 (comment
   (emit '(defn foo [x] (+ x 1)))
   (emit '(let [a 1 b 2] (+ a b)))
   (compile-runtime "resources/clojure-elisp/runtime.cljel"
-                   "resources/clojure-elisp/clojure-elisp-runtime.el"))
+                   "resources/clojure-elisp/clel.el"))

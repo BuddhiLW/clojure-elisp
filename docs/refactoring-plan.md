@@ -35,7 +35,7 @@ src/clojure_elisp/
 └── repl.clj        # REPL server
 
 resources/clojure-elisp/
-└── clojure-elisp-runtime.el  # Elisp runtime library
+└── clel.el  # Elisp runtime library
 
 test/clojure_elisp/
 ├── analyzer_test.clj
@@ -82,7 +82,7 @@ test/clojure_elisp/
 | **Reader** | Parse Clojure forms | Clojure's built-in reader |
 | **Analyzer** | AST construction, macro expansion | analyzer.clj |
 | **Emitter** | Code generation | emitter.clj |
-| **Runtime** | Elisp runtime support | clojure-elisp-runtime.el |
+| **Runtime** | Elisp runtime support | clel.el |
 | **Tooling** | REPL, nREPL integration | nrepl.clj, repl.clj |
 
 #### Domain Entities
