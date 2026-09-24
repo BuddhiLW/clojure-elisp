@@ -215,12 +215,22 @@
 
 (defn- lines
   "[items indent] lines a broken list n is written as; the first line's
-   indent is nil, as it follows the opening bracket."
+   indent is nil, as it follows the opening bracket.
+
+   A form with distinguished arguments keeps the first on its first line,
+   and the others while they fit there flat; the rest go under it by four,
+   its body by two. A call aligns its arguments under the first when that
+   one fits on the first line and the others either fit under it on one
+   line each or start within the first third of `width`; otherwise every
+   argument goes on its own line one column in."
   [{:keys [items] :as n} col]
-  (let [hs   (head-symbol n)
-        head (first items)
-        c1   (inc col)
-        on   (fn [indent groups] (map (fn [g] [g indent]) groups))]
+  (let [hs         (head-symbol n)
+        head       (first items)
+        c1         (inc col)
+        on         (fn [indent groups] (map (fn [g] [g indent]) groups))
+        flat-width (fn [xs] (when-let [fs (seq (map flat xs))]
+                              (when (every? some? fs)
+                                (count (str/join " " fs)))))]
     (cond
       (nil? hs)
       (let [[g & gs] (group-pairs items)]
@@ -236,14 +246,26 @@
                 (on (+ col 2) (map vector more))))
 
       (contains? distinguished hs)
-      (let [k (get distinguished hs)]
-        (cons [(take (inc k) items) nil]
-              (on (+ col 2) (group-pairs (drop (inc k) items)))))
+      (let [k        (get distinguished hs)
+            dist     (take k (rest items))
+            body     (drop (inc k) items)
+            first-ln (vec (remove nil? [head (first dist)]))
+            [on-head below]
+            (loop [xs (rest dist) line first-ln]
+              (let [w (when (seq xs) (flat-width (conj line (first xs))))]
+                (if (and w (<= (+ c1 w 1) width))
+                  (recur (rest xs) (conj line (first xs)))
+                  [line xs])))]
+        (concat [[on-head nil]]
+                (on (+ col 4) (map vector below))
+                (on (+ col 2) (group-pairs body))))
 
       :else
       (let [[g & gs] (group-pairs (rest items))
-            align    (+ col 2 (count hs))]
-        (if (and g (<= align (- width 30)))
+            align    (+ col 2 (count hs))
+            fits?    (fn [grp] (when-let [w (flat-width grp)]
+                                 (<= (+ align w 1) width)))]
+        (if (and g (fits? g) (or (<= align (quot width 3)) (every? fits? gs)))
           (cons [(cons head g) nil] (on align gs))
           (cons [[head] nil] (on c1 (remove nil? (cons g gs)))))))))
 

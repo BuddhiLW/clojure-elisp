@@ -81,9 +81,9 @@ nor another runtime value (a lazy seq, an atom, a reduced value)."
   (cond
    ((vectorp x) t)
    ((consp x)
-    (not (or (clel--alist-p x)
-             (memq (car x)
-                   '(clel-lazy-seq clel-atom clel-reduced clel-eduction)))))
+    (not
+     (or (clel--alist-p x)
+         (memq (car x) '(clel-lazy-seq clel-atom clel-reduced clel-eduction)))))
    (t nil)))
 
 (defun clel--kv-entry (item)
@@ -99,11 +99,13 @@ nor another runtime value (a lazy seq, an atom, a reduced value)."
 An existing key keeps its position; a new one is appended. Untouched
 entries are shared, not copied."
   (let* ((found nil)
-         (result (mapcar (lambda (e)
-                           (if (and (not found) (consp e) (equal (car e) key))
-                               (progn (setq found t) (clel--entry key val))
-                             e))
-                         alist)))
+         (result
+          (mapcar
+           (lambda (e)
+             (if (and (not found) (consp e) (equal (car e) key))
+                 (progn (setq found t) (clel--entry key val))
+               e))
+           alist)))
     (if found result (append result (list (clel--entry key val))))))
 
 (defun clel--assoc-index (coll idx val)
@@ -168,20 +170,20 @@ map, as Clojure `get' on a vector; on a map it is a key like any other."
   "Return COLL with KEY associated to VAL, and each key-value pair in KVS.
 A list that is not a map takes an integer KEY as an index, as Clojure
 assoc on a vector."
-  (let* ((result (cond
-                  ((null coll) (list (clel--entry key val)))
-                  ((listp coll)
-                   (if (and (integerp key) (not (clel--alist-p coll)))
-                       (clel--assoc-index coll key val)
-                     (clel--assoc-key coll key val)))
-                  ((vectorp coll)
-                   (let* ((new (copy-sequence coll))) (aset new key val) new))
-                  ((hash-table-p coll)
-                   (let* ((new (copy-hash-table coll)))
-                     (puthash key val new)
-                     new))
-                  (t (error "Unsupported collection type for clel-assoc: %s"
-                            (type-of coll))))))
+  (let* ((result
+          (cond
+           ((null coll) (list (clel--entry key val)))
+           ((listp coll)
+            (if (and (integerp key) (not (clel--alist-p coll)))
+                (clel--assoc-index coll key val)
+              (clel--assoc-key coll key val)))
+           ((vectorp coll)
+            (let* ((new (copy-sequence coll))) (aset new key val) new))
+           ((hash-table-p coll)
+            (let* ((new (copy-hash-table coll))) (puthash key val new) new))
+           (t
+            (error "Unsupported collection type for clel-assoc: %s"
+                   (type-of coll))))))
     (if kvs (clel-apply #'clel-assoc result kvs) result)))
 
 (defun clel-dissoc (coll &rest ks)
@@ -246,12 +248,14 @@ depending on the first map."
   (if (null maps)
       nil
     (let* ((first-map (car maps))
-           (result (cond
-                    ((null first-map) nil)
-                    ((hash-table-p first-map) (copy-hash-table first-map))
-                    ((listp first-map) first-map)
-                    (t (error "Unsupported map type for clel-merge: %s"
-                              (type-of first-map))))))
+           (result
+            (cond
+             ((null first-map) nil)
+             ((hash-table-p first-map) (copy-hash-table first-map))
+             ((listp first-map) first-map)
+             (t
+              (error "Unsupported map type for clel-merge: %s"
+                     (type-of first-map))))))
       (dolist (m (cdr maps))
         (when m
           (cond
@@ -263,8 +267,9 @@ depending on the first map."
            ((listp result)
             (cond
              ((hash-table-p m)
-              (maphash (lambda (k v) (setq result (clel--assoc-key result k v)))
-                       m))
+              (maphash
+               (lambda (k v) (setq result (clel--assoc-key result k v)))
+               m))
              ((listp m)
               (dolist (pair m)
                 (setq result
@@ -395,8 +400,9 @@ target takes entries or [K V] pairs."
                      from
                    (clel-apply #'vector (clel-seq from)))))
        ((listp to) (append to (clel-seq from)))
-       (t (error "Unsupported target collection type for clel-into: %s"
-                 (type-of to)))))))
+       (t
+        (error "Unsupported target collection type for clel-into: %s"
+               (type-of to)))))))
 
 (defun clel-coll-p (x)
   "Return t if X is a collection (list, vector, or hash-table)."
@@ -414,17 +420,19 @@ target takes entries or [K V] pairs."
   "Return t if maps A and B hold the same keys with equal values."
   (let* ((ea (clel-seq a)) (eb (clel-seq b)))
     (and (= (length ea) (length eb))
-         (cl-every (lambda (e)
-                     (let* ((pair (assoc (car e) eb)))
-                       (and pair (clel--equal2 (cdr e) (cdr pair)))))
-                   ea)
+         (cl-every
+          (lambda (e)
+            (let* ((pair (assoc (car e) eb)))
+              (and pair (clel--equal2 (cdr e) (cdr pair)))))
+          ea)
          t)))
 
 (defun clel--set-equal (a b)
   "Return t if the hash set A holds exactly the items of B, a set or a list."
-  (let* ((items (if (hash-table-p b)
-                    (hash-table-keys b)
-                  (delete-dups (copy-sequence b)))))
+  (let* ((items
+          (if (hash-table-p b)
+              (hash-table-keys b)
+            (delete-dups (copy-sequence b)))))
     (and (= (hash-table-count a) (length items))
          (cl-every (lambda (x) (gethash x a)) items)
          t)))
@@ -482,14 +490,15 @@ Maps are equal when they hold the same entries in any order."
 
 (defun clel-str (&rest args)
   "Concatenate ARGS as strings."
-  (mapconcat (lambda (x)
-               (cond
-                ((stringp x) x)
-                ((null x) "")
-                ((symbolp x) (symbol-name x))
-                (t (format "%s" x))))
-             args
-             ""))
+  (mapconcat
+   (lambda (x)
+     (cond
+      ((stringp x) x)
+      ((null x) "")
+      ((symbolp x) (symbol-name x))
+      (t (format "%s" x))))
+   args
+   ""))
 
 (cl-defun clel-subs (s start &optional end)
   "Extract substring from S starting at START to END (optional)."
@@ -839,89 +848,79 @@ reach a raw Elisp primitive such as `length', `apply', `sort' or
   (let* ((f (clel--fn f)))
     (if (= 1 (clel-count colls))
         (let* ((s (clel-seq-force (car colls))))
-          (clel-lazy-seq-create (lambda ()
-                                  (when s
-                                    (cons (funcall f (clel-first s))
-                                          (clel-map f (clel-rest s)))))))
+          (clel-lazy-seq-create
+           (lambda ()
+             (when s
+               (cons (funcall f (clel-first s)) (clel-map f (clel-rest s)))))))
       (let* ((seqs (mapcar #'clel-seq-force colls)))
-        (clel-lazy-seq-create (lambda ()
-                                (when (cl-every #'identity seqs)
-                                  (cons (clel-apply
-                                         f
-                                         (mapcar #'clel-first seqs))
-                                        (clel-apply
-                                         #'clel-map
-                                         f
-                                         (mapcar #'clel-rest seqs))))))))))
+        (clel-lazy-seq-create
+         (lambda ()
+           (when (cl-every #'identity seqs)
+             (cons (clel-apply f (mapcar #'clel-first seqs))
+                   (clel-apply #'clel-map f (mapcar #'clel-rest seqs))))))))))
 
 (defun clel-filter (pred s)
   "Lazily filter S by PRED."
   (let* ((s (clel-seq-force s)) (pred (clel--fn pred)))
-    (clel-lazy-seq-create (lambda ()
-                            (let* ((cur s))
-                              (while (and cur
-                                          (not (funcall pred (clel-first cur))))
-                                (setq cur (clel-rest cur)))
-                              (when cur
-                                (cons (clel-first cur)
-                                      (clel-filter pred (clel-rest cur)))))))))
+    (clel-lazy-seq-create
+     (lambda ()
+       (let* ((cur s))
+         (while (and cur (not (funcall pred (clel-first cur))))
+           (setq cur (clel-rest cur)))
+         (when cur
+           (cons (clel-first cur) (clel-filter pred (clel-rest cur)))))))))
 
 (defun clel-take (n s)
   "Lazily take N elements from S."
-  (clel-lazy-seq-create (lambda ()
-                          (when (and (> n 0) s)
-                            (let* ((forced (clel-seq-force s)))
-                              (when forced
-                                (cons (clel-first forced)
-                                      (clel-take (1- n)
-                                                 (clel-rest forced)))))))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (when (and (> n 0) s)
+       (let* ((forced (clel-seq-force s)))
+         (when forced
+           (cons (clel-first forced)
+                 (clel-take (1- n) (clel-rest forced)))))))))
 
 (defun clel-drop (n s)
   "Drop N elements from S, return rest lazily."
-  (clel-lazy-seq-create (lambda ()
-                          (let* ((cur (clel-seq-force s)) (remaining n))
-                            (while (and (> remaining 0) cur)
-                              (setq cur (clel-rest cur))
-                              (setq remaining (1- remaining)))
-                            cur))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (let* ((cur (clel-seq-force s)) (remaining n))
+       (while (and (> remaining 0) cur)
+         (setq cur (clel-rest cur))
+         (setq remaining (1- remaining)))
+       cur))))
 
 (defun clel-take-while (pred s)
   "Lazily take elements from S while PRED is true."
-  (clel-lazy-seq-create (lambda ()
-                          (let* ((forced (clel-seq-force s))
-                                 (pred (clel--fn pred)))
-                            (when (and forced
-                                       (funcall pred (clel-first forced)))
-                              (cons (clel-first forced)
-                                    (clel-take-while
-                                     pred
-                                     (clel-rest forced))))))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (let* ((forced (clel-seq-force s)) (pred (clel--fn pred)))
+       (when (and forced (funcall pred (clel-first forced)))
+         (cons (clel-first forced)
+               (clel-take-while pred (clel-rest forced))))))))
 
 (defun clel-drop-while (pred s)
   "Drop elements from S while PRED is true, return rest lazily."
-  (clel-lazy-seq-create (lambda ()
-                          (let* ((cur (clel-seq-force s))
-                                 (pred (clel--fn pred)))
-                            (while (and cur (funcall pred (clel-first cur)))
-                              (setq cur (clel-rest cur)))
-                            cur))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (let* ((cur (clel-seq-force s)) (pred (clel--fn pred)))
+       (while (and cur (funcall pred (clel-first cur)))
+         (setq cur (clel-rest cur)))
+       cur))))
 
 (defun clel-concat (&rest colls)
   "Lazily concatenate COLLS."
   (if (null colls)
       nil
     (let* ((first-coll (clel-seq-force (car colls))) (rest-colls (cdr colls)))
-      (clel-lazy-seq-create (lambda ()
-                              (if first-coll
-                                  (cons (clel-first first-coll)
-                                        (clel-apply
-                                         #'clel-concat
-                                         (cons (clel-rest first-coll)
-                                               rest-colls)))
-                                (when rest-colls
-                                  (clel-seq-force (clel-apply
-                                                   #'clel-concat
-                                                   rest-colls)))))))))
+      (clel-lazy-seq-create
+       (lambda ()
+         (if first-coll
+             (cons (clel-first first-coll)
+                   (clel-apply #'clel-concat
+                               (cons (clel-rest first-coll) rest-colls)))
+           (when rest-colls
+             (clel-seq-force (clel-apply #'clel-concat rest-colls)))))))))
 
 (defun clel-mapcat (f &rest colls)
   "Map F over COLLS and concatenate results lazily."
@@ -930,48 +929,43 @@ reach a raw Elisp primitive such as `length', `apply', `sort' or
 (defun clel-interleave (&rest colls)
   "Lazily interleave COLLS."
   (let* ((seqs (mapcar #'clel-seq-force colls)))
-    (clel-lazy-seq-create (lambda ()
-                            (when (cl-every #'identity seqs)
-                              (let* ((firsts (mapcar #'clel-first seqs))
-                                     (rests (mapcar #'clel-rest seqs)))
-                                (append firsts
-                                        (clel-seq-force
-                                         (clel-apply
-                                          #'clel-interleave
-                                          rests)))))))))
+    (clel-lazy-seq-create
+     (lambda ()
+       (when (cl-every #'identity seqs)
+         (let* ((firsts (mapcar #'clel-first seqs))
+                (rests (mapcar #'clel-rest seqs)))
+           (append firsts
+                   (clel-seq-force (clel-apply #'clel-interleave rests)))))))))
 
 (defun clel-partition (n s)
   "Partition S into groups of N elements. Returns lazy seq of lists."
-  (clel-lazy-seq-create (lambda ()
-                          (let* ((forced (clel-seq-force s)))
-                            (when forced
-                              (let* ((group nil) (cur forced) (count 0))
-                                (while (and cur (< count n))
-                                  (push (clel-first cur) group)
-                                  (setq cur (clel-rest cur))
-                                  (setq count (1+ count)))
-                                (when (= count n)
-                                  (cons (nreverse group)
-                                        (clel-partition n cur)))))))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (let* ((forced (clel-seq-force s)))
+       (when forced
+         (let* ((group nil) (cur forced) (count 0))
+           (while (and cur (< count n))
+             (push (clel-first cur) group)
+             (setq cur (clel-rest cur))
+             (setq count (1+ count)))
+           (when (= count n)
+             (cons (nreverse group) (clel-partition n cur)))))))))
 
 (defun clel-partition-by (f s)
   "Partition S into groups by the value of (F elem).
 Each group contains consecutive elements with the same (F elem) value."
-  (clel-lazy-seq-create (lambda ()
-                          (let* ((forced (clel-seq-force s)) (f (clel--fn f)))
-                            (when forced
-                              (let* ((first-elem (clel-first forced))
-                                     (first-val (funcall f first-elem))
-                                     (group (list first-elem))
-                                     (cur (clel-rest forced)))
-                                (while (and cur
-                                            (clel-equal
-                                             (funcall f (clel-first cur))
-                                             first-val))
-                                  (push (clel-first cur) group)
-                                  (setq cur (clel-rest cur)))
-                                (cons (nreverse group)
-                                      (clel-partition-by f cur))))))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (let* ((forced (clel-seq-force s)) (f (clel--fn f)))
+       (when forced
+         (let* ((first-elem (clel-first forced))
+                (first-val (funcall f first-elem))
+                (group (list first-elem))
+                (cur (clel-rest forced)))
+           (while (and cur (clel-equal (funcall f (clel-first cur)) first-val))
+             (push (clel-first cur) group)
+             (setq cur (clel-rest cur)))
+           (cons (nreverse group) (clel-partition-by f cur))))))))
 
 (defun clel-split-at (n s)
   "Split S at position N. Returns list of (take n s) and (drop n s)."
@@ -1192,20 +1186,19 @@ Returns a hash-table where each item is a key with value t."
            (rest-sets (cdr sets))
            (result (make-hash-table :test 'equal)))
       (if (hash-table-p first-set)
-          (maphash (lambda (k _v)
-                     (when (cl-every (lambda (s)
-                                       (if (hash-table-p s)
-                                           (gethash k s)
-                                         (member k s)))
-                                     rest-sets)
-                       (puthash k t result)))
-                   first-set)
+          (maphash
+           (lambda (k _v)
+             (when (cl-every
+                    (lambda (s)
+                      (if (hash-table-p s) (gethash k s) (member k s)))
+                    rest-sets)
+               (puthash k t result)))
+           first-set)
         (dolist (item (clel-seq-force first-set))
-          (when (cl-every (lambda (s)
-                            (if (hash-table-p s)
-                                (gethash item s)
-                              (member item s)))
-                          rest-sets)
+          (when (cl-every
+                 (lambda (s)
+                   (if (hash-table-p s) (gethash item s) (member item s)))
+                 rest-sets)
             (puthash item t result))))
       result)))
 
@@ -1213,20 +1206,19 @@ Returns a hash-table where each item is a key with value t."
   "Return items in S1 not in any of SETS."
   (let* ((result (make-hash-table :test 'equal)))
     (if (hash-table-p s1)
-        (maphash (lambda (k _v)
-                   (unless (cl-some (lambda (s)
-                                      (if (hash-table-p s)
-                                          (gethash k s)
-                                        (member k s)))
-                                    sets)
-                     (puthash k t result)))
-                 s1)
+        (maphash
+         (lambda (k _v)
+           (unless (cl-some
+                    (lambda (s)
+                      (if (hash-table-p s) (gethash k s) (member k s)))
+                    sets)
+             (puthash k t result)))
+         s1)
       (dolist (item (clel-seq-force s1))
-        (unless (cl-some (lambda (s)
-                           (if (hash-table-p s)
-                               (gethash item s)
-                             (member item s)))
-                         sets)
+        (unless (cl-some
+                 (lambda (s)
+                   (if (hash-table-p s) (gethash item s) (member item s)))
+                 sets)
           (puthash item t result))))
     result))
 
@@ -1234,10 +1226,11 @@ Returns a hash-table where each item is a key with value t."
   "Return t if S1 is a subset of S2."
   (let* ((result t))
     (if (hash-table-p s1)
-        (maphash (lambda (k _v)
-                   (unless (if (hash-table-p s2) (gethash k s2) (member k s2))
-                     (setq result nil)))
-                 s1)
+        (maphash
+         (lambda (k _v)
+           (unless (if (hash-table-p s2) (gethash k s2) (member k s2))
+             (setq result nil)))
+         s1)
       (dolist (item (clel-seq-force s1))
         (unless (if (hash-table-p s2) (gethash item s2) (member item s2))
           (setq result nil))))
@@ -1260,13 +1253,14 @@ Returns a hash-table where each item is a key with value t."
   "Project a relation XREL (set of maps) onto the keys in KS."
   (let* ((result (make-hash-table :test 'equal)) (key-list (clel-realize ks)))
     (if (hash-table-p xrel)
-        (maphash (lambda (m _v)
-                   (let* ((projected nil))
-                     (dolist (k key-list)
-                       (let* ((val (clel-get m k)))
-                         (when val (push (clel--entry k val) projected))))
-                     (puthash (nreverse projected) t result)))
-                 xrel)
+        (maphash
+         (lambda (m _v)
+           (let* ((projected nil))
+             (dolist (k key-list)
+               (let* ((val (clel-get m k)))
+                 (when val (push (clel--entry k val) projected))))
+             (puthash (nreverse projected) t result)))
+         xrel)
       (dolist (m (clel-seq-force xrel))
         (let* ((projected nil))
           (dolist (k key-list)
@@ -1278,37 +1272,39 @@ Returns a hash-table where each item is a key with value t."
 (defun clel-set-rename (xrel kmap)
   "Rename keys in relation XREL according to KMAP (old-key . new-key) pairs."
   (let* ((result (make-hash-table :test 'equal))
-         (rename-map (if (hash-table-p kmap)
-                         kmap
-                       (let* ((ht (make-hash-table :test 'equal)))
-                         (dolist (pair kmap) (puthash (car pair) (cdr pair) ht))
-                         ht))))
+         (rename-map
+          (if (hash-table-p kmap)
+              kmap
+            (let* ((ht (make-hash-table :test 'equal)))
+              (dolist (pair kmap) (puthash (car pair) (cdr pair) ht))
+              ht))))
     (if (hash-table-p xrel)
-        (maphash (lambda (m _v)
-                   (let* ((renamed nil))
-                     (cond
-                      ((hash-table-p m)
-                       (maphash (lambda (k val)
-                                  (let* ((new-key (or
-                                                   (gethash k rename-map)
-                                                   k)))
-                                    (push (clel--entry new-key val) renamed)))
-                                m))
-                      ((listp m)
-                       (dolist (pair m)
-                         (let* ((new-key (or (gethash (car pair) rename-map)
-                                             (car pair))))
-                           (push (clel--entry new-key (cdr pair)) renamed)))))
-                     (puthash (nreverse renamed) t result)))
-                 xrel)
+        (maphash
+         (lambda (m _v)
+           (let* ((renamed nil))
+             (cond
+              ((hash-table-p m)
+               (maphash
+                (lambda (k val)
+                  (let* ((new-key (or (gethash k rename-map) k)))
+                    (push (clel--entry new-key val) renamed)))
+                m))
+              ((listp m)
+               (dolist (pair m)
+                 (let* ((new-key
+                         (or (gethash (car pair) rename-map) (car pair))))
+                   (push (clel--entry new-key (cdr pair)) renamed)))))
+             (puthash (nreverse renamed) t result)))
+         xrel)
       (dolist (m (clel-seq-force xrel))
         (let* ((renamed nil))
           (cond
            ((hash-table-p m)
-            (maphash (lambda (k val)
-                       (let* ((new-key (or (gethash k rename-map) k)))
-                         (push (clel--entry new-key val) renamed)))
-                     m))
+            (maphash
+             (lambda (k val)
+               (let* ((new-key (or (gethash k rename-map) k)))
+                 (push (clel--entry new-key val) renamed)))
+             m))
            ((listp m)
             (dolist (pair m)
               (let* ((new-key (or (gethash (car pair) rename-map) (car pair))))
@@ -1318,19 +1314,21 @@ Returns a hash-table where each item is a key with value t."
 
 (defun clel-rename-keys (m kmap)
   "Rename keys in map M according to KMAP (old-key . new-key) pairs."
-  (let* ((rename-map (if (hash-table-p kmap)
-                         kmap
-                       (let* ((ht (make-hash-table :test 'equal)))
-                         (dolist (pair kmap) (puthash (car pair) (cdr pair) ht))
-                         ht)))
+  (let* ((rename-map
+          (if (hash-table-p kmap)
+              kmap
+            (let* ((ht (make-hash-table :test 'equal)))
+              (dolist (pair kmap) (puthash (car pair) (cdr pair) ht))
+              ht)))
          (result nil))
     (cond
      ((hash-table-p m)
       (let* ((new-ht (make-hash-table :test 'equal)))
-        (maphash (lambda (k v)
-                   (let* ((new-key (or (gethash k rename-map) k)))
-                     (puthash new-key v new-ht)))
-                 m)
+        (maphash
+         (lambda (k v)
+           (let* ((new-key (or (gethash k rename-map) k)))
+             (puthash new-key v new-ht)))
+         m)
         new-ht))
      ((listp m)
       (progn
@@ -1344,29 +1342,31 @@ Returns a hash-table where each item is a key with value t."
   "Natural join of relations XREL and YREL.
 If KM is provided, it maps keys from XREL to keys in YREL."
   (let* ((result (make-hash-table :test 'equal))
-         (x-list (if (hash-table-p xrel)
-                     (let* ((items nil))
-                       (maphash (lambda (k _v) (push k items)) xrel)
-                       items)
-                   (clel-seq-force xrel)))
-         (y-list (if (hash-table-p yrel)
-                     (let* ((items nil))
-                       (maphash (lambda (k _v) (push k items)) yrel)
-                       items)
-                   (clel-seq-force yrel))))
+         (x-list
+          (if (hash-table-p xrel)
+              (let* ((items nil))
+                (maphash (lambda (k _v) (push k items)) xrel)
+                items)
+            (clel-seq-force xrel)))
+         (y-list
+          (if (hash-table-p yrel)
+              (let* ((items nil))
+                (maphash (lambda (k _v) (push k items)) yrel)
+                items)
+            (clel-seq-force yrel))))
     (dolist (xm x-list)
       (dolist (ym y-list)
         (let* ((xm-keys (clel-keys xm)) (ym-keys (clel-keys ym)) (match t))
-          (let* ((common-keys (if km
-                                  (let* ((mapped nil))
-                                    (dolist (k xm-keys)
-                                      (let* ((yk (clel-get km k)))
-                                        (when (and yk (member yk ym-keys))
-                                          (push k mapped))))
-                                    mapped)
-                                (cl-remove-if-not (lambda (k)
-                                                    (member k ym-keys))
-                                                  xm-keys))))
+          (let* ((common-keys
+                  (if km
+                      (let* ((mapped nil))
+                        (dolist (k xm-keys)
+                          (let* ((yk (clel-get km k)))
+                            (when (and yk (member yk ym-keys))
+                              (push k mapped))))
+                        mapped)
+                    (cl-remove-if-not (lambda (k) (member k ym-keys))
+                                      xm-keys))))
             (dolist (xk common-keys)
               (let* ((yk (if km (clel-get km xk) xk)))
                 (unless (clel-equal (clel-get xm xk) (clel-get ym yk))
@@ -1381,11 +1381,12 @@ If KM is provided, it maps keys from XREL to keys in YREL."
 Returns a map from key-values to sets of matching maps."
   (let* ((result nil)
          (key-list (clel-realize ks))
-         (x-list (if (hash-table-p xrel)
-                     (let* ((items nil))
-                       (maphash (lambda (k _v) (push k items)) xrel)
-                       items)
-                   (clel-realize xrel))))
+         (x-list
+          (if (hash-table-p xrel)
+              (let* ((items nil))
+                (maphash (lambda (k _v) (push k items)) xrel)
+                items)
+            (clel-realize xrel))))
     (dolist (m x-list)
       (let* ((key-vals nil))
         (dolist (k key-list) (push (clel--entry k (clel-get m k)) key-vals))
@@ -1459,28 +1460,29 @@ arguments, or INIT and COLL."
 
 (defun clel-into-xform (to xform from)
   "Add all items FROM into TO, transformed by XFORM."
-  (let* ((rf (cond
-              ((vectorp to)
-               (lambda (&rest args)
-                 (pcase (clel-count args)
-                   (0 (vector))
-                   (1 (car args))
-                   (2 (vconcat (car args) (vector (cadr args)))))))
-              ((listp to)
-               (lambda (&rest args)
-                 (pcase (clel-count args)
-                   (0 nil)
-                   (1 (nreverse (car args)))
-                   (2 (cons (cadr args) (car args))))))
-              ((hash-table-p to)
-               (lambda (&rest args)
-                 (pcase (clel-count args)
-                   (0 (make-hash-table :test 'equal))
-                   (1 (car args))
-                   (2
-                    (let* ((ht (car args)) (pair (cadr args)))
-                      (puthash (car pair) (cdr pair) ht)
-                      ht))))))))
+  (let* ((rf
+          (cond
+           ((vectorp to)
+            (lambda (&rest args)
+              (pcase (clel-count args)
+                (0 (vector))
+                (1 (car args))
+                (2 (vconcat (car args) (vector (cadr args)))))))
+           ((listp to)
+            (lambda (&rest args)
+              (pcase (clel-count args)
+                (0 nil)
+                (1 (nreverse (car args)))
+                (2 (cons (cadr args) (car args))))))
+           ((hash-table-p to)
+            (lambda (&rest args)
+              (pcase (clel-count args)
+                (0 (make-hash-table :test 'equal))
+                (1 (car args))
+                (2
+                 (let* ((ht (car args)) (pair (cadr args)))
+                   (puthash (car pair) (cdr pair) ht)
+                   ht))))))))
     (let* ((result (clel-transduce xform rf to from)))
       (cond
        ((vectorp to) result)
@@ -1738,35 +1740,32 @@ With one arg, returns a transducer."
      ((null coll) (progn (setq actual-coll step) (setq actual-step n)))
      (t (progn (setq actual-step step) (setq actual-coll coll))))
     (when actual-coll
-      (clel-lazy-seq-create (lambda ()
-                              (let* ((forced (clel-seq-force actual-coll)))
-                                (when forced
-                                  (let* ((group nil) (cur forced) (count 0))
-                                    (while (and cur (< count n))
-                                      (push (clel-first cur) group)
-                                      (setq cur (clel-rest cur))
-                                      (setq count (1+ count)))
-                                    (cons (nreverse group)
-                                          (clel-partition-all
-                                           n
-                                           actual-step
-                                           (nthcdr actual-step forced)))))))))))
+      (clel-lazy-seq-create
+       (lambda ()
+         (let* ((forced (clel-seq-force actual-coll)))
+           (when forced
+             (let* ((group nil) (cur forced) (count 0))
+               (while (and cur (< count n))
+                 (push (clel-first cur) group)
+                 (setq cur (clel-rest cur))
+                 (setq count (1+ count)))
+               (cons (nreverse group)
+                     (clel-partition-all n
+                                         actual-step
+                                         (nthcdr actual-step forced)))))))))))
 
 (cl-defun clel-keep (f &optional (coll nil coll-p))
   "Return lazy seq of non-nil results of (F item) for items in COLL.
 With one argument, returns a transducer."
   (if (not coll-p)
       (clel-keep-xf f)
-    (clel-lazy-seq-create (lambda ()
-                            (let* ((cur (clel-seq-force coll))
-                                   (f (clel--fn f))
-                                   (result nil))
-                              (while (and cur (not result))
-                                (setq result (funcall f (clel-first cur)))
-                                (unless result (setq cur (clel-rest cur))))
-                              (when result
-                                (cons result
-                                      (clel-keep f (clel-rest cur)))))))))
+    (clel-lazy-seq-create
+     (lambda ()
+       (let* ((cur (clel-seq-force coll)) (f (clel--fn f)) (result nil))
+         (while (and cur (not result))
+           (setq result (funcall f (clel-first cur)))
+           (unless result (setq cur (clel-rest cur))))
+         (when result (cons result (clel-keep f (clel-rest cur)))))))))
 
 (cl-defun clel-keep-indexed (f &optional coll)
   "Return lazy seq of non-nil results of (F index item) for items in COLL.
@@ -1782,37 +1781,30 @@ With one argument, returns a transducer."
 With no arguments, returns a transducer."
   (if (not coll-p)
       (clel-dedupe-xf)
-    (clel-lazy-seq-create (lambda ()
-                            (let* ((forced (clel-seq-force coll)))
-                              (when forced
-                                (let* ((first-item (clel-first forced))
-                                       (rest-items (clel-rest forced)))
-                                  (while (and rest-items
-                                              (clel-equal
-                                               (clel-first rest-items)
-                                               first-item))
-                                    (setq rest-items (clel-rest rest-items)))
-                                  (cons first-item
-                                        (clel-dedupe rest-items)))))))))
+    (clel-lazy-seq-create
+     (lambda ()
+       (let* ((forced (clel-seq-force coll)))
+         (when forced
+           (let* ((first-item (clel-first forced))
+                  (rest-items (clel-rest forced)))
+             (while (and rest-items
+                         (clel-equal (clel-first rest-items) first-item))
+               (setq rest-items (clel-rest rest-items)))
+             (cons first-item (clel-dedupe rest-items)))))))))
 
 (defun clel--distinct-from (seen coll)
   "Lazy seq of the items of COLL that are not already keys of the SEEN table.
 SEEN is carried across the whole sequence, so a duplicate is dropped however
 far apart its occurrences are."
-  (clel-lazy-seq-create (lambda ()
-                          (let* ((cur (clel-seq-force coll)) (item nil))
-                            (while (and cur (not item))
-                              (let* ((candidate (clel-first cur)))
-                                (if (gethash candidate seen)
-                                    (setq cur (clel-rest cur))
-                                  (progn
-                                    (puthash candidate t seen)
-                                    (setq item candidate)))))
-                            (when item
-                              (cons item
-                                    (clel--distinct-from
-                                     seen
-                                     (clel-rest cur))))))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (let* ((cur (clel-seq-force coll)) (item nil))
+       (while (and cur (not item))
+         (let* ((candidate (clel-first cur)))
+           (if (gethash candidate seen)
+               (setq cur (clel-rest cur))
+             (progn (puthash candidate t seen) (setq item candidate)))))
+       (when item (cons item (clel--distinct-from seen (clel-rest cur))))))))
 
 (cl-defun clel-distinct (&optional (coll nil coll-p))
   "Remove all duplicates from COLL (not just consecutive).
@@ -1826,18 +1818,15 @@ With no arguments, returns a transducer."
 With one argument, returns a transducer."
   (if (not coll-p)
       (clel-interpose-xf sep)
-    (clel-lazy-seq-create (lambda ()
-                            (let* ((forced (clel-seq-force coll)))
-                              (when forced
-                                (let* ((first-item (clel-first forced))
-                                       (rest-items (clel-rest forced)))
-                                  (if rest-items
-                                      (cons first-item
-                                            (cons sep
-                                                  (clel-interpose
-                                                   sep
-                                                   rest-items)))
-                                    (list first-item)))))))))
+    (clel-lazy-seq-create
+     (lambda ()
+       (let* ((forced (clel-seq-force coll)))
+         (when forced
+           (let* ((first-item (clel-first forced))
+                  (rest-items (clel-rest forced)))
+             (if rest-items
+                 (cons first-item (cons sep (clel-interpose sep rest-items)))
+               (list first-item)))))))))
 
 (defun clel-zipmap (keys vals)
   "Create a map from the parallel sequences KEYS and VALS.
@@ -1867,8 +1856,9 @@ A later duplicate key wins."
 
 (cl-defun clel-rand (&optional n)
   "Return a random float between 0 (inclusive) and N (default 1, exclusive)."
-  (let* ((r (/ (float (random most-positive-fixnum))
-               (float most-positive-fixnum))))
+  (let* ((r
+          (/ (float (random most-positive-fixnum))
+             (float most-positive-fixnum))))
     (if n (* n r) r)))
 
 (defun clel-rand-int (n)
@@ -1930,10 +1920,11 @@ If END is not provided, uses the length of V."
 (defun clel--cycle-helper (cur s)
   "Recursive helper for `clel-cycle'.
 CUR is the current position in S, the original forced sequence."
-  (clel-lazy-seq-create (lambda ()
-                          (if cur
-                              (cons (car cur) (clel--cycle-helper (cdr cur) s))
-                            (clel-seq-force (clel--cycle-helper s s))))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (if cur
+         (cons (car cur) (clel--cycle-helper (cdr cur) s))
+       (clel-seq-force (clel--cycle-helper s s))))))
 
 (defun clel-cycle (coll)
   "Return a lazy infinite cycle of elements in COLL."
@@ -1947,15 +1938,12 @@ CUR is the current position in S, the original forced sequence."
 (defun clel--reductions-helper (f acc s)
   "Recursive helper for `clel-reductions'.
 F is the reducing function, ACC the accumulator, S the remaining sequence."
-  (clel-lazy-seq-create (lambda ()
-                          (if s
-                              (let* ((new-acc (funcall f acc (clel-first s))))
-                                (cons new-acc
-                                      (clel--reductions-helper
-                                       f
-                                       new-acc
-                                       (clel-rest s))))
-                            nil))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (if s
+         (let* ((new-acc (funcall f acc (clel-first s))))
+           (cons new-acc (clel--reductions-helper f new-acc (clel-rest s))))
+       nil))))
 
 (defun clel-reductions (f &rest args)
   "Return a lazy seq of the intermediate values of reducing with F.
@@ -1966,17 +1954,15 @@ ARGS is COLL, reduced from its first element, or INIT and COLL."
           (setq init (clel-first s))
           (setq coll (clel-rest s)))
       (progn (setq init (car args)) (setq coll (clel-seq-force (cadr args)))))
-    (clel-lazy-seq-create (lambda ()
-                            (cons init
-                                  (clel--reductions-helper f init coll))))))
+    (clel-lazy-seq-create
+     (lambda () (cons init (clel--reductions-helper f init coll))))))
 
 (defun clel-take-nth (n coll)
   "Return a lazy seq of every Nth element in COLL."
-  (clel-lazy-seq-create (lambda ()
-                          (let* ((s (clel-seq-force coll)))
-                            (when s
-                              (cons (clel-first s)
-                                    (clel-take-nth n (clel-drop n s))))))))
+  (clel-lazy-seq-create
+   (lambda ()
+     (let* ((s (clel-seq-force coll)))
+       (when s (cons (clel-first s) (clel-take-nth n (clel-drop n s))))))))
 
 (defun clel-take-last (n coll)
   "Return the last N elements of COLL as a list."
@@ -2053,9 +2039,8 @@ string is its own name."
   "Return a keyword, as Clojure `keyword'.
 With A alone, A is the name.  With B, A is the namespace and B the name."
   (cond
-   (b-p (intern (concat ":"
-                        (if a (concat (clel-name a) "/") "")
-                        (clel-name b))))
+   (b-p
+    (intern (concat ":" (if a (concat (clel-name a) "/") "") (clel-name b))))
    ((keywordp a) a)
    ((null a) nil)
    (t (intern (concat ":" (if (symbolp a) (symbol-name a) a))))))
@@ -2094,8 +2079,9 @@ E is caught by `condition-case'.  That is the message of an `ex-info' or
 (defun clel-parse-double (s)
   "Clojure `parse-double': the number S spells, as a float, or nil."
   (when (and (stringp s)
-             (string-match-p "\\`[+-]?\\([0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\([eE][+-]?[0-9]+\\)?\\'"
-                             s))
+             (string-match-p
+              "\\`[+-]?\\([0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\([eE][+-]?[0-9]+\\)?\\'"
+              s))
     (float (string-to-number s))))
 
 (defun clel-math-floor (x)
@@ -2175,9 +2161,9 @@ E is caught by `condition-case'.  That is the message of an `ex-info' or
     (or (gethash key clel--protocol-impl-registry)
         (let* ((methods (gethash protocol-name clel--protocol-registry)))
           (and methods
-               (cl-some (lambda (method)
-                          (and (fboundp method) (cl-generic-p method)))
-                        methods))))))
+               (cl-some
+                (lambda (method) (and (fboundp method) (cl-generic-p method)))
+                methods))))))
 
 (provide 'clel)
 ;;; clel.el ends here
