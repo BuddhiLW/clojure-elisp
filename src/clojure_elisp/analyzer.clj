@@ -4,7 +4,8 @@
    Transforms Clojure forms into an AST suitable for Elisp emission.
    We use a simplified approach rather than tools.analyzer for now,
    keeping it pragmatic and easy to understand."
-  (:require [clojure-elisp.macros :as macros]
+  (:require [clojure-elisp.core-macros :as core-macros]
+            [clojure-elisp.macros :as macros]
             [clojure-elisp.destructure :as destructure]
             [clojure-elisp.mappings :as mappings]
             [clojure-elisp.reader :as reader]
@@ -74,6 +75,11 @@
                 clauses)))
 
 (register-builtin-macro! 'elisp-cond elisp-cond-expand)
+
+;; clojure.core macros that name temporaries: expanded portably here, never by
+;; the host (see clojure-elisp.core-macros).
+(doseq [[sym expander] core-macros/expanders]
+  (register-builtin-macro! sym expander))
 
 ;; ============================================================================
 ;; Source Location
@@ -1672,6 +1678,48 @@
               (analyze-invoke form)))
           (analyze-invoke form))))))
 
+(defn- compiler-owned?
+  "True when the compiler, not the host, expands op: it has an analyzer for
+   it or a built-in (portable) macro."
+  [op]
+  (or (contains? special-forms op)
+      (contains? @macros/builtin-macros op)))
+
+(defn- unqualify-core-head
+  "(clojure.core/when ...) -> (when ...) when the compiler owns when. A
+   syntax-quote qualifies every core name, so macro expansions arrive
+   qualified; left qualified they went to the host's macroexpand, whose
+   expansions differ per host (ClojureWasm's cond, when-let and fn are not
+   the JVM's). The compiler's own analyzer implements the same core form."
+  [form]
+  (let [op (first form)]
+    (if (and (symbol? op)
+             (= "clojure.core" (namespace op))
+             (compiler-owned? (symbol (name op))))
+      (with-meta (cons (symbol (name op)) (rest form)) (meta form))
+      form)))
+
+(defn- host-expandable?
+  [form]
+  (and (seq? form)
+       (symbol? (first form))
+       (not (compiler-owned? (first form)))
+       (not (interop-symbol? (first form)))))
+
+(defn- host-macroexpand
+  "Expand form with the host's macroexpand-1 until its head is something the
+   compiler owns or no macro at all. One step at a time, so that
+   (-> x (cond-> ...)) stops at cond-> instead of the host expanding it too."
+  [form]
+  (loop [form form]
+    (let [form (if (seq? form) (unqualify-core-head form) form)]
+      (if (host-expandable? form)
+        (let [expanded (macroexpand-1 form)]
+          (if (= expanded form)
+            form
+            (recur expanded)))
+        form))))
+
 (defn analyze
   "Analyze a Clojure form into an AST node.
    Captures source location from form metadata and propagates it
@@ -1682,15 +1730,12 @@
   (let [loc (extract-source-location form)
         ctx (or loc *source-context*)]
     (binding [*source-context* ctx]
-      ;; Macroexpand first to handle ->, ->>, doto, cond->, etc.
+      ;; Macroexpand first to handle ->, ->>, etc. Forms the compiler owns
+      ;; (special forms, built-in macros such as cond-> and doto) are never
+      ;; handed to the host, whose expansions and gensyms are not portable.
       ;; Skip macroexpand for interop forms (.method, .-field, elisp/fn)
       ;; since Clojure would try to handle them as Java interop.
-      (let [form (if (and (seq? form)
-                          (symbol? (first form))
-                          (not (contains? special-forms (first form)))
-                          (not (interop-symbol? (first form))))
-                   (macroexpand form)
-                   form)]
+      (let [form (host-macroexpand form)]
         (cond
           ;; Nil
           (nil? form)
