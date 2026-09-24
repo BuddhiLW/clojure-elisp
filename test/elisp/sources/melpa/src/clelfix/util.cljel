@@ -1,0 +1,14 @@
+(ns clelfix.util
+  "Helpers that destructure and call clojure.string."
+  (:require [clojure.string :as str]
+            [clojure.set :as set]))
+
+(defn tags
+  "Return the sorted union of tag lists A and B, joined by commas."
+  [a b]
+  (str/join "," (sort (fn [x y] (string< x y)) (distinct (concat a b)))))
+
+(defn describe-state
+  "Describe the phase and hour of a state map."
+  [{:keys [phase hour]}]
+  (format "%s at %s" phase hour))

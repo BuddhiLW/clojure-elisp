@@ -53,7 +53,19 @@ $(PACKAGE_FIXTURE): test/elisp/sources/packaged.cljel src/clojure_elisp/package_
 	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
 	  (spit \"$@\" (clel/compile-file-string (slurp \"$<\")))"
 
-test-elisp: $(GUARD_FIXTURE) $(PACKAGE_FIXTURE)
+MELPA_FIXTURE := test/elisp/fixtures/melpa/clelfix.el
+MELPA_SOURCES := test/elisp/sources/melpa/clel.edn \
+	$(shell find test/elisp/sources/melpa/src -name '*.cljel')
+
+# A three-file package compiled the way a consumer compiles it, from its
+# clel.edn. The directory is removed first: compile-project's incremental
+# cache would otherwise keep outputs of an older compiler.
+$(MELPA_FIXTURE): $(MELPA_SOURCES) $(wildcard src/clojure_elisp/*.clj)
+	rm -rf $(dir $@)
+	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
+	  (clel/compile-project-from-config \"test/elisp/sources/melpa/clel.edn\")"
+
+test-elisp: $(GUARD_FIXTURE) $(PACKAGE_FIXTURE) $(MELPA_FIXTURE)
 	emacs -Q -batch -l ert \
 		-l test/elisp/cider-clojure-elisp-test.el \
 		-f ert-run-tests-batch-and-exit
@@ -65,6 +77,9 @@ test-elisp: $(GUARD_FIXTURE) $(PACKAGE_FIXTURE)
 		-f ert-run-tests-batch-and-exit
 	emacs -Q -batch -l ert \
 		-l test/elisp/clojure-elisp-package-header-test.el \
+		-f ert-run-tests-batch-and-exit
+	emacs -Q -batch -l ert \
+		-l test/elisp/clojure-elisp-melpa-test.el \
 		-f ert-run-tests-batch-and-exit
 
 clean:

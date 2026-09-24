@@ -56,6 +56,12 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Projects that declare no package compile byte-for-byte as before. The
   incremental cache records each file's package map, so a version bump in
   `clel.edn` recompiles the main file.
+- **A MELPA gate in `make test-elisp`.** `test/elisp/clojure-elisp-melpa-test.el`
+  compiles a three-file package from its `clel.edn` and holds it to what
+  MELPA runs: byte-compile with warnings as errors, checkdoc as melpazoid
+  configures it, main and secondary headers as package.el and lisp-mnt read
+  them, autoloads as loaddefs generates them, and the signatures `help` and
+  eldoc show.
 - **`;;;###autoload` cookies.** `^:autoload` on the name of a `defn`,
   `define-minor-mode` or `defcustom` (or `{:autoload true}` in a `defn`
   attr-map) puts the cookie on the line before the definition. package-lint

@@ -1,0 +1,31 @@
+(ns clelfix
+  "Exercise the MELPA surface of compiled output.
+
+   The main file of a three-file package compiled with compile-project
+   from clel.edn, which states the package once."
+  (:require [clojure.string :as str]
+            [clelfix.core :as core]
+            [clelfix.util :as util]))
+
+(defgroup clelfix nil
+  "The clelfix fixture."
+  :group 'lisp)
+
+(defvar clelfix--toggles 0 "Times `clelfix-mode' was toggled.")
+
+(defn ^:autoload hello
+  "Greet WHO in the echo area."
+  [who]
+  (interactive "sWho: ")
+  (message "%s" (str/join " " (list "hello" who))))
+
+(define-minor-mode ^:autoload clelfix-mode
+  "Toggle the clelfix fixture mode."
+  :global true
+  :group 'clelfix
+  (setq clelfix--toggles (+ clelfix--toggles 1)))
+
+(defn summary
+  "Describe the span from START and the union of tag lists A and B."
+  [start a b]
+  (list (core/span start) (util/tags a b)))

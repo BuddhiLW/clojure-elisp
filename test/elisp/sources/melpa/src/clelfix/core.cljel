@@ -1,0 +1,21 @@
+(ns clelfix.core
+  "Arity and binding forms.
+
+   Variadic and multi-arity functions, when-let and if-let.")
+
+(defn span
+  "Return the span in hours.
+With one argument, from START to midnight; with two, from START to END."
+  ([start] (- 24 start))
+  ([start end] (- end start)))
+
+(defn first-even
+  "Return the first even number among NUMS times FACTOR, or nil."
+  [factor & nums]
+  (when-let [n (first (filter (fn [x] (= 0 (mod x 2))) nums))]
+    (* factor n)))
+
+(defn or-default
+  "Return X, or DEFAULT when X is nil."
+  [x default]
+  (if-let [v x] v default))
