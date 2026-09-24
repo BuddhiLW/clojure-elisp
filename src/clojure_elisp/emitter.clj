@@ -6,6 +6,7 @@
             [clojure-elisp.ast :as ast]
             [clojure-elisp.mappings :as mappings]
             [clojure-elisp.package-header :as package-header]
+            [clojure-elisp.reader :as reader]
             [clojure-elisp.schema :as schema]
             [clojure-elisp.version :as version]
             [malli.core :as m]))
@@ -102,6 +103,39 @@
 
 (declare emit)
 
+;; ============================================================================
+;; Printing literal data
+;; ============================================================================
+;; The host printer is not portable: ClojureWasm's pr-str writes \f and \b
+;; raw inside strings, and prints sets and large maps in its own hash order.
+;; These print read data the way the JVM prints it, but collections in the
+;; source order the reader recorded, so every host emits the same bytes.
+
+(def ^:private string-char-escapes
+  "clojure.core/char-escape-string: the chars pr-str escapes in a string."
+  {\newline "\\n" \tab "\\t" \return "\\r" \" "\\\"" \\ "\\\\"
+   \formfeed "\\f" \backspace "\\b"})
+
+(defn pr-string
+  "s as a double-quoted string literal, escaped as the JVM's pr-str does."
+  [s]
+  (str "\"" (str/escape s string-char-escapes) "\""))
+
+(defn pr-data
+  "Print a form read from source as the JVM's pr-str would, except that sets
+   and maps list their elements in source order (reader/ordered-keys,
+   reader/ordered-members) rather than in host hash order."
+  [x]
+  (cond
+    (string? x) (pr-string x)
+    (map? x)    (str "{" (str/join ", " (map #(str (pr-data %) " " (pr-data (get x %)))
+                                             (reader/ordered-keys x)))
+                     "}")
+    (set? x)    (str "#{" (str/join " " (map pr-data (reader/ordered-members x))) "}")
+    (vector? x) (str "[" (str/join " " (map pr-data x)) "]")
+    (seq? x)    (str "(" (str/join " " (map pr-data x)) ")")
+    :else       (pr-str x)))
+
 (defmulti emit-node
   "Emit an AST node to Elisp string."
   :op)
@@ -112,7 +146,7 @@
     :nil "nil"
     :bool (if val "t" "nil")
     :number (str val)
-    :string (pr-str val)
+    :string (pr-string val)
     :keyword (str ":" (name val))
     (str val)))
 
@@ -128,8 +162,8 @@
     (nil? v)     "nil"
     (true? v)    "t"
     (false? v)   "nil"
-    (string? v)  (pr-str v)
-    (char? v)    (pr-str (str v))
+    (string? v)  (pr-string v)
+    (char? v)    (pr-string (str v))
     (keyword? v) (str v)
     (symbol? v)  (str "'" v)
     (number? v)  (str v)
@@ -146,8 +180,8 @@
     (nil? v)     "'nil"
     (true? v)    "'t"
     (false? v)   "'nil"
-    (string? v)  (pr-str v)
-    (char? v)    (pr-str (str v))
+    (string? v)  (pr-string v)
+    (char? v)    (pr-string (str v))
     (keyword? v) (str v)
     (symbol? v)  (str "'" v)
     (number? v)  (str v)
@@ -199,7 +233,7 @@
                       (str "(" (emit-list (map str arglist)) ")")
                       "()")
         parts      (cond-> [(str "(transient-define-prefix " name-str " " arglist-str)]
-                     docstring (conj (str "  " (pr-str docstring)))
+                     docstring (conj (str "  " (pr-string docstring)))
                      (seq groups) (into (map #(str "  " (emit %)) groups)))]
     (str (str/join "\n" parts) ")")))
 
@@ -220,7 +254,7 @@
 
 (defmethod emit-node :quote
   [{:keys [form]}]
-  (str "'" (pr-str form)))
+  (str "'" (pr-data form)))
 
 (defmethod emit-node :defmacro
   [{:keys [name docstring params body env]}]
@@ -229,7 +263,7 @@
         elisp-body   (str/join "\n  " (map emit body))]
     (if docstring
       (format "(defmacro %s %s\n  %s\n  %s)"
-              elisp-name elisp-params (pr-str docstring) elisp-body)
+              elisp-name elisp-params (pr-string docstring) elisp-body)
       (format "(defmacro %s %s\n  %s)"
               elisp-name elisp-params elisp-body))))
 
@@ -273,7 +307,7 @@
         elisp-body (str/join "\n  " (map emit body))]
     (if docstring
       (format "(cl-defun %s %s\n  %s\n  %s)"
-              elisp-name elisp-arglist (pr-str docstring) elisp-body)
+              elisp-name elisp-arglist (pr-string docstring) elisp-body)
       (format "(cl-defun %s %s\n  %s)"
               elisp-name elisp-arglist elisp-body))))
 
@@ -282,7 +316,7 @@
   (let [elisp-name (ns-qualify-name name env)]
     (if init
       (emit-sexp "defvar" elisp-name (emit init)
-                 (when docstring (pr-str docstring)))
+                 (when docstring (pr-string docstring)))
       (format "(defvar %s)" elisp-name))))
 
 (defn- nth-accessor
@@ -383,7 +417,7 @@
   (let [dispatch (emit-arity-cl-case arities)]
     (if docstring
       (format "(defun %s (&rest clel--args)\n  %s\n  %s)"
-              elisp-name (pr-str docstring) dispatch)
+              elisp-name (pr-string docstring) dispatch)
       (format "(defun %s (&rest clel--args)\n  %s)"
               elisp-name dispatch))))
 
@@ -404,7 +438,7 @@
           all-bindings   (str/join " " (concat fixed-bindings [rest-binding]))]
       (if docstring
         (format "(defun %s (&rest clel--args)\n  %s\n  (let (%s)\n    %s))"
-                elisp-name (pr-str docstring) all-bindings elisp-body)
+                elisp-name (pr-string docstring) all-bindings elisp-body)
         (format "(defun %s (&rest clel--args)\n  (let (%s)\n    %s))"
                 elisp-name all-bindings elisp-body)))
     (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
@@ -414,7 +448,7 @@
                          body-str)]
       (if docstring
         (format "(defun %s %s\n  %s\n  %s)"
-                elisp-name elisp-params (pr-str docstring) elisp-body)
+                elisp-name elisp-params (pr-string docstring) elisp-body)
         (format "(defun %s %s\n  %s)"
                 elisp-name elisp-params elisp-body)))))
 
@@ -691,11 +725,11 @@
                                            (= pattern '_) "_"
                                            (symbol? pattern) (str "'" (name pattern))
                                            (keyword? pattern) (str "'" (name pattern))
-                                           (string? pattern) (pr-str pattern)
+                                           (string? pattern) (pr-string pattern)
                                            (number? pattern) (str pattern)
                                            ;; For list patterns like (or 'nil 'staged), (pred stringp), etc.
                                            ;; emit them raw
-                                           (seq? pattern) (pr-str pattern)
+                                           (seq? pattern) (pr-data pattern)
                                            :else (str pattern))]
                              (format "(%s %s)" pat-str
                                      (str/join " " (map emit body)))))
@@ -737,13 +771,13 @@
   (let [elisp-name (mangle-name name)]
     (cond
       (and init docstring)
-      (format "(defvar %s %s\n  %s)" elisp-name (emit init) (pr-str docstring))
+      (format "(defvar %s %s\n  %s)" elisp-name (emit init) (pr-string docstring))
 
       init
       (format "(defvar %s %s)" elisp-name (emit init))
 
       docstring
-      (format "(defvar %s nil\n  %s)" elisp-name (pr-str docstring))
+      (format "(defvar %s nil\n  %s)" elisp-name (pr-string docstring))
 
       :else
       (format "(defvar %s)" elisp-name))))
@@ -1314,7 +1348,7 @@
                           (str/join "\n  " (map emit body)))
         ;; Build the full form
         parts           (cond-> [(str "(define-minor-mode " mode-name)]
-                          docstring (conj (str "  " (pr-str docstring)))
+                          docstring (conj (str "  " (pr-string docstring)))
                           (seq options-str) (conj (str "  " options-str))
                           (seq body-str) (conj (str "  " body-str)))]
     (str (str/join "\n" parts) ")")))
@@ -1328,10 +1362,10 @@
                             (nil? v) "nil"
                             (true? v) "t"
                             (false? v) "nil"
-                            (string? v) (pr-str v)
+                            (string? v) (pr-string v)
                             (keyword? v) (str v)
                             (and (seq? v) (= 'quote (first v)))
-                            (str "'" (second v))
+                            (str "'" (pr-data (second v)))
                             :else (str v)))
         ;; Emit value (typically nil)
         value-str       (emit-option-val value)
@@ -1342,7 +1376,7 @@
                              (str/join "\n  "))
         ;; Build the full form
         parts           (cond-> [(str "(defgroup " group-name " " value-str)]
-                          docstring (conj (str "  " (pr-str docstring)))
+                          docstring (conj (str "  " (pr-string docstring)))
                           (seq options-str) (conj (str "  " options-str)))]
     (str (str/join "\n" parts) ")")))
 
@@ -1355,10 +1389,10 @@
                             (nil? v) "nil"
                             (true? v) "t"
                             (false? v) "nil"
-                            (string? v) (pr-str v)
+                            (string? v) (pr-string v)
                             (keyword? v) (str v)
                             (and (seq? v) (= 'quote (first v)))
-                            (str "'" (second v))
+                            (str "'" (pr-data (second v)))
                             :else (str v)))
         ;; Emit default value (may be an analyzed AST node, e.g. :function-quote from #')
         default-str     (if (and (map? default) (:op default))
@@ -1371,7 +1405,7 @@
                              (str/join "\n  "))
         ;; Build the full form
         parts           (cond-> [(str "(defcustom " var-name " " default-str)]
-                          docstring (conj (str "  " (pr-str docstring)))
+                          docstring (conj (str "  " (pr-string docstring)))
                           (seq options-str) (conj (str "  " options-str)))]
     (str (str/join "\n" parts) ")")))
 

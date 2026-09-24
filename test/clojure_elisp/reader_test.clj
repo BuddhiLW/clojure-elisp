@@ -199,6 +199,12 @@
          "(cons :k9 9) (cons :k1 1) (cons :k8 8) (cons :k2 2) (cons :k7 7)")))
   (testing "a set emits in written order"
     (is (= "(list :c :a :b)" (clel/compile-string "#{:c :a :b}"))))
+  (testing "quoted sets and maps print in written order too"
+    (is (= "'#{zeta alpha mid beta omega}" (clel/compile-string "'#{zeta alpha mid beta omega}")))
+    (is (= "'{:k9 9, :k1 1, :k8 8, :k2 2, :k7 7, :k3 3, :k6 6, :k4 4, :k5 5}"
+           (clel/compile-string "'{:k9 9 :k1 1 :k8 8 :k2 2 :k7 7 :k3 3 :k6 6 :k4 4 :k5 5}"))))
+  (testing "strings print as the JVM prints them, \\f and \\b escaped"
+    (is (= "\"a\\fb\\bc\"" (clel/compile-string "\"a\\fb\\bc\""))))
   (testing "the order survives syntax-quote"
     (is (= '(clojure.core/apply clojure.core/hash-set
                                 (clojure.core/seq (clojure.core/concat (clojure.core/list :z)
