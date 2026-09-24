@@ -390,6 +390,31 @@ file gets the library headers package.el and MELPA read:
 Other keys: `:maintainer`, `:copyright`, `:commentary`; `:author` and
 `:maintainer` also take a vector.
 
+A multi-file package states this once, in `clel.edn` (or in its main
+namespace's attr-map), and `compile-project` gives every file a header:
+
+```clojure
+;; clel.edn
+{:source-paths ["src"]
+ :output-dir   "."
+ :package      {:name "my-pkg" :author "Jane Doe <jane@example.org>"
+                :url "https://example.org/my-pkg" :version "0.1.0"
+                :package-requires [[emacs "28.1"]] :keywords ["convenience"]
+                :license "GPL-3.0-or-later"}}
+```
+
+`my-pkg.el`, the file named after the package, gets the full header. Every
+other `my-pkg-*.el` gets the header package-lint and melpazoid expect of a
+secondary file: its ns docstring as summary and Commentary, Author and
+`SPDX-License-Identifier`, and no `Package-Requires`. `^:autoload` on a
+`defn`, `define-minor-mode` or `defcustom` name emits `;;;###autoload`:
+
+```clojure
+(define-minor-mode ^:autoload my-pkg-mode
+  "Toggle my-pkg."
+  :global true)
+```
+
 ### Building from Source
 
 ```bash
