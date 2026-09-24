@@ -44,6 +44,39 @@
     (let [el (clel/compile-file-string "(ns my.pkg)\n(defn ^:autoload go \"Go.\" [] (interactive) 1)")]
       (is (str/includes? el "\n;;;###autoload\n(defun my-pkg-go ()")))))
 
+(deftest variadic-defn-emits-its-real-arglist
+  (let [el (clel/emit '(defn f "Return A and the list MORE." [a & more] (cons a more)))]
+    (testing "the Clojure parameters, so help, eldoc and checkdoc see A and MORE"
+      (is (str/starts-with? el "(defun f (a &rest more)\n")))
+    (testing "the docstring is the first body form, not buried inside a let"
+      (is (str/starts-with? el "(defun f (a &rest more)\n  \"Return A and the list MORE.\"\n")))
+    (is (not (str/includes? el "clel--args")))))
+
+(deftest multi-arity-defn-documents-its-signature
+  (let [el (clel/emit '(defn span "Span from START to END." ([start] (- 24 start)) ([start end] (- end start))))]
+    (testing "dispatch still needs (&rest clel--args)"
+      (is (str/starts-with? el "(defun span (&rest clel--args)\n")))
+    (testing "the docstring ends with the \\(fn ...) usage help and eldoc show"
+      (is (str/includes? el "Span from START to END.\\n\\n\\\\(fn START &optional END)\"")))
+    (testing "checkdoc is told clel--args is not an argument to document"
+      (is (str/includes? el "\n  ;; checkdoc-params: (clel--args)\n"))))
+  (testing "optional and rest positions are named after the longest arity"
+    (is (str/includes? (clel/emit '(defn v "V." ([] 0) ([x] x) ([x y & more] more)))
+                       "\\\\(fn &optional X Y &rest MORE)")))
+  (testing "a docstring that already carries a usage line keeps it"
+    (let [el (clel/emit '(defn w "W.\n\n\\(fn THING)" ([a] a) ([a b] b)))]
+      (is (= 1 (count (re-seq #"\\\\\(fn " el))))))
+  (testing "no docstring: nothing to annotate, output unchanged"
+    (is (not (str/includes? (clel/emit '(defn n ([a] a) ([a b] b))) "checkdoc")))))
+
+(deftest generated-parameters-are-exempt-from-checkdoc
+  (testing "a destructured parameter without :as is named by the compiler"
+    (let [el (clel/emit '(defn d "Describe the phase of a state." [{:keys [phase]}] phase))]
+      (is (str/includes? el "(defun d (p__1)\n  \"Describe the phase of a state.\"\n  ;; checkdoc-params: (p__1)\n"))))
+  (testing "one with :as is the user's name and must be documented"
+    (is (not (str/includes? (clel/emit '(defn d "Use STATE." [{:keys [a] :as state}] a))
+                            "checkdoc-params")))))
+
 (deftest clojure-namespaces-are-not-required-but-their-aliases-resolve
   (let [el (clel/compile-file-string
             "(ns my.app

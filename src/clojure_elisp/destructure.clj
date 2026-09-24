@@ -225,12 +225,18 @@
                  (vector? pattern) (second (drop-while #(not= :as %) pattern)))]
     (when (and (symbol? as) (not= '_ as)) as)))
 
-(defn- param-name
-  "The Elisp parameter that receives a destructured argument: the pattern's
-   `:as` name when it has one (it is what a docstring would call the argument,
-   and what `help` shows), else a fresh `prefix__N`."
-  [pattern prefix]
-  (or (as-name pattern) (gs/fresh prefix)))
+(defn- bind-param
+  "Add a destructured argument to acc under the Elisp parameter that receives
+   it: the pattern's `:as` name when it has one (what a docstring would call
+   the argument, and what `help` shows), else a fresh `prefix__N`, which is
+   also recorded in :generated-params."
+  [acc pattern prefix slot]
+  (let [as   (as-name pattern)
+        gsym (or as (gs/fresh prefix))]
+    (cond-> (-> acc
+                (slot gsym)
+                (update :destructure-bindings conj [pattern gsym]))
+      (not as) (update :generated-params conj gsym))))
 
 (defn process-fn-params
   "Process function parameters, handling destructuring and rest args.
@@ -238,6 +244,7 @@
    - :simple-params - vector of simple symbols for the Elisp function signature
    - :rest-param - the rest parameter symbol (or nil)
    - :destructure-bindings - vector of [pattern param] pairs needing expansion
+   - :generated-params - the parameters the compiler named (p__N, rest__N)
    - :let-bindings - those pairs expanded to [symbol init-form] pairs, once
    - :all-locals - set of all local symbols that will be bound"
   [params]
@@ -246,14 +253,12 @@
         regular-result
         (reduce (fn [acc param]
                   (if (destructure-pattern? param)
-                    (let [gsym (param-name param "p__")]
-                      (-> acc
-                          (update :simple-params conj gsym)
-                          (update :destructure-bindings conj [param gsym])))
+                    (bind-param acc param "p__" #(update %1 :simple-params conj %2))
                     ;; Simple param
                     (update acc :simple-params conj param)))
                 {:simple-params []
-                 :destructure-bindings []}
+                 :destructure-bindings []
+                 :generated-params []}
                 regular-params)
 
         ;; Process rest param if present
@@ -261,10 +266,7 @@
         (if rest-sym
           (if (destructure-pattern? rest-sym)
             ;; Rest param with destructuring
-            (let [gsym (param-name rest-sym "rest__")]
-              (-> regular-result
-                  (assoc :rest-param gsym)
-                  (update :destructure-bindings conj [rest-sym gsym])))
+            (bind-param regular-result rest-sym "rest__" #(assoc %1 :rest-param %2))
             ;; Simple rest param
             (assoc regular-result :rest-param rest-sym))
           regular-result)

@@ -184,13 +184,11 @@
       (is (clojure.string/includes? result "nthcdr")))))
 
 (deftest emit-defn-variadic-test
-  (testing "single-arity variadic uses &rest"
+  (testing "single-arity variadic emits its real arglist: help, eldoc and
+            checkdoc see the Clojure parameters, not a synthetic clel--args"
     (let [result (analyze-and-emit '(defn varargs [x & rest] (cons x rest)))]
-      (is (clojure.string/includes? result "defun"))
-      (is (clojure.string/includes? result "&rest clel--args"))
-      (is (clojure.string/includes? result "let"))
-      (is (clojure.string/includes? result "(nth 0 clel--args)"))
-      (is (clojure.string/includes? result "nthcdr")))))
+      (is (clojure.string/starts-with? result "(defun varargs (x &rest rest)\n"))
+      (is (not (clojure.string/includes? result "clel--args"))))))
 
 ;; ============================================================================
 ;; fn (lambda)

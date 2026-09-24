@@ -16,8 +16,7 @@
  :defn-multi
  "(defun bar (&rest clel--args)\n  (cl-case (length clel--args)\n    (1 (let ((x (car clel--args))) x))\n    (2 (let ((x (car clel--args)) (y (cadr clel--args))) (+ x y)))))",
  :defn-pred "(defun valid-p (x)\n  x)",
- :defn-vararg
- "(defun baz (&rest clel--args)\n  (let ((xs (nthcdr 0 clel--args)))\n    xs))",
+ :defn-vararg "(defun baz (&rest xs)\n  xs)",
  :defprotocol "(cl-defgeneric m (this))",
  :defrecord
  "(cl-defstruct (R (:constructor R--create)\n               (:copier nil))\n  a\n  b)\n\n(defun ->R (a b)\n  (R--create :a a :b b))\n\n(defun map->R (m)\n  (R--create :a (clel-get m :a) :b (clel-get m :b)))",

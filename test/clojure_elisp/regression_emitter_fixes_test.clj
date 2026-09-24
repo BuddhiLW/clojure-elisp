@@ -89,13 +89,13 @@
   ;;   (let ((args (nthcdr 1 args))) ...) — under lexical-binding this reads the
   ;; WHOLE list, not the tail (silent corruption; broke clel-reduce et al.).
   ;; Fix: synthetic arglist is `clel--args`; the user `args` binds from it.
+  ;; A single-arity variadic defn now has no synthetic arglist at all: it
+  ;; emits its real one, so `args` IS the tail and nothing can shadow it.
   (testing "single-arity variadic with a user param literally named `args`"
     (let [out (emit-form '(defn clel-reduce [f & args] (list f args)))]
-      (is (str/includes? out "(&rest clel--args)"))
-      (is (str/includes? out "(f (nth 0 clel--args))"))
-      (is (str/includes? out "(args (nthcdr 1 clel--args))"))
+      (is (str/starts-with? out "(defun clel-reduce (f &rest args)\n"))
       (is (not (str/includes? out "(nthcdr 1 args)")))
-      (is (not (str/includes? out "(&rest args)")))))
+      (is (not (str/includes? out "clel--args")))))
   (testing "multi-arity with a user param literally named `args`"
     (let [out (emit-form '(defn f ([args] args) ([a & args] (list a args))))]
       (is (str/includes? out "(&rest clel--args)"))

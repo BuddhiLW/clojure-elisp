@@ -168,7 +168,7 @@
   [name docstring fdecl]
   (let [[params & body]                                                                      fdecl
         params-vec                                                                           (if (vector? params) params (first params))
-        {:keys [simple-params rest-param let-bindings all-locals]}
+        {:keys [simple-params rest-param let-bindings all-locals generated-params]}
         (destructure/process-fn-params params-vec)
 
         effective-params                                                                     (if rest-param
@@ -186,6 +186,7 @@
               :params effective-params
               :fixed-params simple-params
               :rest-param rest-param
+              :generated-params generated-params
               :variadic? (boolean rest-param)
               :body (binding [*env* (with-locals *env* all-locals)]
                       (mapv analyze effective-body)))))

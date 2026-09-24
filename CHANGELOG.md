@@ -62,6 +62,15 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   does not renumber another. Reify types are numbered per file and carry the
   namespace prefix (`my-pkg--reify-1`). A destructured parameter with `:as`
   takes that name, so `help` and checkdoc see `state`, not `p__1`.
+- **Variadic `defn` emits its real arglist**, `(defun f (a &rest more) "doc"
+  ...)`, instead of `(&rest clel--args)` plus a `let`. The docstring used to
+  land inside that `let`, where it is not a docstring: 24 public runtime
+  functions (`clel-map`, `clel-merge`, `clel-apply`, ...) had none, and
+  checkdoc demanded that every docstring mention `CLEL--ARGS`. The runtime is
+  regenerated and has them back. A multi-arity `defn`, which must dispatch on
+  `(&rest clel--args)`, ends its docstring with the signature `help` and eldoc
+  show, `\(fn START &optional END)`, and a `;; checkdoc-params:` line exempts
+  the compiler's own parameter names (`clel--args`, `p__1`) from checkdoc.
 
 ## [0.7.2] - 2026-09-05
 

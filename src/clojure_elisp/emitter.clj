@@ -375,55 +375,91 @@
           body-str
           (str/join " " mangled-params)))
 
+(defn- checkdoc-params-comment
+  "A `;; checkdoc-params: (...)` line naming parameters no docstring can be
+   expected to mention: the ones the compiler generated (clel--args, p__N).
+   checkdoc reads it and stops demanding them. Only a documented defun needs
+   it: without a docstring checkdoc checks no arguments."
+  [docstring generated-params]
+  (when (and docstring (seq generated-params))
+    (str ";; checkdoc-params: (" (str/join " " (map mangle-name generated-params)) ")")))
+
+(defn- defun-form
+  "(defun name arglist docstring? checkdoc-comment? body), one part per line."
+  [elisp-name arglist docstring generated-params body-str]
+  (let [lines (cond-> []
+                docstring (conj (pr-str docstring))
+                (checkdoc-params-comment docstring generated-params)
+                (conj (checkdoc-params-comment docstring generated-params))
+                true      (conj body-str))]
+    (format "(defun %s %s\n  %s)" elisp-name arglist (str/join "\n  " lines))))
+
+(defn- usage-name [i p]
+  (if (symbol? p) (str/upper-case (mangle-name p)) (str "ARG" i)))
+
+(defn arity-usage
+  "The `\\(fn ...)` signature help and eldoc show for a multi-arity defun, whose
+   real arglist is the dispatch's (&rest clel--args). Parameters every arity
+   takes are required, those only longer arities take are &optional, and a
+   variadic arity's rest parameter is &rest. Each position is named after the
+   longest arity that has it:
+     ([hour] [start end])     -> (fn START &optional END)
+     ([] [x] [x y & more])    -> (fn &optional X Y &rest MORE)"
+  [arities]
+  (let [positional (map #(if (= :variadic (:arity %)) (:fixed-params %) (:params %)) arities)
+        required   (apply min (map count positional))
+        longest    (apply max-key count (reverse positional))
+        rest-param (some #(when (= :variadic (:arity %)) (:rest-param %)) arities)
+        names      (map-indexed usage-name longest)]
+    (str "(fn "
+         (str/join " " (concat (take required names)
+                               (when (> (count names) required)
+                                 (cons "&optional" (drop required names)))
+                               (when rest-param
+                                 ["&rest" (usage-name 0 rest-param)])))
+         ")")))
+
+(defn- with-usage
+  "docstring ending in a `\\(fn ...)` line, unless it already has one."
+  [docstring usage]
+  (when docstring
+    (if (str/includes? docstring "\\(fn ")
+      docstring
+      (str docstring "\n\n\\" usage))))
+
 (defn- emit-multi-arity-defn
-  "Emit a multi-arity defun with cl-case dispatch on arg count."
+  "Emit a multi-arity defun with cl-case dispatch on arg count. The dispatch
+   needs (&rest clel--args), so the docstring carries the real signature as a
+   `\\(fn ...)` line and checkdoc is told clel--args is not a parameter to
+   document."
   [elisp-name docstring arities]
   (when (some #(body-has-tail-recur? (:body %)) arities)
     (unsupported-recur! "a multi-arity fn"))
-  (let [dispatch (emit-arity-cl-case arities)]
-    (if docstring
-      (format "(defun %s (&rest clel--args)\n  %s\n  %s)"
-              elisp-name (pr-str docstring) dispatch)
-      (format "(defun %s (&rest clel--args)\n  %s)"
-              elisp-name dispatch))))
+  (defun-form elisp-name "(&rest clel--args)"
+              (with-usage docstring (arity-usage arities))
+              ['clel--args]
+              (emit-arity-cl-case arities)))
 
 (defn- emit-single-arity-defn
-  "Emit a single-arity defun (variadic or simple)."
-  [elisp-name docstring params body variadic? fixed-params rest-param]
-  (if variadic?
-    (let [_              (when (body-has-tail-recur? body)
-                           (unsupported-recur! "a variadic fn"))
-          elisp-body     (str/join "\n  " (map emit body))
-          fixed-bindings (map-indexed
-                          (fn [i p]
-                            (format "(%s (nth %d clel--args))" (mangle-name p) i))
-                          fixed-params)
-          rest-binding   (format "(%s (nthcdr %d clel--args))"
-                                 (mangle-name rest-param)
-                                 (count fixed-params))
-          all-bindings   (str/join " " (concat fixed-bindings [rest-binding]))]
-      (if docstring
-        (format "(defun %s (&rest clel--args)\n  %s\n  (let (%s)\n    %s))"
-                elisp-name (pr-str docstring) all-bindings elisp-body)
-        (format "(defun %s (&rest clel--args)\n  (let (%s)\n    %s))"
-                elisp-name all-bindings elisp-body)))
-    (let [elisp-params (str "(" (emit-list (map mangle-name params)) ")")
-          body-str     (str/join "\n  " (map emit body))
-          elisp-body   (if (body-has-tail-recur? body)
-                         (wrap-tail-recur (map mangle-name params) body-str)
-                         body-str)]
-      (if docstring
-        (format "(defun %s %s\n  %s\n  %s)"
-                elisp-name elisp-params (pr-str docstring) elisp-body)
-        (format "(defun %s %s\n  %s)"
-                elisp-name elisp-params elisp-body)))))
+  "Emit a single-arity defun. A variadic one gets its real arglist,
+   (a b &rest more), so help, eldoc and checkdoc see the Clojure parameters
+   and the docstring is the first body form."
+  [elisp-name docstring params body variadic? generated-params]
+  (let [_          (when (and variadic? (body-has-tail-recur? body))
+                     (unsupported-recur! "a variadic fn"))
+        arglist    (str "(" (emit-list (map mangle-param params)) ")")
+        body-str   (str/join "\n  " (map emit body))
+        elisp-body (if (and (not variadic?) (body-has-tail-recur? body))
+                     (wrap-tail-recur (map mangle-name params) body-str)
+                     body-str)]
+    (defun-form elisp-name arglist docstring generated-params elisp-body)))
 
 (defmethod emit-node :defn
-  [{:keys [name docstring params body multi-arity? arities variadic? fixed-params rest-param env private?]}]
+  [{:keys [name docstring params body multi-arity? arities variadic? generated-params env private?]}]
   (let [elisp-name (ns-qualify-name name env (boolean private?))]
     (if multi-arity?
       (emit-multi-arity-defn elisp-name docstring arities)
-      (emit-single-arity-defn elisp-name docstring params body variadic? fixed-params rest-param))))
+      (emit-single-arity-defn elisp-name docstring params body variadic? generated-params))))
 
 (defmethod emit-node :fn
   [{:keys [params body multi-arity? arities]}]
