@@ -48,6 +48,14 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `clojure.*` namespaces compile to runtime calls (`str/join` →
   `clel-str-join`), so there is nothing to load; the alias keeps resolving. A
   namespace required with both `:as` and `:refer` is now required once.
+- **Compiling the same source twice yields byte-identical output.** Generated
+  names came from the JVM-wide gensym counter (destructuring's `p__31976`,
+  `#()`'s `p1__N#`, `cond->`'s `G__N`, the global reify counter), so committed
+  `.el` files churned on every build. Names are now numbered per top-level
+  form (`clojure-elisp.gensym`): `p__1`, `map__3`, `G__1`; editing one form
+  does not renumber another. Reify types are numbered per file and carry the
+  namespace prefix (`my-pkg--reify-1`). A destructured parameter with `:as`
+  takes that name, so `help` and checkdoc see `state`, not `p__1`.
 
 ## [0.7.2] - 2026-09-05
 

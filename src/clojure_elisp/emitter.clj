@@ -1018,15 +1018,27 @@
   [{:keys [protocol value]}]
   (format "(clel-satisfies-p '%s %s)" (mangle-name protocol) (emit value)))
 
-;; Reify counter for generating unique type names
+;; Reify type names must be unique in the whole Emacs image (cl-defstruct is
+;; global) and identical from one compile to the next (committed .el files
+;; must not churn). `emit-file` binds a per-file counter and the name carries
+;; the namespace prefix; a lone `emit` (the REPL) falls back to a process-wide
+;; counter, which keeps successive evaluations distinct.
 (def ^:private reify-counter (atom 0))
 
-(defn- generate-reify-name []
-  (str "clel--reify-" (swap! reify-counter inc)))
+(def ^:dynamic *reify-counter*
+  "Per-file reify counter bound by `emit-file`, or nil."
+  nil)
+
+(defn- generate-reify-name [env]
+  (let [ns (:ns env)
+        n  (swap! (or *reify-counter* reify-counter) inc)]
+    (if (and ns (not= ns 'user))
+      (str (mangle-name ns) "--reify-" n)
+      (str "clel--reify-" n))))
 
 (defmethod emit-node :reify
-  [{:keys [protocols closed-over]}]
-  (let [reify-name  (generate-reify-name)
+  [{:keys [protocols closed-over env]}]
+  (let [reify-name  (generate-reify-name env)
         ;; Emit struct definition with closed-over slots
         struct-def  (if (seq closed-over)
                       (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil))\n  %s)"
@@ -1397,7 +1409,8 @@
    If the first node is :ns, appends (provide 'ns-name) at the end."
   [ast-nodes]
   (let [ns-node  (when (= :ns (:op (first ast-nodes))) (first ast-nodes))
-        code     (str/join "\n\n" (map emit ast-nodes))
+        code     (binding [*reify-counter* (atom 0)]
+                   (str/join "\n\n" (mapv emit ast-nodes)))
         elisp-ns (when ns-node (mangle-name (:name ns-node)))]
     (if elisp-ns
       (str code "\n\n(provide '" elisp-ns ")\n"

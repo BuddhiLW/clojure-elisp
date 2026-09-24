@@ -3,7 +3,12 @@
 
    Pure functions that expand destructuring patterns (vector and map)
    into flat sequences of simple [symbol init-form] bindings.
-   Also handles function parameter processing with & rest args.")
+   Also handles function parameter processing with & rest args.
+
+   Temporaries (vec__N, map__N, p__N, rest__N) come from
+   `clojure-elisp.gensym/fresh`, so they are numbered per top-level form and
+   the same source always emits the same names."
+  (:require [clojure-elisp.gensym :as gs]))
 
 ;; ============================================================================
 ;; Pattern Detection
@@ -67,7 +72,7 @@
       ;; Handle nested destructuring
       (destructure-pattern? (first items))
       (let [nested-pattern  (first items)
-            temp-sym        (gensym "vec__")
+            temp-sym        (gs/fresh "vec__")
             nested-bindings (expand-destructuring nested-pattern temp-sym)]
         (recur (rest items)
                (inc idx)
@@ -134,7 +139,7 @@
                   :when   (not= sym '_)]
               (if (destructure-pattern? sym)
                 ;; Nested destructuring
-                [(gensym "map__") (lookup k sym)]
+                [(gs/fresh "map__") (lookup k sym)]
                 ;; Simple binding
                 [sym (lookup k sym)])))
 
@@ -160,13 +165,13 @@
 
     ;; Vector destructuring
     (vector? pattern)
-    (let [coll-sym (gensym "vec__")]
+    (let [coll-sym (gs/fresh "vec__")]
       (into [[coll-sym value]]
             (expand-vector-destructuring pattern coll-sym)))
 
     ;; Map destructuring
     (map? pattern)
-    (let [map-sym (gensym "map__")]
+    (let [map-sym (gs/fresh "map__")]
       (into [[map-sym value]]
             (expand-map-destructuring pattern map-sym)))
 
@@ -213,12 +218,27 @@
       [(subvec (vec params) 0 amp-idx)
        (nth params (inc amp-idx))])))
 
+(defn- as-name
+  "The symbol a destructuring pattern names with `:as`, or nil."
+  [pattern]
+  (let [as (cond (map? pattern)    (:as pattern)
+                 (vector? pattern) (second (drop-while #(not= :as %) pattern)))]
+    (when (and (symbol? as) (not= '_ as)) as)))
+
+(defn- param-name
+  "The Elisp parameter that receives a destructured argument: the pattern's
+   `:as` name when it has one (it is what a docstring would call the argument,
+   and what `help` shows), else a fresh `prefix__N`."
+  [pattern prefix]
+  (or (as-name pattern) (gs/fresh prefix)))
+
 (defn process-fn-params
   "Process function parameters, handling destructuring and rest args.
    Returns a map with:
    - :simple-params - vector of simple symbols for the Elisp function signature
    - :rest-param - the rest parameter symbol (or nil)
-   - :destructure-bindings - vector of [pattern gensym] pairs needing expansion
+   - :destructure-bindings - vector of [pattern param] pairs needing expansion
+   - :let-bindings - those pairs expanded to [symbol init-form] pairs, once
    - :all-locals - set of all local symbols that will be bound"
   [params]
   (let [[regular-params rest-sym]                                        (extract-rest-param params)
@@ -226,8 +246,7 @@
         regular-result
         (reduce (fn [acc param]
                   (if (destructure-pattern? param)
-                    ;; Destructuring param - use gensym
-                    (let [gsym (gensym "p__")]
+                    (let [gsym (param-name param "p__")]
                       (-> acc
                           (update :simple-params conj gsym)
                           (update :destructure-bindings conj [param gsym])))
@@ -242,7 +261,7 @@
         (if rest-sym
           (if (destructure-pattern? rest-sym)
             ;; Rest param with destructuring
-            (let [gsym (gensym "rest__")]
+            (let [gsym (param-name rest-sym "rest__")]
               (-> regular-result
                   (assoc :rest-param gsym)
                   (update :destructure-bindings conj [rest-sym gsym])))
@@ -250,13 +269,14 @@
             (assoc regular-result :rest-param rest-sym))
           regular-result)
 
-        ;; Calculate all locals from destructure bindings
-        all-destructure-locals
-        (->> (:destructure-bindings rest-result)
-             (mapcat (fn [[pattern gsym]]
-                       (map first (expand-destructuring pattern gsym))))
-             set)]
+        ;; Expanded once: expanding again would draw fresh temporaries twice
+        let-bindings
+        (vec (mapcat (fn [[pattern gsym]] (expand-destructuring pattern gsym))
+                     (:destructure-bindings rest-result)))
+
+        all-destructure-locals (set (map first let-bindings))]
     (assoc rest-result
+           :let-bindings let-bindings
            :all-locals (into (set (:simple-params rest-result))
                              (if (:rest-param rest-result)
                                (conj all-destructure-locals (:rest-param rest-result))

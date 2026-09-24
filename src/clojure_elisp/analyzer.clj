@@ -6,6 +6,7 @@
    keeping it pragmatic and easy to understand."
   (:require [clojure-elisp.macros :as macros]
             [clojure-elisp.destructure :as destructure]
+            [clojure-elisp.gensym :as gs]
             [clojure-elisp.mappings :as mappings]
             [clojure-elisp.schema :as schema]
             [malli.core :as m]))
@@ -167,7 +168,7 @@
   [name docstring fdecl]
   (let [[params & body]                                                                      fdecl
         params-vec                                                                           (if (vector? params) params (first params))
-        {:keys [simple-params rest-param destructure-bindings all-locals]}
+        {:keys [simple-params rest-param let-bindings all-locals]}
         (destructure/process-fn-params params-vec)
 
         effective-params                                                                     (if rest-param
@@ -175,12 +176,9 @@
                                                                                                simple-params)
 
         effective-body
-        (if (seq destructure-bindings)
-          (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
-                                            (destructure/expand-destructuring pattern gsym))
-                                          destructure-bindings))]
-            [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
-                   (cons 'do body))])
+        (if (seq let-bindings)
+          [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
+                 (cons 'do body))]
           body)]
     (ast-node :defn
               :name name
@@ -225,7 +223,7 @@
     (let [[params & body]  (if (vector? (first fdecl))
                              fdecl
                              (first fdecl))
-          {:keys [simple-params rest-param destructure-bindings all-locals]}
+          {:keys [simple-params rest-param let-bindings all-locals]}
           (destructure/process-fn-params params)
 
           effective-params (if rest-param
@@ -233,12 +231,9 @@
                              simple-params)
 
           effective-body
-          (if (seq destructure-bindings)
-            (let [let-bindings (vec (mapcat (fn [[pattern gsym]]
-                                              (destructure/expand-destructuring pattern gsym))
-                                            destructure-bindings))]
-              [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
-                     (cons 'do body))])
+          (if (seq let-bindings)
+            [(list 'let (vec (mapcat (fn [[sym init]] [sym init]) let-bindings))
+                   (cons 'do body))]
             body)]
       (ast-node :fn
                 :params effective-params
@@ -1653,16 +1648,31 @@
         (if-let [macro-fn (when (symbol? op) (get-macro op))]
           (try
             (let [expanded (apply macro-fn (rest form))]
-              (analyze expanded))
+              (analyze (gs/renumber-expansion form expanded)))
             (catch Exception _
               ;; Macro expansion failed (arity mismatch, etc.) — treat as regular invocation
               (analyze-invoke form)))
           (analyze-invoke form))))))
 
+(declare analyze-form)
+
 (defn analyze
   "Analyze a Clojure form into an AST node.
    Captures source location from form metadata and propagates it
-   through *source-context* so child nodes inherit location context."
+   through *source-context* so child nodes inherit location context.
+
+   A call outside any analysis opens the form's generated-name scope
+   (`clojure-elisp.gensym`): the reader's gensyms are renumbered and every
+   name generated while analyzing it is numbered from one counter, so the same
+   form always emits the same names."
+  [form]
+  (if gs/*counter*
+    (analyze-form form)
+    (gs/with-scope
+      (analyze-form (gs/renumber-reader-gensyms form)))))
+
+(defn- analyze-form
+  "Analyze one form within the current generated-name scope."
   [form]
   ;; Extract source location from this form's metadata (if any).
   ;; If the form has location, use it; otherwise keep the parent's context.
@@ -1671,12 +1681,14 @@
     (binding [*source-context* ctx]
       ;; Macroexpand first to handle ->, ->>, doto, cond->, etc.
       ;; Skip macroexpand for interop forms (.method, .-field, elisp/fn)
-      ;; since Clojure would try to handle them as Java interop.
+      ;; since Clojure would try to handle them as Java interop. The
+      ;; expansion's own gensyms (cond->'s G__N, condp's pred__N) are
+      ;; renumbered like every other generated name.
       (let [form (if (and (seq? form)
                           (symbol? (first form))
                           (not (contains? special-forms (first form)))
                           (not (interop-symbol? (first form))))
-                   (macroexpand form)
+                   (gs/renumber-expansion form (macroexpand form))
                    form)]
         (cond
           ;; Nil
