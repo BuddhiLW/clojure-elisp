@@ -111,8 +111,8 @@
     (is (= "(list 1 2 3)" (analyze-and-emit [1 2 3])))))
 
 (deftest emit-map-test
-  (testing "empty map"
-    (is (= "(list )" (analyze-and-emit {}))))
+  (testing "empty map is nil"
+    (is (= "nil" (analyze-and-emit {}))))
   (testing "map with entries"
     (let [result (analyze-and-emit {:a 1})]
       (is (clojure.string/includes? result ":a"))
@@ -2064,17 +2064,18 @@
     (is (= "(make-hash-table :test 'equal)"
            (analyze-and-emit '(make-hash-table :test 'equal)))))
 
+  ;; `k'/`v', not `key'/`val': free, those name clojure.core/key and val.
   (testing "puthash passes through"
-    (is (= "(puthash key val table)"
-           (analyze-and-emit '(puthash key val table)))))
+    (is (= "(puthash k v table)"
+           (analyze-and-emit '(puthash k v table)))))
 
   (testing "gethash passes through"
-    (is (= "(gethash key table)"
-           (analyze-and-emit '(gethash key table)))))
+    (is (= "(gethash k table)"
+           (analyze-and-emit '(gethash k table)))))
 
   (testing "remhash passes through"
-    (is (= "(remhash key table)"
-           (analyze-and-emit '(remhash key table)))))
+    (is (= "(remhash k table)"
+           (analyze-and-emit '(remhash k table)))))
 
   (testing "copy-hash-table passes through"
     (is (= "(copy-hash-table table)"
@@ -2131,8 +2132,8 @@
 
 (deftest emit-elisp-builtin-conflicts-test
   (testing "assoc maps to clel-assoc (Clojure semantics, not Elisp alist)"
-    (is (= "(clel-assoc m :key val)"
-           (analyze-and-emit '(assoc m :key val)))))
+    (is (= "(clel-assoc m :key v)"
+           (analyze-and-emit '(assoc m :key v)))))
 
   (testing "concat maps to clel-concat (Clojure semantics)"
     (is (= "(clel-concat xs ys)"
@@ -2152,12 +2153,12 @@
 
 (deftest emit-mutation-mappings-test
   (testing "setcar passes through"
-    (is (= "(setcar cell val)"
-           (analyze-and-emit '(setcar cell val)))))
+    (is (= "(setcar cell v)"
+           (analyze-and-emit '(setcar cell v)))))
 
   (testing "setcdr passes through"
-    (is (= "(setcdr cell val)"
-           (analyze-and-emit '(setcdr cell val)))))
+    (is (= "(setcdr cell v)"
+           (analyze-and-emit '(setcdr cell v)))))
 
   (testing "nthcdr passes through"
     (is (= "(nthcdr 2 xs)"
@@ -2181,20 +2182,21 @@
       (is (= "(setf x 42)" code))))
 
   (testing "setf with generalized place (car)"
-    (let [code (analyze-and-emit '(setf (car cell) val))]
+    ;; `v', not `val': a free `val' names clojure.core/val, a function.
+    (let [code (analyze-and-emit '(setf (car cell) v))]
       (is (clojure.string/starts-with? code "(setf"))
       (is (clojure.string/includes? code "(car cell)"))
-      (is (clojure.string/includes? code "val"))))
+      (is (clojure.string/includes? code " v)"))))
 
   (testing "setf with multiple pairs"
     (let [code (analyze-and-emit '(setf x 1 y 2))]
       (is (= "(setf x 1 y 2)" code))))
 
   (testing "setf with aref place"
-    (let [code (analyze-and-emit '(setf (aref arr 0) val))]
+    (let [code (analyze-and-emit '(setf (aref arr 0) v))]
       (is (clojure.string/starts-with? code "(setf"))
       (is (clojure.string/includes? code "(aref arr 0)"))
-      (is (clojure.string/includes? code "val")))))
+      (is (clojure.string/includes? code " v)")))))
 
 (deftest emit-push-test
   (testing "push value onto list variable"

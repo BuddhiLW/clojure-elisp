@@ -46,7 +46,7 @@
  :str "(clel-str \"a\" b)",
  :swap "(clel-swap! a #'1+)",
  :thread "(g (f x))",
- :throw "(signal 'error (list \"m\" (list )))",
+ :throw "(signal 'error (list \"m\" nil))",
  :try
  "(condition-case e\n    (unwind-protect\n    a\n  c)\n  (error e))",
  :when "(when p\n    a\n    b)",

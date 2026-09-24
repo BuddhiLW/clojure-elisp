@@ -55,10 +55,12 @@
 ;; ============================================================================
 
 (deftest map-literal-evaluates-pairs
+  ;; The constructor is clel-array-map since the map-entry fix: it records the
+  ;; entries it makes, which (list (cons k v)) could not.
   (testing "keys and values are evaluated, not frozen in a quoted alist"
-    (is (= "(list (cons :a 1) (cons :b 2))" (emit-form '{:a 1 :b 2})))
-    (is (= "(list (cons :a (+ 1 2)))"       (emit-form '{:a (+ 1 2)})))
-    (is (= "(list )"                        (emit-form '{})))))
+    (is (= "(clel-array-map :a 1 :b 2)"     (emit-form '{:a 1 :b 2})))
+    (is (= "(clel-array-map :a (+ 1 2))"    (emit-form '{:a (+ 1 2)})))
+    (is (= "nil"                            (emit-form '{})))))
 
 ;; ============================================================================
 ;; Fix 2: nth arg-order + & rest destructuring
@@ -241,9 +243,11 @@
   (prop/for-all [m (gen/map gen/keyword gen/small-integer {:max-elements 6})]
     (let [out (emit-form m)]
       (and (string? out)
-           (str/starts-with? out "(list")
-           ;; one (cons k v) per entry — keys/values genuinely emitted
-           (= (count m) (count (re-seq #"\(cons " out)))))))
+           (if (empty? m)
+             (= "nil" out)
+             (and (str/starts-with? out "(clel-array-map ")
+                  ;; every key genuinely emitted
+                  (every? #(str/includes? out (str % " ")) (keys m))))))))
 
 (defspec case-emits-pcase-never-cl-case 100
   (prop/for-all [ks (gen/fmap distinct (gen/not-empty (gen/vector gen/small-integer)))]

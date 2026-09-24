@@ -100,6 +100,8 @@
    :dolist              #{:body :list-form :var}
    :unless              #{:body :test}
    :cl-defun            #{:arglist :body :name}
+   :cl-defmethod        #{:arglist :body :name}
+   :cl-defgeneric       #{:arglist :name}
    :cl-defstruct        #{:name-or-opts :slots}
    :function-quote      #{}                       ; surface-unreachable — presence only
    :pcase               #{}                       ; surface-unreachable — presence only

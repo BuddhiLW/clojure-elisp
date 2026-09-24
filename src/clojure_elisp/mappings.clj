@@ -43,9 +43,10 @@
 ;; ============================================================================
 
 (def comparison-mappings
-  {'= "equal"
+  {'= "clel-equal"
    '== "="
-   'not= "/="
+   'not= "clel-not-equal"
+   'identical? "eq"
    '< "<"
    '> ">"
    '<= "<="
@@ -71,10 +72,15 @@
    'number? "numberp"
    'symbol? "symbolp"
    'list? "listp"
-   'vector? "vectorp"
-   'map? "hash-table-p"
+   'vector? "clel-vector-p"
+   'map? "clel-map-p"
+   'map-entry? "clel-map-entry-p"
    'fn? "functionp"
-   'keyword? "keywordp"})
+   'keyword? "keywordp"
+   'integer? "integerp"
+   'int? "integerp"
+   'float? "floatp"
+   'double? "floatp"})
 
 ;; ============================================================================
 ;; Numeric Predicates
@@ -119,6 +125,11 @@
    'nthnext "clel-nthnext"
    'nthrest "clel-nthrest"
    'get "clel-get"
+   'key "car"
+   'val "cdr"
+   'hash-map "clel-array-map"
+   'array-map "clel-array-map"
+   'not-empty "clel-not-empty"
    'contains? "clel-contains-p"
    'assoc "clel-assoc"
    'dissoc "clel-dissoc"

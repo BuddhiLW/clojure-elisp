@@ -179,3 +179,44 @@
     (is (str/includes? out "(setq load-path nil)") "a global Elisp variable as written")
     (is (str/includes? out "(setq c-d-v 1)") "an aliased var")
     (is (str/includes? out "(setq x 2)") "a local")))
+
+;;; Maps
+
+(deftest map-literals-build-registered-entries
+  (is (= "(clel-array-map :a 1 :b (clel-array-map :c 2))" (emit-form '{:a 1 :b {:c 2}})))
+  (is (= "nil" (emit-form '{}))))
+
+(deftest into-an-empty-map-literal-builds-a-map
+  (is (= "(clel--into-map nil pairs)" (emit-form '(into {} pairs))))
+  (is (= "(clel--into-map nil (list (list :a 1)))" (emit-form '(conj {} [:a 1]))))
+  (is (= "(clel-into (list ) pairs)" (emit-form '(into [] pairs))) "a vector target is untouched"))
+
+(deftest quoted-maps-are-alists
+  (is (= "'((:k . v) (:j . (1 2)))" (emit-form ''{:k v :j (1 2)})))
+  (is (= "'(:a)" (emit-form ''#{:a}))))
+
+(deftest map-and-equality-predicates-are-mapped
+  (is (= "(clel-equal a b)" (emit-form '(= a b))))
+  (is (= "(clel-not-equal a b)" (emit-form '(not= a b))))
+  (is (= "(clel-map-p x)" (emit-form '(map? x))))
+  (is (= "(clel-vector-p x)" (emit-form '(vector? x))))
+  (is (= "(clel-array-map :a 1)" (emit-form '(hash-map :a 1))))
+  (is (= "(car e)" (emit-form '(key e))))
+  (is (= "(cdr e)" (emit-form '(val e)))))
+
+;;; Raw generic functions
+
+(deftest cl-defmethod-arglists-pass-through
+  (testing "specializers survive and parameters are locals"
+    (is (= "(cl-defmethod wall-set ((backend (head :feh)) name)\n  (argv backend name))"
+           (emit-form '(cl-defmethod wall-set ((backend (head :feh)) name) (argv backend name))))))
+  (testing "qualifiers and docstring"
+    (is (= "(cl-defmethod f :around ((x string))\n  \"Doc.\"\n  x)"
+           (emit-form '(cl-defmethod f :around ((x string)) "Doc." x)))))
+  (testing "cl-defgeneric is data"
+    (is (= "(cl-defgeneric wall-set (backend path)\n  \"Set PATH.\")"
+           (emit-form '(cl-defgeneric wall-set (backend path) "Set PATH."))))))
+
+(deftest cl-defun-parameters-are-locals
+  (is (= "(cl-defun f (key &optional (val 1 val-p))\n  (list key val val-p))"
+         (emit-form '(cl-defun f (key &optional (val 1 val-p)) (list key val val-p))))))

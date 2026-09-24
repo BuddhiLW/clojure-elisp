@@ -209,22 +209,36 @@
 
 (defmethod emit-node :map
   [{:keys [keys vals]}]
-  ;; Emit an *evaluating* alist constructor, not a quoted literal: a quote
-  ;; would suppress evaluation of every key and value, so {:a x} would carry
-  ;; the symbol `x` instead of its runtime value. (list (cons k v) ...) keeps
-  ;; the alist shape while evaluating keys/vals; self-evaluating keys
-  ;; (keywords, numbers) are unaffected.
-  (let [pairs (map (fn [k v] (str "(cons " (emit k) " " (emit v) ")"))
-                   keys vals)]
-    (str "(list " (str/join " " pairs) ")")))
+  ;; An *evaluating* constructor, not a quoted literal: a quote would
+  ;; suppress evaluation of every key and value. clel-array-map builds the
+  ;; alist from entries the runtime records as entries, which is how a map
+  ;; whose value is a list stays distinguishable from a list. The empty map
+  ;; is nil.
+  (if (empty? keys)
+    "nil"
+    (str "(clel-array-map "
+         (str/join " " (mapcat (fn [k v] [(emit k) (emit v)]) keys vals))
+         ")")))
 
 (defmethod emit-node :set
   [{:keys [items]}]
   (str "(list " (emit-list (map emit items)) ")"))
 
+(defn- quoted-data
+  "Render quoted Clojure data as Elisp read syntax. A map is an alist and a
+   set a list, as they are when evaluated; `pr-str' would print {...} and
+   #{...}, which Elisp cannot read."
+  [x]
+  (cond
+    (map? x)    (str "(" (str/join " " (map (fn [[k v]] (str "(" (quoted-data k) " . " (quoted-data v) ")")) x)) ")")
+    (set? x)    (str "(" (str/join " " (map quoted-data x)) ")")
+    (vector? x) (str "[" (str/join " " (map quoted-data x)) "]")
+    (seq? x)    (str "(" (str/join " " (map quoted-data x)) ")")
+    :else       (pr-str x)))
+
 (defmethod emit-node :quote
   [{:keys [form]}]
-  (str "'" (pr-str form)))
+  (str "'" (quoted-data form)))
 
 (defmethod emit-node :defmacro
   [{:keys [name docstring params body env]}]
@@ -280,6 +294,37 @@
               elisp-name elisp-arglist (pr-str docstring) elisp-body)
       (format "(cl-defun %s %s\n  %s)"
               elisp-name elisp-arglist elisp-body))))
+
+(defn- emit-cl-arglist
+  "A CL-style arglist as written: parameter names mangled like the locals
+   that reference them, lambda-list keywords, defaults and specializers
+   passed through."
+  [arglist]
+  (str "("
+       (str/join " "
+                 (map (fn [p]
+                        (cond
+                          (symbol? p) (if (str/starts-with? (name p) "&") (str p) (mangle-name p))
+                          (and (seq? p) (symbol? (first p)))
+                          (str "(" (str/join " " (cons (mangle-name (first p)) (map quoted-data (rest p)))) ")")
+                          :else (quoted-data p)))
+                      arglist))
+       ")"))
+
+(defmethod emit-node :cl-defmethod
+  [{:keys [name qualifiers arglist docstring body]}]
+  (str "(cl-defmethod " (mangle-name name)
+       (str/join (map #(str " " (quoted-data %)) qualifiers))
+       " " (emit-cl-arglist arglist)
+       (when docstring (str "\n  " (pr-str docstring)))
+       (when (seq body) (str "\n  " (str/join "\n  " (map emit body))))
+       ")"))
+
+(defmethod emit-node :cl-defgeneric
+  [{:keys [name arglist more]}]
+  (str "(cl-defgeneric " (mangle-name name) " " (emit-cl-arglist arglist)
+       (str/join (map #(str "\n  " (quoted-data %)) more))
+       ")"))
 
 (defmethod emit-node :def
   [{:keys [name docstring init env private?]}]

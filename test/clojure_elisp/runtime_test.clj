@@ -12,7 +12,9 @@
   (testing "into compiles to clel-into"
     (is (str/includes? (clel/emit '(into [] coll)) "clel-into"))
     (is (str/includes? (clel/emit '(into '() items)) "clel-into"))
-    (is (str/includes? (clel/emit '(into {} pairs)) "clel-into")))
+    ;; {} is nil at run time, the same value as [], so the literal target
+    ;; selects the map builder at compile time.
+    (is (= "(clel--into-map nil pairs)" (clel/emit '(into {} pairs)))))
 
   (testing "into with various targets"
     ;; Vector target (emits as list in elisp)

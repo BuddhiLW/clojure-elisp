@@ -183,5 +183,74 @@ three-way comparator."
   (should (equal 11 semantics-counter))
   (should-not (boundp 'counter)))
 
+;;; Maps
+
+(ert-deftest clel-semantics-map-equality ()
+  "= compares maps by entries, in any order; sequences stay ordered."
+  (should (equal '(t t t nil nil nil t nil t) (semantics-map-equality))))
+
+(ert-deftest clel-semantics-contains ()
+  "contains? on a map checks keys whatever the value; on a set, members."
+  (should (equal '(t t t nil t t) (semantics-map-contains))))
+
+(ert-deftest clel-semantics-integer-keys ()
+  "An integer is a key in a map and an index in a vector."
+  (should (equal '(:jan :dec :none 20 (3 4)) (semantics-integer-keys))))
+
+(ert-deftest clel-semantics-into-and-conj-maps ()
+  (let ((r (semantics-into-map)))
+    (should (clel-equal (nth 0 r) (clel-array-map :a 1 :b 2)))
+    (should (clel-equal (nth 1 r) (clel-array-map :z 0 :a 1)))
+    (should (clel-equal (nth 2 r) (clel-array-map :a 2 :b 3)))
+    (should (clel-equal (nth 3 r) (clel-array-map :a 1 :b 2)))
+    (should (equal 1 (clel-get (nth 0 r) :a)))))
+
+(ert-deftest clel-semantics-assoc-dissoc-many ()
+  (should (equal '((:a . 10) (:b . 2) (:c . 3)) (semantics-assoc-many)))
+  (should (equal '((1 :x 3) (1 2 3)) (semantics-assoc-vector)))
+  (should (equal '((:b . 2)) (semantics-dissoc-many))))
+
+(ert-deftest clel-semantics-list-valued-entries ()
+  "An entry whose value is a map or a vector destructures to that value,
+not to its first element."
+  (should (equal '((:night ((:theme . :dark)))
+                   (:day ((:theme . :light) (:wall . "d.png")))
+                   (:tags (:x)))
+                 (clel-semantics-test--realize (semantics-list-valued-entries)))))
+
+(ert-deftest clel-semantics-entry-accessors ()
+  (should (equal '(:a (1 2) 2 (1 2) (1 2) ((1 2))) (semantics-entry-accessors)))
+  (should (equal 6 (semantics-reduce-entries))))
+
+(ert-deftest clel-semantics-map-and-vector-predicates ()
+  (should (equal '(t t nil nil nil t nil t) (semantics-map-predicates))))
+
+(ert-deftest clel-semantics-hash-map-is-a-map ()
+  (should (equal '(t (2) t) (semantics-hash-map-builds-a-map))))
+
+(ert-deftest clel-semantics-map-builders ()
+  (let ((r (semantics-zipmap-and-friends)))
+    (should (equal '((:a . 3) (:b . 2)) (nth 0 r)))
+    (should (equal '((:x . 2) (:y . 1)) (nth 1 r)))
+    (should (equal '((:a . 1) (:c . 3)) (nth 2 r)))
+    (should (clel-equal (nth 3 r) (clel-array-map :a 1 :b 3 :c 4)))))
+
+(ert-deftest clel-semantics-quoted-map-is-an-alist ()
+  (should (equal '((:k . v)) (semantics-quoted-map))))
+
+(ert-deftest clel-semantics-foreign-alists ()
+  "An alist the runtime did not build (JSON, a defcustom) is still a map
+when its entries are dotted pairs, and `get' reads it either way."
+  (let ((json (json-parse-string "{\"a\": 1, \"b\": {\"c\": [1, 2]}}"
+                                 :object-type 'alist :array-type 'list)))
+    (should (clel-map-p json))
+    (should (equal 1 (clel-get json 'a)))
+    (should (equal '(1 2) (clel-get-in json '(b c))))
+    (should (clel-equal '((a . 1) (b . 2)) '((b . 2) (a . 1))))
+    (should (clel-contains-p '((a . 0)) 'a))))
+
+(ert-deftest clel-semantics-empty-string ()
+  (should (equal '(t nil nil (1)) (semantics-empty-string-empty))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

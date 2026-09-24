@@ -242,6 +242,7 @@
        "\n"
        "(require 'cl-lib)\n"
        "(require 'seq)\n"
+       "(require 'subr-x)\n"
        "\n"
        "(defconst " version/runtime-version-symbol " \"" (read-version fs) "\"\n"
        "  \"Version of the ClojureElisp runtime library.\n"

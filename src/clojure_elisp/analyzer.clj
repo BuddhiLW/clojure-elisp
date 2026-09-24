@@ -1384,6 +1384,21 @@
               :docstring docstring
               :groups groups)))
 
+(defn cl-arglist-locals
+  "The parameter symbols a CL-style ARGLIST binds: plain symbols, the name
+   and supplied-p of (name default supplied-p), the variable of a &key
+   ((:kw name) default), and the name of a (name specializer) pair."
+  [arglist]
+  (letfn [(param-syms [p]
+            (cond
+              (symbol? p) (when-not (.startsWith (name p) "&") [p])
+              (and (seq? p) (symbol? (first p)))
+              (filter symbol? [(first p) (nth p 2 nil)])
+              (and (seq? p) (seq? (first p)) (symbol? (second (first p))))
+              (filter symbol? [(second (first p)) (nth p 2 nil)])
+              :else nil))]
+    (set (mapcat param-syms (when (sequential? arglist) arglist)))))
+
 (defn analyze-cl-defstruct
   "Analyze (cl-defstruct name-or-options & slots) forms.
    Passes through to Elisp as cl-defstruct. The name can be a symbol
@@ -1413,7 +1428,34 @@
               :name name
               :arglist arglist
               :docstring docstring
-              :body (mapv analyze body))))
+              :body (binding [*env* (with-locals *env* (cl-arglist-locals arglist))]
+                      (mapv analyze body)))))
+
+(defn analyze-cl-defmethod
+  "Analyze (cl-defmethod name qualifier... arglist docstring? body...).
+   The arglist passes through with its specializers; its parameters are
+   locals of the body, so a parameter named like a core fn stays itself."
+  [[_ name & more]]
+  (let [[qualifiers [arglist & body]] (split-with (complement seq?) more)
+        [docstring body]              (if (and (string? (first body)) (next body))
+                                        [(first body) (rest body)]
+                                        [nil body])]
+    (ast-node :cl-defmethod
+              :name name
+              :qualifiers (vec qualifiers)
+              :arglist arglist
+              :docstring docstring
+              :body (binding [*env* (with-locals *env* (cl-arglist-locals arglist))]
+                      (mapv analyze body)))))
+
+(defn analyze-cl-defgeneric
+  "Analyze (cl-defgeneric name arglist docstring? options...). Passed
+   through as written: an arglist and options are data, not code."
+  [[_ name arglist & more]]
+  (ast-node :cl-defgeneric
+            :name name
+            :arglist arglist
+            :more (vec more)))
 
 (defn analyze-defmacro
   "Analyze (defmacro name [params] body) forms.
@@ -1535,6 +1577,20 @@
           :else                slots))
       slots)))
 
+(defn- empty-map-target-form
+  "(into {} from) and (conj {} x...) name their target by its literal only:
+   the empty map is nil at run time, the same value as the empty vector, so
+   the runtime could not tell it is building a map. Rewritten to the map
+   builder; nil when FORM is not such a call."
+  [f args]
+  (when (and (#{'into 'clojure.core/into 'conj 'clojure.core/conj} f)
+             (not (contains? (:locals *env*) f))
+             (= {} (first args)))
+    (case (name f)
+      "into" (when (= 2 (count args))
+               (list 'clel--into-map nil (second args)))
+      "conj" (list 'clel--into-map nil (vec (rest args))))))
+
 (defn- collection-call-form
   "Rewrite a keyword or map literal in function position into the `get` it
    means: (:k m) and ({:k 1} :k). nil when F is neither."
@@ -1566,6 +1622,10 @@
       ;; (:k m), ({:k 1} :k) -> get
       (or (keyword? f) (map? f))
       (analyze (with-meta (collection-call-form f args) (meta form)))
+
+      ;; (into {} from), (conj {} x) -> the map builder
+      (empty-map-target-form f args)
+      (analyze (with-meta (empty-map-target-form f args) (meta form)))
 
       ;; Property access: (.-point) → zero-arg Elisp function call
       (and f-name (.startsWith f-name ".-"))
@@ -1678,7 +1738,9 @@
    'defvar analyze-defvar
    ;; CL passthrough forms (clel-fix)
    'cl-defstruct analyze-cl-defstruct
-   'cl-defun analyze-cl-defun})
+   'cl-defun analyze-cl-defun
+   'cl-defmethod analyze-cl-defmethod
+   'cl-defgeneric analyze-cl-defgeneric})
 
 (defn- warn-missing-export!
   "Warn when a project namespace is known and does not export sym-name."

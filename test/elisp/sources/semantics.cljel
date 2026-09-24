@@ -121,3 +121,66 @@
 (def counter 0)
 
 (defn bump-counter [] (setq counter (inc counter)) (set! counter (+ counter 10)) counter)
+
+;;; Maps
+
+(defn map-equality []
+  [(= {:a 1 :b 2} {:b 2 :a 1})
+   (= (assoc {:a 1} :b 2) {:a 1 :b 2})
+   (= {:a {:x [1 2]}} {:a {:x [1 2]}})
+   (= {:a 1} {:a 2})
+   (= {:a 1} {:a 1 :b 2})
+   (not= {:a 1} {:a 1})
+   (= [1 2 3] (map identity [1 2 3]))
+   (= [[1 2] [3 4]] [[3 4] [1 2]])
+   (= 1 1 1)])
+
+(defn map-contains []
+  [(contains? {:colors [1 2]} :colors)
+   (contains? {:a nil} :a)
+   (contains? {:a {:b 1}} :a)
+   (contains? {:a 1} :z)
+   (contains? #{:a :b} :a)
+   (contains? #{[1 2]} [1 2])])
+
+(defn integer-keys []
+  (let [months {1 :jan 2 :feb 12 :dec}]
+    [(get months 1) (get months 12) (get months 3 :none) (get [10 20 30] 1) (get [[1 2] [3 4]] 1)]))
+
+(defn into-map []
+  [(into {} [[:a 1] [:b 2]])
+   (into {:z 0} {:a 1})
+   (into {} (map (fn [[k v]] [k (inc v)]) {:a 1 :b 2}))
+   (conj {:a 1} [:b 2])])
+
+(defn assoc-many [] (assoc {:a 1} :b 2 :c 3 :a 10))
+
+(defn assoc-vector [] [(assoc [1 2 3] 1 :x) (assoc [1 2] 2 3)])
+
+(defn dissoc-many [] (dissoc {:a 1 :b 2 :c 3} :a :c))
+
+(defn list-valued-entries []
+  (let [looks {:night {:theme :dark} :day {:theme :light :wall "d.png"} :tags [:x]}]
+    (for [[k v] looks] [k v])))
+
+(defn entry-accessors []
+  (let [e (first {:a [1 2]})]
+    [(key e) (val e) (count e) (second e) (nth e 1) (rest e)]))
+
+(defn reduce-entries [] (reduce (fn [acc [k v]] (+ acc v)) 0 {:a 1 :b 2 :c 3}))
+
+(defn map-predicates []
+  [(map? {:a 1}) (map? {:a [1]}) (map? [1 2]) (map? [[1 2]]) (map? nil)
+   (vector? [1 2]) (vector? {:a 1}) (vector? [[:a 1]])])
+
+(defn hash-map-builds-a-map [] (let [m (hash-map :a 1 :b [2])] [(map? m) (get m :b) (= m {:b [2] :a 1})]))
+
+(defn zipmap-and-friends []
+  [(zipmap [:a :b :a] [1 2 3])
+   (frequencies [:x :y :x])
+   (select-keys {:a 1 :b 2 :c 3} [:a :c])
+   (merge {:a 1 :b 2} {:b 3 :c 4})])
+
+(defn quoted-map [] '{:k v})
+
+(defn empty-string-empty [] [(empty? "") (empty? "a") (not-empty "") (not-empty [1])])
