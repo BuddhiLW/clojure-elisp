@@ -31,20 +31,18 @@ were emitted against.")
 (defvar clojure-core-list #'list
   "Function-slot bridge for `list' (Elisp-2 compatibility).")
 
-(defun clel-vector (&rest clel--args)
-  (let ((items (nthcdr 0 clel--args)))
-    "Create a vector from ITEMS."
-  (clel-apply #'vector items)))
+(defun clel-vector (&rest items)
+  "Create a vector from ITEMS."
+  (clel-apply #'vector items))
 
-(defun clel-hash-map (&rest clel--args)
-  (let ((kvs (nthcdr 0 clel--args)))
-    "Create a hash-table from key-value pairs KVS."
+(defun clel-hash-map (&rest kvs)
+  "Create a hash-table from key-value pairs KVS."
   (let* ((ht (make-hash-table :test 'equal))
         (rest kvs))
     (while rest
     (puthash (car rest) (cadr rest) ht)
     (setq rest (cddr rest)))
-    ht)))
+    ht))
 
 (defun clel-conj (coll item)
   "Add ITEM to collection COLL, returning new collection."
@@ -107,21 +105,18 @@ were emitted against.")
     (setq keys (if (vectorp keys) (append keys nil) (clel-realize keys)))
     (if (null keys) m (if (= 1 (clel-count keys)) (clel-assoc m (car keys) v) (clel-assoc m (car keys) (clel-assoc-in (clel-get m (car keys)) (cdr keys) v))))))
 
-(defun clel-update (&rest clel--args)
-  (let ((m (nth 0 clel--args)) (k (nth 1 clel--args)) (f (nth 2 clel--args)) (args (nthcdr 3 clel--args)))
-    "Update value at K in M by applying F to old value and ARGS."
-  (clel-assoc m k (clel-apply f (clel-get m k) args))))
+(defun clel-update (m k f &rest args)
+  "Update value at K in M by applying F to old value and ARGS."
+  (clel-assoc m k (clel-apply f (clel-get m k) args)))
 
-(defun clel-update-in (&rest clel--args)
-  (let ((m (nth 0 clel--args)) (ks (nth 1 clel--args)) (f (nth 2 clel--args)) (args (nthcdr 3 clel--args)))
-    "Update value at nested path KS in M by applying F to old value and ARGS."
+(defun clel-update-in (m ks f &rest args)
+  "Update value at nested path KS in M by applying F to old value and ARGS."
   (let* ((keys ks))
     (setq keys (if (vectorp keys) (append keys nil) (clel-realize keys)))
-    (if (null keys) m (if (= 1 (clel-count keys)) (clel-apply #'clel-update m (car keys) f args) (clel-assoc m (car keys) (clel-apply #'clel-update-in (clel-get m (car keys)) (cdr keys) f args)))))))
+    (if (null keys) m (if (= 1 (clel-count keys)) (clel-apply #'clel-update m (car keys) f args) (clel-assoc m (car keys) (clel-apply #'clel-update-in (clel-get m (car keys)) (cdr keys) f args))))))
 
-(defun clel-merge (&rest clel--args)
-  (let ((maps (nthcdr 0 clel--args)))
-    "Merge MAPS left to right.\nLater values override earlier. Returns alist or hash-table depending on first map."
+(defun clel-merge (&rest maps)
+  "Merge MAPS left to right.\nLater values override earlier. Returns an alist or a hash-table,\ndepending on the first map."
   (if (null maps) nil (let* ((first-map (car maps))
         (result (cond
   ((null first-map) nil)
@@ -141,7 +136,7 @@ were emitted against.")
     (setf (alist-get k result nil nil 'equal) v)) m))
   ((listp m) (dolist (pair m)
     (setf (alist-get (car pair) result nil nil 'equal) (cdr pair)))))))))
-    result))))
+    result)))
 
 (defun clel-last (coll)
   "Return the last element of COLL.\nUnlike Elisp `last' which returns a cons cell, this returns the element itself."
@@ -236,15 +231,14 @@ were emitted against.")
   "Return t if X is exactly nil."
   (null x))
 
-(defun clel-str (&rest clel--args)
-  (let ((args (nthcdr 0 clel--args)))
-    "Concatenate ARGS as strings."
+(defun clel-str (&rest args)
+  "Concatenate ARGS as strings."
   (mapconcat (lambda (x)
     (cond
   ((stringp x) x)
   ((null x) "")
   ((symbolp x) (symbol-name x))
-  (t (format "%s" x)))) args "")))
+  (t (format "%s" x)))) args ""))
 
 (cl-defun clel-subs (s start &optional end)
   "Extract substring from S starting at START to END (optional)."
@@ -360,12 +354,11 @@ were emitted against.")
   (lambda (&rest _)
     x))
 
-(defun clel-comp (&rest clel--args)
-  (let ((fns (nthcdr 0 clel--args)))
-    "Compose functions FNS right-to-left."
+(defun clel-comp (&rest fns)
+  "Compose functions FNS right-to-left."
   (lambda (x)
     (seq-reduce (lambda (v f)
-    (funcall f v)) (clel-reverse fns) x))))
+    (funcall f v)) (clel-reverse fns) x)))
 
 (defun clel-atom (val)
   "Create an atom with initial value VAL."
@@ -392,14 +385,13 @@ were emitted against.")
 
 (defalias 'clel-reset! #'clel-reset-bang)
 
-(defun clel-swap-bang (&rest clel--args)
-  (let ((atom (nth 0 clel--args)) (f (nth 1 clel--args)) (args (nthcdr 2 clel--args)))
-    "Swap ATOM by applying F to current value and ARGS, calling watchers."
+(defun clel-swap-bang (atom f &rest args)
+  "Swap ATOM by applying F to current value and ARGS, calling watchers."
   (let* ((old-val (clel-deref atom))
         (new-val (clel-apply f old-val args)))
     (setcar (nthcdr 1 atom) new-val)
     (clel--notify-watchers atom old-val new-val)
-    new-val)))
+    new-val))
 
 (defalias 'clel-swap! #'clel-swap-bang)
 
@@ -536,23 +528,21 @@ were emitted against.")
   (clel-filter (lambda (x)
     (not (funcall pred x))) coll))
 
-(defun clel-apply (&rest clel--args)
-  (let ((f (nth 0 clel--args)) (args (nthcdr 1 clel--args)))
-    "Apply F to ARGS, whose final element is a sequence of trailing arguments."
+(defun clel-apply (f &rest args)
+  "Apply F to ARGS, whose final element is a sequence of trailing arguments."
   (if (null args) (funcall f) (let* ((leading (butlast args))
         (trailing (clel-realize (car (last args)))))
-    (apply f (append leading trailing))))))
+    (apply f (append leading trailing)))))
 
-(defun clel-map (&rest clel--args)
-  (let ((f (nth 0 clel--args)) (colls (nthcdr 1 clel--args)))
-    "Lazily map F over COLLS. With one coll, returns lazy seq."
+(defun clel-map (f &rest colls)
+  "Lazily map F over COLLS. With one coll, returns lazy seq."
   (if (= 1 (clel-count colls)) (let* ((s (clel-seq-force (car colls))))
     (clel-lazy-seq-create (lambda ()
     (when s
     (cons (funcall f (clel-first s)) (clel-map f (clel-rest s))))))) (let* ((seqs (mapcar #'clel-seq-force colls)))
     (clel-lazy-seq-create (lambda ()
     (when (cl-every #'identity seqs)
-    (cons (clel-apply f (mapcar #'clel-first seqs)) (clel-apply #'clel-map f (mapcar #'clel-rest seqs))))))))))
+    (cons (clel-apply f (mapcar #'clel-first seqs)) (clel-apply #'clel-map f (mapcar #'clel-rest seqs)))))))))
 
 (defun clel-filter (pred s)
   "Lazily filter S by PRED."
@@ -597,29 +587,26 @@ were emitted against.")
     (setq cur (clel-rest cur)))
     cur))))
 
-(defun clel-concat (&rest clel--args)
-  (let ((colls (nthcdr 0 clel--args)))
-    "Lazily concatenate COLLS."
+(defun clel-concat (&rest colls)
+  "Lazily concatenate COLLS."
   (if (null colls) nil (let* ((first-coll (clel-seq-force (car colls)))
         (rest-colls (cdr colls)))
     (clel-lazy-seq-create (lambda ()
     (if first-coll (cons (clel-first first-coll) (clel-apply #'clel-concat (cons (clel-rest first-coll) rest-colls))) (when rest-colls
-    (clel-seq-force (clel-apply #'clel-concat rest-colls))))))))))
+    (clel-seq-force (clel-apply #'clel-concat rest-colls)))))))))
 
-(defun clel-mapcat (&rest clel--args)
-  (let ((f (nth 0 clel--args)) (colls (nthcdr 1 clel--args)))
-    "Map F over COLLS and concatenate results lazily."
-  (clel-apply #'clel-concat (clel-doall (clel-apply #'clel-map f colls)))))
+(defun clel-mapcat (f &rest colls)
+  "Map F over COLLS and concatenate results lazily."
+  (clel-apply #'clel-concat (clel-doall (clel-apply #'clel-map f colls))))
 
-(defun clel-interleave (&rest clel--args)
-  (let ((colls (nthcdr 0 clel--args)))
-    "Lazily interleave COLLS."
+(defun clel-interleave (&rest colls)
+  "Lazily interleave COLLS."
   (let* ((seqs (mapcar #'clel-seq-force colls)))
     (clel-lazy-seq-create (lambda ()
     (when (cl-every #'identity seqs)
     (let* ((firsts (mapcar #'clel-first seqs))
         (rests (mapcar #'clel-rest seqs)))
-    (append firsts (clel-seq-force (clel-apply #'clel-interleave rests))))))))))
+    (append firsts (clel-seq-force (clel-apply #'clel-interleave rests)))))))))
 
 (defun clel-partition (n s)
   "Partition S into groups of N elements. Returns lazy seq of lists."
@@ -658,9 +645,8 @@ were emitted against.")
   "Split S at first element where PRED is false.\nReturns list of (take-while pred s) and (drop-while pred s)."
   (list (clel-doall (clel-take-while pred s)) (clel-doall (clel-drop-while pred s))))
 
-(defun clel-reduce (&rest clel--args)
-  (let ((f (nth 0 clel--args)) (args (nthcdr 1 clel--args)))
-    "Reduce S with F. (clel-reduce f coll) or (clel-reduce f init coll)."
+(defun clel-reduce (f &rest args)
+  "Reduce S with F. (clel-reduce f coll) or (clel-reduce f init coll)."
   (let* ((init nil)
         (s nil))
     (if (= 1 (clel-count args)) (let* ((coll (clel-seq-force (car args))))
@@ -673,7 +659,7 @@ were emitted against.")
     (while cur
     (setq acc (funcall f acc (clel-first cur)))
     (setq cur (clel-rest cur)))
-    acc))))
+    acc)))
 
 (defun clel-sort (cmp coll)
   "Sort COLL using comparator CMP. Returns a new list."
@@ -745,9 +731,8 @@ were emitted against.")
   "Return t if COLL is empty or nil. Lazy-seq aware."
   (null (clel-seq-force coll)))
 
-(defun clel-range (&rest clel--args)
-  (let ((args (nthcdr 0 clel--args)))
-    "Generate a range of numbers.\n(range) - returns empty list (infinite range not supported)\n(range end) - returns (0 1 ... end-1)\n(range start end) - returns (start start+1 ... end-1)\n(range start end step) - returns (start start+step ...) up to but not including end"
+(defun clel-range (&rest args)
+  "Generate a range of numbers.\n(range) - returns empty list (infinite range not supported)\n(range end) - returns (0 1 ... end-1)\n(range start end) - returns (start start+1 ... end-1)\n(range start end step) - returns (start start+step ...) up to but not including end"
   (let* ((start 0)
         (end nil)
         (step 1))
@@ -765,7 +750,7 @@ were emitted against.")
     (while (> i end)
     (push i result)
     (setq i (+ i step)))))
-    (nreverse result))))))
+    (nreverse result)))))
 
 (defun clel-repeat (n x)
   "Return a list of N copies of X."
@@ -781,13 +766,12 @@ were emitted against.")
     (push (funcall f) result))
     (nreverse result)))
 
-(defun clel-set (&rest clel--args)
-  (let ((items (nthcdr 0 clel--args)))
-    "Create a set from ITEMS.\nReturns a hash-table where each item is a key with value t."
+(defun clel-set (&rest items)
+  "Create a set from ITEMS.\nReturns a hash-table where each item is a key with value t."
   (let* ((s (make-hash-table :test 'equal)))
     (dolist (item items)
     (puthash item t s))
-    s)))
+    s))
 
 (defun clel-set-from-coll (coll)
   "Create a set from collection COLL."
@@ -820,19 +804,17 @@ were emitted against.")
     (remhash item new)
     new))
 
-(defun clel-set-union (&rest clel--args)
-  (let ((sets (nthcdr 0 clel--args)))
-    "Return the union of SETS."
+(defun clel-set-union (&rest sets)
+  "Return the union of SETS."
   (let* ((result (make-hash-table :test 'equal)))
     (dolist (s sets)
     (if (hash-table-p s) (maphash (lambda (k v)
     (puthash k t result)) s) (dolist (item (clel-seq-force s))
     (puthash item t result))))
-    result)))
+    result))
 
-(defun clel-set-intersection (&rest clel--args)
-  (let ((sets (nthcdr 0 clel--args)))
-    "Return the intersection of SETS."
+(defun clel-set-intersection (&rest sets)
+  "Return the intersection of SETS."
   (if (null sets) (make-hash-table :test 'equal) (let* ((first-set (car sets))
         (rest-sets (cdr sets))
         (result (make-hash-table :test 'equal)))
@@ -843,11 +825,10 @@ were emitted against.")
     (when (cl-every (lambda (s)
     (if (hash-table-p s) (gethash item s) (member item s))) rest-sets)
     (puthash item t result))))
-    result))))
+    result)))
 
-(defun clel-set-difference (&rest clel--args)
-  (let ((s1 (nth 0 clel--args)) (sets (nthcdr 1 clel--args)))
-    "Return items in S1 not in any of SETS."
+(defun clel-set-difference (s1 &rest sets)
+  "Return items in S1 not in any of SETS."
   (let* ((result (make-hash-table :test 'equal)))
     (if (hash-table-p s1) (maphash (lambda (k v)
     (unless (cl-some (lambda (s)
@@ -856,7 +837,7 @@ were emitted against.")
     (unless (cl-some (lambda (s)
     (if (hash-table-p s) (gethash item s) (member item s))) sets)
     (puthash item t result))))
-    result)))
+    result))
 
 (defun clel-set-subset-p (s1 s2)
   "Return t if S1 is a subset of S2."
@@ -1045,9 +1026,8 @@ were emitted against.")
   "Unwrap reduced value if reduced, else return X."
   (if (clel-reduced-p x) (cadr x) x))
 
-(defun clel-transduce (&rest clel--args)
-  (let ((xform (nth 0 clel--args)) (f (nth 1 clel--args)) (args (nthcdr 2 clel--args)))
-    "Transduce COLL with transducer XFORM and reducing function F.\nUsage: (clel-transduce xform f coll) or (clel-transduce xform f init coll)"
+(defun clel-transduce (xform f &rest args)
+  "Transduce COLL with transducer XFORM and reducing function F.\nUsage: (clel-transduce xform f coll) or (clel-transduce xform f init coll)"
   (let* ((init nil)
         (coll nil))
     (if (= 1 (clel-count args)) (progn
@@ -1061,7 +1041,7 @@ were emitted against.")
     (while (and cur (not (clel-reduced-p result)))
     (setq result (funcall xf result (clel-first cur)))
     (setq cur (clel-rest cur)))
-    (clel--reducing-fn-complete xf (clel-unreduced result))))))
+    (clel--reducing-fn-complete xf (clel-unreduced result)))))
 
 (defun clel-into-xform (to xform from)
   "Add all items FROM into TO, transformed by XFORM."
@@ -1399,12 +1379,11 @@ were emitted against.")
   (lambda (&rest args)
     (not (clel-apply f args))))
 
-(defun clel-juxt (&rest clel--args)
-  (let ((fns (nthcdr 0 clel--args)))
-    "Return a function that applies each of FNS to its args, returning a list of results."
+(defun clel-juxt (&rest fns)
+  "Return a function applying each of FNS to its args, collecting the results."
   (lambda (&rest args)
     (mapcar (lambda (f)
-    (clel-apply f args)) fns))))
+    (clel-apply f args)) fns)))
 
 (cl-defun clel-rand (&optional n)
   "Return a random float between 0 (inclusive) and N (default 1, exclusive)."
@@ -1485,9 +1464,8 @@ were emitted against.")
     (if s (let* ((new-acc (funcall f acc (clel-first s))))
     (cons new-acc (clel--reductions-helper f new-acc (clel-rest s)))) nil))))
 
-(defun clel-reductions (&rest clel--args)
-  (let ((f (nth 0 clel--args)) (args (nthcdr 1 clel--args)))
-    "Return a lazy seq of intermediate reduce values.\nUsage: (clel-reductions f coll) or (clel-reductions f init coll)."
+(defun clel-reductions (f &rest args)
+  "Return a lazy seq of intermediate reduce values.\nUsage: (clel-reductions f coll) or (clel-reductions f init coll)."
   (let* ((init nil)
         (coll nil))
     (if (= 1 (clel-count args)) (let* ((s (clel-seq-force (car args))))
@@ -1496,7 +1474,7 @@ were emitted against.")
   (setq init (car args))
   (setq coll (clel-seq-force (cadr args)))))
     (clel-lazy-seq-create (lambda ()
-    (cons init (clel--reductions-helper f init coll)))))))
+    (cons init (clel--reductions-helper f init coll))))))
 
 (defun clel-take-nth (n coll)
   "Return a lazy seq of every Nth element in COLL."
@@ -1511,9 +1489,8 @@ were emitted against.")
     (let* ((len (clel-count s)))
     (if (<= len n) s (nthcdr (- len n) s)))))
 
-(defun clel-drop-last (&rest clel--args)
-  (let ((args (nthcdr 0 clel--args)))
-    "Return all but the last N elements of COLL.\nUsage: (clel-drop-last coll) or (clel-drop-last n coll)."
+(defun clel-drop-last (&rest args)
+  "Return all but the last N elements of COLL.\nUsage: (clel-drop-last coll) or (clel-drop-last n coll)."
   (let* ((n nil)
         (coll nil))
     (if (= 1 (clel-count args)) (progn
@@ -1523,7 +1500,7 @@ were emitted against.")
   (setq coll (cadr args))))
     (let* ((s (clel-realize coll))
         (len (clel-count s)))
-    (if (<= len n) nil (cl-subseq s 0 (- len n)))))))
+    (if (<= len n) nil (cl-subseq s 0 (- len n))))))
 
 (defvar clel--protocol-registry (make-hash-table :test 'equal)
   "Registry mapping protocol names to their method lists.")

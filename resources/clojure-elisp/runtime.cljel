@@ -135,7 +135,8 @@ Creates intermediate maps as needed."
 
 (defn clel-merge [& maps]
   "Merge MAPS left to right.
-Later values override earlier. Returns alist or hash-table depending on first map."
+Later values override earlier. Returns an alist or a hash-table,
+depending on the first map."
   (if (nil? maps)
     nil
     (let [first-map (car maps)
@@ -1767,7 +1768,7 @@ With one argument, returns a transducer."
     (not (apply f args))))
 
 (defn clel-juxt [& fns]
-  "Return a function that applies each of FNS to its args, returning a list of results."
+  "Return a function applying each of FNS to its args, collecting the results."
   (fn [& args]
     (mapcar (fn [f] (apply f args)) fns)))
 
