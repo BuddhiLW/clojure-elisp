@@ -378,6 +378,39 @@
                              pairs)
               :default (when default (analyze default)))))
 
+(defn- condp-form
+  "Expand (condp pred expr clause...) into nested ifs over one evaluation
+   of expr. A clause is `test result`, or `test :>> result-fn` which calls
+   result-fn with pred's answer; a trailing lone form is the default, and
+   without one no match signals, as Clojure's IllegalArgumentException."
+  [pred expr clauses]
+  (let [v     (gensym "condp__v")
+        p     (if (symbol? pred) pred (gensym "condp__pred"))
+        build (fn build [cls]
+                (cond
+                  (empty? cls)
+                  (list 'error "No matching clause: %S" v)
+
+                  (= 1 (count cls))
+                  (first cls)
+
+                  (= :>> (second cls))
+                  (let [r (gensym "condp__r")]
+                    (list 'let [r (list p (first cls) v)]
+                          (list 'if r (list (nth cls 2) r) (build (drop 3 cls)))))
+
+                  :else
+                  (list 'if (list p (first cls) v) (second cls) (build (drop 2 cls)))))]
+    (list 'let (cond-> [v expr] (not (symbol? pred)) (conj p pred))
+          (build clauses))))
+
+(defn analyze-condp
+  "Analyze (condp pred expr clause...). The JVM's expansion bound pred to a
+   local and called it with ((pred__ a b)), which a Lisp-2 cannot, and put
+   `=' in value position; this expansion calls pred directly."
+  [[_ pred expr & clauses :as form]]
+  (analyze (with-meta (condp-form pred expr clauses) (meta form))))
+
 (defn analyze-do
   "Analyze (do expr...) forms."
   [[_ & body]]
@@ -1698,6 +1731,7 @@
    'when analyze-when
    'cond analyze-cond
    'case analyze-case
+   'condp analyze-condp
    'do analyze-do
    'and analyze-and
    'or analyze-or

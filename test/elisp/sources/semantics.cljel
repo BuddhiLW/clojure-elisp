@@ -211,3 +211,13 @@
 (defn math []
   [(Math/floor 2.7) (Math/ceil 2.1) (Math/round 2.5) (Math/round -2.5) (Math/pow 2 10)
    (Math/abs -3) (Math/sqrt 16) (Math/max 1 5) (> Math/PI 3.14) (Math/signum -2) (Math/log10 1000)])
+
+;;; condp
+
+(defn classify [x] (condp = x 1 :one 2 :two :other))
+
+(defn classify-strict [x] (condp = x 1 :one))
+
+(defn condp-arrow [xs] (condp some xs #{0 6} :>> inc #{4 5} :>> dec :none))
+
+(defn condp-fn-pred [n] (condp (fn [limit v] (> v limit)) n 10 :big 5 :mid :small))

@@ -282,5 +282,16 @@ when its entries are dotted pairs, and `get' reads it either way."
 (ert-deftest clel-semantics-java-math ()
   (should (equal '(2.0 3.0 3 -2 1024.0 3 4.0 5 t -1.0 3.0) (semantics-math))))
 
+;;; condp
+
+(ert-deftest clel-semantics-condp ()
+  (should (equal '(:one :two :other) (mapcar #'semantics-classify '(1 2 3))))
+  (should (equal :one (semantics-classify-strict 1)))
+  (should-error (semantics-classify-strict 9))
+  (should (equal 7 (semantics-condp-arrow '(1 6))))
+  (should (equal 3 (semantics-condp-arrow '(4))))
+  (should (equal :none (semantics-condp-arrow '(9))))
+  (should (equal '(:big :mid :small) (mapcar #'semantics-condp-fn-pred '(11 7 1)))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

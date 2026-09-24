@@ -263,3 +263,23 @@
   (is (= "(cl-typep x 'string)" (emit-form '(instance? String x))))
   (is (= "(cl-typep x 'string)" (emit-form '(instance? java.lang.String x))))
   (is (= "(cl-typep x 'my-struct)" (emit-form '(instance? my-struct x)))))
+
+;;; condp
+
+(deftest condp-calls-its-predicate-directly
+  (let [out (emit-form '(condp = x 1 :one 2 :two :other))]
+    (is (re-find #"\(if \(clel-equal 1 condp__v\d+\) :one \(if \(clel-equal 2 condp__v\d+\) :two :other\)\)" out))
+    (is (not (str/includes? out "pred__")) "not the JVM expansion's local pred")))
+
+(deftest condp-without-default-signals
+  (is (re-find #"\(error \"No matching clause: %S\" condp__v\d+\)"
+               (emit-form '(condp = x 1 :one)))))
+
+(deftest condp-arrow-passes-the-test-result
+  (is (re-find #"\(if condp__r\d+ \(1\+ condp__r\d+\)"
+               (emit-form '(condp some xs #{0 6} :>> inc :none)))))
+
+(deftest condp-computed-predicate-is-bound-once
+  (let [out (emit-form '(condp (fn [a b] (> b a)) n 10 :big :small))]
+    (is (re-find #"\(condp__pred\d+ \(lambda \(a b\)" out))
+    (is (re-find #"\(funcall condp__pred\d+ 10 condp__v\d+\)" out))))
