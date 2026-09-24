@@ -110,6 +110,18 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   An Elisp-style `(defn f [x] "Doc." body)`, a string opening a body that goes
   on, is taken as the docstring. The regenerated runtime's checkdoc
   diagnostics drop from 36 to 16.
+- **An unmapped `clojure.core/NAME` is a compile error** instead of a call to
+  `clojure-core-NAME`, a function nothing defines, which failed only when the
+  code ran. Such names come mostly from syntax-quote and from macros expanded
+  on the JVM (`with-out-str` writes `clojure.core/push-thread-bindings`); the
+  error names the symbol and its line. `clojure.core/vector`, which the
+  reader writes for a syntax-quoted `[...]`, now resolves to Elisp's
+  `vector`, as the bare name always did: a syntax-quoted vector used to
+  compile to `(clel-apply #'clojure-core-vector ...)`, a void-function error
+  at macro-expansion time. The runtime's `clojure-core-vector` and
+  `clojure-core-list` bridge variables are gone. Emitted code named them as
+  functions (`#'clojure-core-vector`), which a variable never satisfied, and
+  package-lint rejects their names.
 
 ## [0.7.2] - 2026-09-05
 

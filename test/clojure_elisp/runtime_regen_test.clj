@@ -21,9 +21,14 @@
     (testing "compiles to a substantial runtime (not silently truncated)"
       (is (< 80 (count (re-seq #"\((?:cl-)?defun " el)))))
     (testing "runtime primitives defined in source, not hand-added to the .el"
-      (is (re-find #"\(cl-defun clel-nth " el) "clel-nth must be defined in source")
-      (is (str/includes? el "clojure-core-vector") "Elisp-2 bridge defvar present")
-      (is (str/includes? el "clojure-core-list") "Elisp-2 bridge defvar present"))
+      (is (re-find #"\(cl-defun clel-nth " el) "clel-nth must be defined in source"))
+    (testing "every definition carries the package prefix clel"
+      ;; The clojure-core-vector / clojure-core-list bridge defvars are gone:
+      ;; nothing emits a clojure-core- name any more (clojure.core/vector
+      ;; resolves to `vector'), and package-lint rejects an unprefixed name.
+      (is (not (str/includes? el "clojure-core-")))
+      (is (empty? (remove #(str/starts-with? % "clel")
+                          (map second (re-seq #"\((?:cl-)?def(?:un|var|const|alias|macro) '?([^\s()]+)" el))))))
     (testing "no self-recursion: primitives call raw elisp, not their clel- wrappers"
       (is (str/includes? el "(defun clel-deref"))
       (is (not (str/includes? el "(car (clel-last"))

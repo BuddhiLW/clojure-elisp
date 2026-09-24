@@ -111,6 +111,9 @@
    'rest "clel-rest"
    'next "clel-next"
    'list "list"
+   ;; Elisp's own vector. Listed so that `clojure.core/vector', which the
+   ;; reader writes for a syntax-quoted [...], resolves as the bare name does.
+   'vector "vector"
    'cons "cons"
    'conj "clel-conj"
    'count "clel-count"

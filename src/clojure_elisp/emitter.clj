@@ -193,10 +193,13 @@
       elisp-name
       (mangle-name name))
 
-    ;; clojure.core namespace - use core mapping if available
+    ;; clojure.core namespace - only through the core mapping. The analyzer
+    ;; refuses an unmapped one; a node built by hand must not bring back the
+    ;; `clojure-core-NAME' fallback, a function nothing defines.
     (= ns 'clojure.core)
     (or (get core-fn-mapping name)
-        (str "clojure-core-" (mangle-name name)))
+        (throw (ex-info (str "clojure.core/" name " has no Emacs Lisp mapping")
+                        {:symbol (symbol "clojure.core" (str name))})))
 
     ;; Other namespace - check fully-qualified symbol in mapping first
     :else

@@ -1612,6 +1612,24 @@
    'cl-defstruct analyze-cl-defstruct
    'cl-defun analyze-cl-defun})
 
+(defn- qualified-var-node
+  "The :var node for sym-name in namespace resolved-ns.
+
+   A clojure.core var must have an Elisp mapping. The emitter used to fall
+   back to `clojure-core-NAME', which nothing defines, so the compiled file
+   called an undefined function and failed only when that code ran. The
+   reader's syntax-quote and macros expanded on the JVM (with-out-str,
+   binding) write clojure.core/NAME, which is how most such names get here."
+  [sym-name resolved-ns]
+  (when (and (= 'clojure.core resolved-ns)
+             (not (contains? mappings/core-fn-mapping sym-name)))
+    (throw (analysis-error
+            (str "clojure.core/" sym-name " has no Emacs Lisp mapping in ClojureElisp, "
+                 "so it would compile to a call to an undefined function. It may "
+                 "come from a macro expanded on the JVM or from syntax-quote.")
+            {:symbol (symbol "clojure.core" (str sym-name))})))
+  (ast-node :var :name sym-name :ns resolved-ns))
+
 (defn- analyze-symbol
   "Analyze a symbol form, resolving locals, aliases, refers, and vars."
   [form]
@@ -1633,7 +1651,7 @@
             (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
                           (when *source-context*
                             (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
-        (ast-node :var :name sym-name :ns resolved-ns))
+        (qualified-var-node sym-name resolved-ns))
 
       ;; Already qualified symbol: clojure.string/join
       sym-ns-str
@@ -1645,12 +1663,11 @@
             (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
                           (when *source-context*
                             (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
-        (ast-node :var :name sym-name :ns resolved-ns))
+        (qualified-var-node sym-name resolved-ns))
 
       ;; Referred symbol: join -> clojure.string/join
       (get (:refers *env*) form)
-      (let [resolved-ns (get (:refers *env*) form)]
-        (ast-node :var :name form :ns resolved-ns))
+      (qualified-var-node form (get (:refers *env*) form))
 
       ;; Same-namespace definition (including defn- private functions)
       (get (:defs *env*) form)

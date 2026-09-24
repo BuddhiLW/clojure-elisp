@@ -114,3 +114,22 @@
       (is (str/includes? el "(clel-str-upper ")))
     (testing "a project namespace is still required, once, though named twice"
       (is (= 1 (count (re-seq #"\(require 'my-dep\)" el)))))))
+
+(deftest clojure-core-names-resolve-or-are-refused
+  (testing "syntax-quote writes clojure.core/vector for [...]: it resolves as
+            the bare name does, to Elisp's `vector'"
+    (is (= "(clel-apply #'vector xs)"
+           (clel/emit '(clojure.core/apply clojure.core/vector xs))))
+    (is (str/includes? (clel/compile-file-string "(defmacro pair [a b] `[~a ~b])")
+                       "(clel-apply #'vector ")))
+  (testing "an unmapped clojure.core name is refused while analyzing: the
+            emitter used to write clojure-core-NAME, which nothing defines"
+    (let [refusal (fn [src]
+                    (try (clel/compile-file-string src) nil
+                         (catch clojure.lang.ExceptionInfo e e)))
+          e       (refusal "(defn f [x]\n  (clojure.core/frobnicate x))")]
+      (is (= 'clojure.core/frobnicate (:symbol (ex-data e))))
+      (is (= 2 (:line (ex-data e))) "the error points at the call")
+      (testing "including one that a macro expanded on the JVM writes"
+        (is (= 'clojure.core/push-thread-bindings
+               (:symbol (ex-data (refusal "(defn p [x] (with-out-str x))")))))))))

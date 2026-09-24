@@ -25,12 +25,6 @@
 Compiled files check this to refuse a runtime older than the one they
 were emitted against.")
 
-(defvar clojure-core-vector #'vector
-  "Function-slot bridge for `vector' (Elisp-2 compatibility).")
-
-(defvar clojure-core-list #'list
-  "Function-slot bridge for `list' (Elisp-2 compatibility).")
-
 (defun clel-vector (&rest items)
   "Create a vector from ITEMS."
   (clel-apply #'vector items))
