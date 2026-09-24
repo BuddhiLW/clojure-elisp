@@ -27,6 +27,12 @@
   "Elisp constant the runtime defines to announce its own version."
   "clel-runtime-version")
 
+(def runtime-too-old-message
+  "Format string of the error the guard signals. Every compiled file carries
+   it, and checkdoc (which MELPA's melpazoid runs) flags an `error' message
+   that does not start with a capital letter, so it must start with one."
+  "Installed clojure-elisp-runtime %s is too old for this file (needs %s)")
+
 (defn runtime-guard
   "Elisp that loads the runtime and refuses to continue when it is too old.
 
@@ -39,7 +45,7 @@
        "  (unless (and (boundp '" runtime-version-symbol ")\n"
        "               (version<= \"" minimum-runtime-version "\" "
        runtime-version-symbol "))\n"
-       "    (error \"clojure-elisp-runtime %s is too old for this file (needs %s)\"\n"
+       "    (error \"" runtime-too-old-message "\"\n"
        "           (if (boundp '" runtime-version-symbol ") "
        runtime-version-symbol " \"(pre-" minimum-runtime-version ")\")\n"
        "           \"" minimum-runtime-version "\")))\n"))

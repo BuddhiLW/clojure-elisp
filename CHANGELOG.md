@@ -34,6 +34,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `:elisp/package` compile byte-for-byte as before. `package-buffer-info` and
   `lm-*` are the oracle in `test/elisp/clojure-elisp-package-header-test.el`.
 
+### Fixed
+
+- **The runtime guard's error message starts with a capital letter**
+  (`Installed clojure-elisp-runtime %s is too old ...`). checkdoc, which
+  MELPA's melpazoid runs, reported "Messages should start with a capital
+  letter" once in every compiled file.
+
 ## [0.7.2] - 2026-09-05
 
 A runtime correctness release. `map` and `filter` have always returned a lazy

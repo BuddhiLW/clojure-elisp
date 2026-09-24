@@ -38,7 +38,10 @@
               stale combination fails too"
       (is (str/includes? el "(eval-and-compile")))
     (testing "the error says which runtime is installed and which is needed"
-      (is (str/includes? el "is too old for this file")))))
+      (is (str/includes? el "is too old for this file")))
+    (testing "the message starts with a capital letter: checkdoc flags an
+              `error' string that does not, in every compiled file"
+      (is (re-find #"\(error \"[A-Z]" el)))))
 
 (deftest minimum-runtime-version-is-not-the-project-version
   (testing "the minimum is a deliberate constant, never derived from VERSION:
