@@ -624,6 +624,29 @@
                     [k (mapv (fn [[_ table-name v]] [table-name v]) es)])))
           (group-by first entries))))
 
+(def clojure-fn-names
+  "Clojure-vocabulary symbols whose mapping names a FUNCTION. A Lisp-2 reads
+   such a symbol in value position as a variable, so the analyzer quotes it
+   (#'f) there. The Emacs passthrough tables are excluded on purpose: a name
+   like `buffer-file-name' is both a function and a variable in Elisp, and
+   code that mentions it in value position means the variable."
+  (into #{}
+        (mapcat keys)
+        [arithmetic-mappings comparison-mappings logic-mappings
+         type-predicate-mappings numeric-predicate-mappings
+         collection-predicate-mappings collection-mappings sequence-mappings
+         transducer-mappings string-mappings set-mappings math-mappings
+         function-mappings atom-mappings utility-mappings io-mappings]))
+
+(defn clojure-fn?
+  "True when SYM (unqualified, or qualified by clojure.core) names a mapped
+   Clojure function."
+  [sym]
+  (and (symbol? sym)
+       (or (contains? clojure-fn-names sym)
+           (and (= "clojure.core" (namespace sym))
+                (contains? clojure-fn-names (symbol (name sym)))))))
+
 (def lazy-seq-consuming-fns
   "Clojure fns that read a sequence argument which may be a `clel-lazy-seq' at
    run time. Raw Elisp primitives cannot force one: `length' measures the struct

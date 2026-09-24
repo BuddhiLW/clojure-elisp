@@ -155,8 +155,12 @@
     :else        (str v)))
 
 (defmethod emit-node :local
-  [{:keys [name]}]
-  (mangle-name name))
+  [{:keys [name fn-local?]}]
+  ;; A letfn binding lives in the function namespace (cl-labels): as a value
+  ;; it must be read with #', never as a variable.
+  (if fn-local?
+    (str "#'" (mangle-name name))
+    (mangle-name name)))
 
 (defmethod emit-node :var
   [{:keys [name ns private?]}]
@@ -1255,15 +1259,28 @@
   (let [args-str (map emit args)]
     (apply emit-sexp fn args-str)))
 
+(defn- direct-call?
+  "True when the callee node can sit in Elisp function position as is: a
+   named function, a letfn binding, or a literal lambda. Anything else is a
+   function VALUE, which a Lisp-2 must funcall."
+  [{:keys [op fn-local? value?]}]
+  (case op
+    :var   (not value?)
+    :local (boolean fn-local?)
+    :fn    true
+    false))
+
 (defmethod emit-node :invoke
   [{:keys [fn args]}]
-  (let [fn-str   (emit fn)
-        args-str (map emit args)]
-    ;; Arity-aware dispatch for assoc: 2-arg = Elisp native alist lookup,
-    ;; 3+ = clel-assoc (Clojure put). Clojure assoc always needs 3+ args.
-    (if (and (= fn-str "clel-assoc") (= 2 (count args)))
-      (apply emit-sexp "assoc" args-str)
-      (apply emit-sexp fn-str args-str))))
+  (let [args-str (map emit args)]
+    (if (direct-call? fn)
+      (let [fn-str (if (= :local (:op fn)) (mangle-name (:name fn)) (emit fn))]
+        ;; Arity-aware dispatch for assoc: 2-arg = Elisp native alist lookup,
+        ;; 3+ = clel-assoc (Clojure put). Clojure assoc always needs 3+ args.
+        (if (and (= fn-str "clel-assoc") (= 2 (count args)))
+          (apply emit-sexp "assoc" args-str)
+          (apply emit-sexp fn-str args-str)))
+      (apply emit-sexp "funcall" (emit fn) args-str))))
 
 (defmethod emit-node :define-minor-mode
   [{:keys [name docstring options body]}]

@@ -85,12 +85,15 @@
 (deftest emit-var-test
   (testing "simple var"
     (is (= "foo" (analyze-and-emit 'foo))))
-  (testing "core function maps to elisp"
-    (is (= "clel-first" (analyze-and-emit 'first)))
-    (is (= "clel-rest" (analyze-and-emit 'rest)))
-    (is (= "1+" (analyze-and-emit 'inc)))
-    (is (= "1-" (analyze-and-emit 'dec)))
-    (is (= "clel-count" (analyze-and-emit 'count)))))
+  (testing "core function in value position is its function value (Lisp-2)"
+    (is (= "#'clel-first" (analyze-and-emit 'first)))
+    (is (= "#'clel-rest" (analyze-and-emit 'rest)))
+    (is (= "#'1+" (analyze-and-emit 'inc)))
+    (is (= "#'1-" (analyze-and-emit 'dec)))
+    (is (= "#'clel-count" (analyze-and-emit 'count))))
+  (testing "core function in call position maps to elisp"
+    (is (= "(clel-first xs)" (analyze-and-emit '(first xs))))
+    (is (= "(1+ x)" (analyze-and-emit '(inc x))))))
 
 (deftest emit-local-test
   (testing "local in let"
@@ -2391,5 +2394,6 @@
   (testing "explicit #'f is not double-quoted"
     (is (= "(clel-map #'1+ xs)"              (analyze-and-emit '(map #'inc xs)))))
 
-  (testing "non-HOF invocations leave symbol args bare"
-    (is (= "(foo 1+ bar)"                    (analyze-and-emit '(foo inc bar))))))
+  (testing "non-HOF invocations: a known function is still a function value"
+    ;; `1+' read as a variable is void; Clojure passes the fn itself.
+    (is (= "(foo #'1+ bar)"                  (analyze-and-emit '(foo inc bar))))))

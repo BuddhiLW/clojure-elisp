@@ -1,0 +1,31 @@
+(ns semantics
+  "Everyday Clojure, compiled and then run: the fixture behind
+   test/elisp/clojure-elisp-semantics-test.el.")
+
+;;; Function values
+
+(def doubler (fn [x] (* 2 x)))
+
+(defn call-param [f x] (f x))
+
+(defn call-let-bound [] (let [f inc] (f 1)))
+
+(defn call-def-value [] (doubler 21))
+
+(defn call-computed [] ((comp inc inc) 1))
+
+(defn call-var-quote [] (#'inc 1))
+
+(defn pass-core-fn [] (call-param inc 41))
+
+(defn letfn-value [] (letfn [(twice [x] (* 2 x))] (map twice [1 2])))
+
+(defn letfn-param-shadows [] (letfn [(g [x] x) (f [g] (g 5))] (f inc)))
+
+;;; Keywords and maps in function position
+
+(defn kw-get [m] (:k m))
+
+(defn kw-default [m] (:k m :none))
+
+(defn map-as-fn [] ({:a 1} :a))

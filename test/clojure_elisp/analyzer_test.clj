@@ -1068,9 +1068,10 @@
 
 (deftest analyze-aliased-symbol-test
   (testing "aliased qualified symbol resolves to full namespace"
+    ;; In value position a mapped function is its #' value (Lisp-2).
     (binding [ana/*env* (merge ana/*env*
                                {:aliases {'str 'clojure.string}})]
-      (let [ast (analyze 'str/join)]
+      (let [ast (:expr (analyze 'str/join))]
         (is (= :var (:op ast)))
         (is (= 'join (:name ast)))
         (is (= 'clojure.string (:ns ast))))))
