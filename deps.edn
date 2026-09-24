@@ -26,6 +26,21 @@
                  slipset/deps-deploy {:mvn/version "0.2.2"}}
           :ns-default build}
 
+  ;; ClojureWasm (cljw). cljw skips :mvn/version coordinates, so this alias
+  ;; supplies the compile path's runtime deps from Git, pinned to the commits
+  ;; the Maven releases above were cut from (dynaload is malli's own dep).
+  ;;   cljw -A:cljw -m clojure-elisp.main compile src/app.cljel -o out/app.el
+  ;;   cljw build -A:cljw -m clojure-elisp.main -o clel-native
+  :cljw {:extra-deps {io.github.hive-agi/hive-dsl
+                      {:git/url "https://github.com/hive-agi/hive-dsl"
+                       :git/sha "8d9760c2f0cf210555db8b3d9fc47ce1af46d3f4"} ; v0.5.2
+                      metosin/malli
+                      {:git/url "https://github.com/metosin/malli"
+                       :git/sha "13656199432c9fc44747212a0114f3c7c9a9fb4b"} ; 0.20.1
+                      borkdude/dynaload
+                      {:git/url "https://github.com/borkdude/dynaload"
+                       :git/sha "ad11c760fc5b9c7d8d7817f1433eecf09115b2d0"}}} ; v0.3.5
+
  ;; Local dev overrides: create deps.local.edn (gitignored) with :deps key.
  ;; Use -Sdeps "$(cat deps.local.edn)" to merge, or tooling auto-merges.
  ;; Example deps.local.edn:
