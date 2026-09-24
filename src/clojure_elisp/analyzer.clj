@@ -823,7 +823,9 @@
         protocols     (analyze-reify-protocols body closed-locals)]
     (ast-node :reify
               :protocols protocols
-              :closed-over (vec closed-locals))))
+              ;; Sorted: the locals set iterates in host hash order, and the
+              ;; struct slots are emitted in this order.
+              :closed-over (vec (sort-by str closed-locals)))))
 
 ;; ============================================================================
 ;; Comment, Binding, Assert (clel-050)
@@ -1245,6 +1247,14 @@
             :feature (analyze feature)
             :body (mapv analyze body)))
 
+(defn- source-ordered-options
+  "Keyword options kvs (k1 v1 k2 v2 ...) as a map that iterates in source
+   order at any size. The emitter writes options in iteration order, and
+   hash-map order differs per host, so source order is what keeps the output
+   byte-identical on the JVM, Babashka and ClojureWasm."
+  [kvs]
+  (apply array-map kvs))
+
 (defn analyze-define-minor-mode
   "Analyze (define-minor-mode name docstring? options... body...) forms.
    Options are keyword-value pairs like :init-value, :lighter, :global, :group, :keymap.
@@ -1257,13 +1267,13 @@
         ;; Parse keyword options until we hit a non-keyword or run out
         parse-options          (fn [forms]
                                  (loop [remaining forms
-                                        options   {}]
+                                        kvs       []]
                                    (if (and (seq remaining)
                                             (keyword? (first remaining))
                                             (seq (rest remaining)))
                                      (recur (drop 2 remaining)
-                                            (assoc options (first remaining) (analyze (second remaining))))
-                                     [options remaining])))
+                                            (conj kvs (first remaining) (analyze (second remaining))))
+                                     [(source-ordered-options kvs) remaining])))
         [options body-forms]   (parse-options rest-forms)]
     (ast-node :define-minor-mode
               :name mode-name
@@ -1286,7 +1296,7 @@
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
         ;; Parse keyword options into a map
-        options                (apply hash-map rest-forms)]
+        options                (source-ordered-options rest-forms)]
     (ast-node :defgroup
               :name group-name
               :value value
@@ -1309,7 +1319,7 @@
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
         ;; Parse keyword options into a map
-        options                (apply hash-map rest-forms)]
+        options                (source-ordered-options rest-forms)]
     (ast-node :defcustom
               :name var-name
               :default (if (and (seq? default) (= 'var (first default)))

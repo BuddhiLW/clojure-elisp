@@ -1014,15 +1014,51 @@
   [{:keys [protocol value]}]
   (format "(clel-satisfies-p '%s %s)" (mangle-name protocol) (emit value)))
 
-;; Reify counter for generating unique type names
-(def ^:private reify-counter (atom 0))
+;; Reify type names are content-addressed: the same reify form gets the same
+;; name in every compilation, on every host, and different forms get different
+;; names. A process-wide counter made the name depend on what the process had
+;; compiled before (a warm REPL and a fresh process disagreed), and restarted
+;; at 1 in every process, so two files compiled separately could both define
+;; clel--reify-1 and clobber each other once loaded into one Emacs.
 
-(defn- generate-reify-name []
-  (str "clel--reify-" (swap! reify-counter inc)))
+(def ^:private reify-self
+  "Stands in for a reify type's name until the name, a hash of the emitted
+   definition, is known."
+  "clel--reify-SELF")
+
+(defn- utf-16-units
+  "The UTF-16 code units of code point cp: what a JVM string holds for it."
+  [cp]
+  (if (< cp 0x10000)
+    [cp]
+    (let [v (- cp 0x10000)]
+      [(+ 0xD800 (quot v 0x400)) (+ 0xDC00 (mod v 0x400))])))
+
+(defn- content-hash
+  "32-bit FNV-1a hash of s's UTF-16 code units, as 8 lowercase hex digits.
+   The same on every host: exact integer arithmetic that fits in a long, and
+   a host whose strings hold code points (ClojureWasm) hashes them as the
+   JVM's UTF-16 units."
+  [s]
+  (let [h (reduce (fn [h unit]
+                    (mod (* (bit-xor h unit) 16777619) 4294967296))
+                  2166136261
+                  (mapcat #(utf-16-units (int %)) s))]
+    (apply str (map #(nth "0123456789abcdef" (mod (quot h %) 16))
+                    [268435456 16777216 1048576 65536 4096 256 16 1]))))
+
+(declare emit-reify)
 
 (defmethod emit-node :reify
+  [{:keys [env] :as node}]
+  (let [code (emit-reify node)]
+    (str/replace code reify-self
+                 (str "clel--reify-" (content-hash (str (:ns env) "\n" code))))))
+
+(defn- emit-reify
+  "The reify definition with reify-self standing in for its type name."
   [{:keys [protocols closed-over]}]
-  (let [reify-name  (generate-reify-name)
+  (let [reify-name  reify-self
         ;; Emit struct definition with closed-over slots
         struct-def  (if (seq closed-over)
                       (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil))\n  %s)"
@@ -1341,7 +1377,9 @@
 
 (defmethod emit-node :default
   [node]
-  (str ";; Unknown node: " (pr-str node)))
+  ;; Without :env: the analysis environment is large, and its maps print in
+  ;; host hash order, which made this comment differ between hosts.
+  (str ";; Unknown node: " (pr-str (dissoc node :env))))
 
 ;; ============================================================================
 ;; Source Location Comments

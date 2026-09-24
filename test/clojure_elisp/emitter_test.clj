@@ -895,6 +895,22 @@
       (is (clojure.string/includes? code "cl-defmethod area"))
       (is (clojure.string/includes? code "cl-defmethod perimeter")))))
 
+(deftest reify-names-are-content-addressed
+  (let [type-name   #(re-find #"clel--reify-[0-9a-f]{8}" %)
+        greeter     '(reify IGreeter (greet [this] "hello"))
+        other       '(reify IGreeter (greet [this] "bye"))]
+    (testing "the same form gets the same name, however much was emitted before"
+      (is (= (type-name (analyze-and-emit greeter))
+             (do (analyze-and-emit other)
+                 (type-name (analyze-and-emit greeter))))))
+    (testing "different forms get different names"
+      (is (not= (type-name (analyze-and-emit greeter))
+                (type-name (analyze-and-emit other)))))
+    (testing "every reference to the type uses the one name"
+      (let [code (analyze-and-emit greeter)]
+        (is (= #{(type-name code)} (set (re-seq #"clel--reify-[0-9a-f]{8}" code))))
+        (is (not (clojure.string/includes? code "SELF")))))))
+
 ;; ============================================================================
 ;; Macro System (clel-027)
 ;; ============================================================================

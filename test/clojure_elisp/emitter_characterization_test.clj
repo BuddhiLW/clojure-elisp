@@ -11,9 +11,10 @@
     * PROPERTY — `emit` is total (returns a non-empty String) over generated forms.
     * MUTATION — a broken `emit`/`mangle-name` must fail the golden (guards the net).
 
-  Non-determinism: destructuring emits gensym names (vec__NNNN) and `reify`
-  advances a global counter (clel--reify-NNNN); `canon` normalizes both so the
-  goldens are stable across runs. Regenerate goldens intentionally with
+  Generated names: `emit` called outside a compilation numbers destructuring
+  temporaries from gensym's global counter (vec__NNNN), and a `reify` type is
+  named by a hash of its definition (clel--reify-3fa2b1c0); `canon` normalizes
+  both so the goldens name neither. Regenerate goldens intentionally with
   `UPDATE_GOLDEN=true clojure -M:test`."
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [clojure.test.check.clojure-test :refer [defspec]]
@@ -32,14 +33,14 @@
 (use-fixtures :each (fn [t] (ana/clear-macros!) (try (t) (finally (ana/clear-macros!)))))
 
 (defn canon
-  "Normalize non-deterministic names in emitted Elisp so snapshots are stable:
-   gensyms (`vec__20515`) and the global `reify` counter (`clel--reify-2`).
+  "Normalize generated names in emitted Elisp so snapshots name neither:
+   gensyms (`vec__20515`) and content-hashed `reify` types (`clel--reify-3fa2b1c0`).
    Coerces via `str` first so mutant outputs (nil, non-strings) compare cleanly
    instead of throwing."
   [s]
   (-> (str s)
       (str/replace #"__\d+" "__N")
-      (str/replace #"reify-\d+" "reify-N")))
+      (str/replace #"reify-[0-9a-f]+" "reify-N")))
 
 ;; --- generators -----------------------------------------------------------
 
