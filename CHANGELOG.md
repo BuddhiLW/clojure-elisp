@@ -108,12 +108,48 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   directories when `io/resource` finds nothing, and `file-mtime` may return
   nil when the host cannot tell, which the project build treats as changed.
 - `;; Unknown node:` comments no longer print the whole analysis environment.
+- **`cond->`, `cond->>`, `some->`, `some->>`, `as->`, `doto`, `if-not`,
+  `when-some`, `if-some`, `when-first` and `condp` expand in the compiler**,
+  following clojure.core's definitions, instead of through the host's
+  `macroexpand`. Their temporaries were named from the host's gensym counter
+  (`G__8237` in one process, `G__19400` in the next), and ClojureWasm expands
+  several of them differently (its `if-not` swaps the branches). A
+  syntax-quoted `clojure.core/when-let`, `clojure.core/cond` and the like in a
+  macro's expansion now goes to the compiler's own analyzer rather than the
+  host's `macroexpand`, for the same reason.
+- **Syntax-quote resolves names from a fixed table**
+  (`clojure-elisp.jvm-names`): the clojure.core vars and java.lang classes of
+  a fresh JVM `user` namespace. It used the host's ns-map, so `` `(binding
+  ...) `` and `` `(catch Exception ...) `` read as `user/binding` and
+  `user/Exception` on ClojureWasm, and `` `(pp x) `` as `clojure.pprint/pp`
+  on Babashka.
+- Quoted sets and maps (`'#{...}`) print in source order, and strings print
+  as the JVM prints them (`\f`, `\b` escaped) on every host.
 
 ### Fixed
 
 - Elisp syntax preprocessing no longer indexes the source string char by
   char. On ClojureWasm, where string indexing is O(n), that made compiling the
   64 KB runtime quadratic; the scanners now walk a char vector.
+- String and character literals are decoded by the reader, with
+  `LispReader`'s escapes and error messages. ClojureWasm rejected octal
+  escapes (`"\101"`, `"\0"`) and reported every bad escape as
+  `EDN error (StringError)`.
+- Two syntax-quotes in one file no longer share an auto-gensym: `x#` in
+  `` `(a x#) `` and in `` `(b x#) `` are now different names, as with
+  `LispReader`. The expansion was lazy, so names were drawn when the analyzer
+  first walked the form rather than while the syntax-quote was read.
+
+### Known issues
+
+- On ClojureWasm 1.14.7, a file whose `defmacro` the compiler evaluates can
+  crash the process (segmentation fault or "General protection exception").
+  `eval` of any `fn` form corrupts cljw's heap: `(eval '(fn [x] x))` followed
+  by `(dotimes [_ 20000] (vec (range 50)))` crashes a bare `cljw`. Whether a
+  given file survives depends on how much it allocates afterwards;
+  `kitchen_sink.cljel` does, a file with six small macros does not. An `fn`
+  with keyword-argument destructuring (`[a & {:keys [b]}]`) crashes `eval`
+  immediately. Files without `defmacro` are unaffected.
 
 ## [0.7.2] - 2026-09-05
 

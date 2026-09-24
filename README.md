@@ -371,6 +371,11 @@ modification times to compare. `cljw build` cannot yet produce a
 self-contained binary of the compiler: see `CHANGELOG.md` for the upstream
 gaps that block it.
 
+A file with `defmacro` can crash cljw 1.14.7. The compiler `eval`s each
+macro, and `eval` of an `fn` form corrupts cljw's heap, so the process may
+segfault a little later, depending on how much it allocates after the macro.
+Compile such files with Babashka or the JVM until cljw fixes it.
+
 ### Uberjar
 
 The CLI delegates compilation to a JVM uberjar. Download from [GitHub Releases](https://github.com/BuddhiLW/clojure-elisp/releases) or build from source:
