@@ -45,9 +45,10 @@
    [:files [:map-of :symbol
             [:map
              [:source-path :string]
-             [:source-mtime :int]
+             ;; nil where the host cannot read mtimes (ClojureWasm)
+             [:source-mtime [:maybe :int]]
              [:output-path :string]
-             [:output-mtime :int]
+             [:output-mtime [:maybe :int]]
              [:deps [:set :symbol]]]]]])
 
 ;; ============================================================================
@@ -142,15 +143,19 @@
   (fs/file-mtime fs path))
 
 (defn- needs-recompile?
-  "True if source changed, output missing, not in manifest, or a dep is stale."
+  "True if source changed, output missing, not in manifest, or a dep is stale.
+   A source whose mtime the host cannot read (nil) is always stale: without a
+   timestamp there is no evidence it is unchanged."
   [fs ns-sym ns->file output-dir manifest stale-set]
-  (let [input-path  (get ns->file ns-sym)
-        output-name (str (emit/mangle-name ns-sym) ".el")
-        output-path (str output-dir "/" output-name)
-        entry       (get-in manifest [:files ns-sym])]
+  (let [input-path   (get ns->file ns-sym)
+        output-name  (str (emit/mangle-name ns-sym) ".el")
+        output-path  (str output-dir "/" output-name)
+        entry        (get-in manifest [:files ns-sym])
+        source-mtime (file-mtime fs input-path)]
     (or
       (nil? entry)
-      (not= (file-mtime fs input-path) (:source-mtime entry))
+      (nil? source-mtime)
+      (not= source-mtime (:source-mtime entry))
       (not (fs/file-exists? fs output-path))
       (some stale-set (:deps entry)))))
 
