@@ -1129,9 +1129,13 @@
 (defmethod emit-node :ns
   [{:keys [name requires load-paths doc package]}]
   (let [elisp-name    (mangle-name name)
+        ;; clojure.string & co. are compiled to runtime calls, not loaded, and
+        ;; a namespace required with both :as and :refer is one feature.
         require-stmts (->> requires
-                           (map (fn [{:keys [ns]}]
-                                  (format "(require '%s)" (mangle-name ns)))))
+                           (map :ns)
+                           (remove mappings/runtime-provided-ns?)
+                           distinct
+                           (map #(format "(require '%s)" (mangle-name %))))
         load-path-block
         (when (seq load-paths)
           (let [add-stmts (str/join "\n    "

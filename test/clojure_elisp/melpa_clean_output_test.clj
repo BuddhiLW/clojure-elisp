@@ -20,3 +20,22 @@
       (is (str/starts-with? el "(if-let* ((x (f)))"))
       (is (str/includes? el ":none")))
     (is (str/starts-with? (clel/emit '(if-let [x (f)] x)) "(if-let* ((x (f)))"))))
+
+(deftest clojure-namespaces-are-not-required-but-their-aliases-resolve
+  (let [el (clel/compile-file-string
+            "(ns my.app
+               (:require [clojure.string :as str]
+                         [clojure.set :as set]
+                         clojure.walk
+                         [my.dep :as d]
+                         [my.dep :refer [helper]]))
+             (defn f [xs] (str/join \",\" (set/union xs xs)))
+             (defn g [s] (clojure.string/upper-case (d/h (helper s))))")]
+    (testing "no Emacs feature named clojure-* exists, so requiring one fails
+              with \"Cannot open load file\""
+      (is (not (re-find #"\(require 'clojure-(?!elisp-runtime)" el))))
+    (testing "calls through the alias still compile to the runtime"
+      (is (str/includes? el "(clel-str-join \",\" (clel-set-union xs xs))"))
+      (is (str/includes? el "(clel-str-upper ")))
+    (testing "a project namespace is still required, once, though named twice"
+      (is (= 1 (count (re-seq #"\(require 'my-dep\)" el)))))))

@@ -341,8 +341,8 @@
       (is (clojure.string/includes? code "(require 'foo-bar)"))))
 
   (testing "emits require for bare symbol"
-    (let [code (analyze-and-emit '(ns my.app (:require clojure.set)))]
-      (is (clojure.string/includes? code "(require 'clojure-set)"))))
+    (let [code (analyze-and-emit '(ns my.app (:require subr-x)))]
+      (is (clojure.string/includes? code "(require 'subr-x)"))))
 
   (testing "emits multiple requires"
     (let [code (analyze-and-emit '(ns my.app

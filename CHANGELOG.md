@@ -43,6 +43,11 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`when-let` / `if-let` emit `when-let*` / `if-let*`.** The unstarred Emacs
   macros are obsolete since Emacs 31.1, so every use drew a byte-compile
   warning, and MELPA asks for a clean byte-compile.
+- **`(:require [clojure.string :as str])` no longer emits
+  `(require 'clojure-string)`**, which failed with "Cannot open load file".
+  `clojure.*` namespaces compile to runtime calls (`str/join` →
+  `clel-str-join`), so there is nothing to load; the alias keeps resolving. A
+  namespace required with both `:as` and `:refer` is now required once.
 
 ## [0.7.2] - 2026-09-05
 

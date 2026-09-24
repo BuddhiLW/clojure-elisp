@@ -261,6 +261,18 @@
    'clojure.set/map-invert "clel-map-invert"})
 
 ;; ============================================================================
+;; Runtime-provided namespaces
+;; ============================================================================
+
+(defn runtime-provided-ns?
+  "True for a `clojure.*` namespace such as clojure.string or clojure.set.
+   Their functions compile to runtime calls through the tables above
+   (str/join -> clel-str-join), so there is no Emacs feature to load:
+   `(require 'clojure-string)` fails with \"Cannot open load file\"."
+  [ns-sym]
+  (clojure.string/starts-with? (str ns-sym) "clojure."))
+
+;; ============================================================================
 ;; Math
 ;; ============================================================================
 
