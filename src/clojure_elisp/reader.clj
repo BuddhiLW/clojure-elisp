@@ -29,12 +29,17 @@
      ::order metadata, read back by ordered-keys and ordered-members, so the
      analyzer emits them as written on every host;
    - generated names come from clojure-elisp.names, numbered per compilation;
+   - syntax-quote resolves referred vars and imported classes from the fixed
+     table in clojure-elisp.jvm-names, not from the host's ns-map;
+   - string literals are unescaped here, not by the host, with LispReader's
+     escapes and error messages;
    - #? is rejected, as clojure.core/read rejects it without
      {:read-cond :allow}, and #= is rejected rather than evaluated.
 
    Pure: the only state is a cursor local to one read-forms call. Source is
    indexed as a char vector because string indexing is O(n) on ClojureWasm."
   (:require [clojure.string :as str]
+            [clojure-elisp.jvm-names :as jvm-names]
             [clojure-elisp.names :as names]))
 
 ;; ============================================================================
@@ -197,17 +202,73 @@
     (next-char! ctx)
     (host-read ctx (read-token-text ctx start))))
 
+(def ^:private string-escapes
+  "Single-character escapes of a string literal, as LispReader reads them."
+  {\t \tab \r \return \n \newline \\ \\ \" \" \b \backspace \f \formfeed})
+
+(defn- digit-value
+  "Value of char c as a digit in radix (8 or 16), or nil."
+  [c radix]
+  (let [code (int c)
+        d    (cond
+               (<= (int \0) code (int \9)) (- code (int \0))
+               (<= (int \a) code (int \z)) (+ 10 (- code (int \a)))
+               (<= (int \A) code (int \Z)) (+ 10 (- code (int \A)))
+               :else                       nil)]
+    (when (and d (< d radix)) d)))
+
+(defn- read-escape-code
+  "LispReader's readUnicodeChar: the code of up to max-n digits in radix,
+   the first of which (first-digit) is already consumed. Stops early at end
+   of input, whitespace or a macro char; exact? demands all max-n digits."
+  [ctx first-digit radix max-n exact?]
+  (let [d0 (or (digit-value first-digit radix)
+               (reader-error ctx (str "Invalid digit: " first-digit)))]
+    (loop [n 1 code d0]
+      (let [c (peek-char ctx)]
+        (if (or (= n max-n) (nil? c) (whitespace? c) (contains? macro-chars c))
+          (if (and exact? (not= n max-n))
+            (reader-error ctx (str "Invalid character length: " n ", should be: " max-n))
+            code)
+          (let [d (or (digit-value c radix)
+                      (reader-error ctx (str "Invalid digit: " c)))]
+            (next-char! ctx)
+            (recur (inc n) (+ (* code radix) d))))))))
+
 (defn- read-string-literal
+  "A string literal, unescaped here as LispReader does it (same escapes, same
+   error messages), not by the host: ClojureWasm's reader rejects octal
+   escapes such as \\101 and \\0 that the JVM accepts."
   [ctx]
-  (let [start (pos ctx)]
-    (next-char! ctx)
-    (loop []
-      (case (next-char! ctx)
-        nil  (reader-error ctx "EOF while reading string")
-        \\   (do (next-char! ctx) (recur))
-        \"   nil
-        (recur)))
-    (host-read ctx (text ctx start (pos ctx)))))
+  (next-char! ctx)
+  (loop [out (transient [])]
+    (let [c (next-char! ctx)]
+      (case c
+        nil (reader-error ctx "EOF while reading string")
+        \"  (apply str (persistent! out))
+        \\  (let [e (next-char! ctx)]
+              (cond
+                (nil? e)
+                (reader-error ctx "EOF while reading string")
+
+                (contains? string-escapes e)
+                (recur (conj! out (get string-escapes e)))
+
+                (= \u e)
+                (let [d (next-char! ctx)]
+                  (when-not (and d (digit-value d 16))
+                    (reader-error ctx (str "Invalid unicode escape: \\u" d)))
+                  (recur (conj! out (char (read-escape-code ctx d 16 4 true)))))
+
+                (digit? e)
+                (let [code (read-escape-code ctx e 8 3 false)]
+                  (when (> code 0377)
+                    (reader-error ctx "Octal escape sequence must be in range [0, 377]."))
+                  (recur (conj! out (char code))))
+
+                :else
+                (reader-error ctx (str "Unsupported escape character: \\" e))))
+        (recur (conj! out c))))))
 
 (defn- read-regex
   "#\"...\": the text between the quotes goes to re-pattern verbatim."
@@ -222,16 +283,63 @@
         (recur)))
     (re-pattern (text ctx start (dec (pos ctx))))))
 
+(def ^:private named-chars
+  {"newline" \newline "space" \space "tab" \tab
+   "backspace" \backspace "formfeed" \formfeed "return" \return})
+
+(defn- token-code
+  "LispReader's readUnicodeChar over a token: the digits after its first
+   char, exactly n of them, in radix."
+  [ctx token n radix]
+  (when-not (= (count token) (inc n))
+    (reader-error ctx (str "Invalid unicode character: \\" token)))
+  (reduce (fn [code c]
+            (+ (* code radix)
+               (or (digit-value c radix)
+                   (reader-error ctx (str "Invalid digit: " c)))))
+          0
+          (rest token)))
+
+(defn- char-token
+  "The character a \\token names, as LispReader's CharacterReader decides it
+   (same names, same errors). A character outside the Basic Multilingual Plane
+   is one char to ClojureWasm but two UTF-16 units to the JVM, which rejects
+   it; it is rejected here on every host."
+  [ctx token]
+  (let [c (first token)]
+    (cond
+      (and (= 1 (count token)) (< (int c) 0x10000))
+      c
+
+      (contains? named-chars token)
+      (get named-chars token)
+
+      (and (= \u c) (< 1 (count token)))
+      (let [code (token-code ctx token 4 16)]
+        (when (<= 0xD800 code 0xDFFF)
+          (reader-error ctx (str "Invalid character constant: \\u"
+                                 (str/lower-case (subs token 1)))))
+        (char code))
+
+      (and (= \o c) (< 1 (count token)))
+      (let [n (dec (count token))]
+        (when (> n 3)
+          (reader-error ctx (str "Invalid octal escape sequence length: " n)))
+        (let [code (token-code ctx token n 8)]
+          (when (> code 0377)
+            (reader-error ctx "Octal escape sequence must be in range [0, 377]."))
+          (char code)))
+
+      :else
+      (reader-error ctx (str "Unsupported character: \\" token)))))
+
 (defn- read-character
   [ctx]
   (let [start (pos ctx)]
     (next-char! ctx)
     (when-not (next-char! ctx)
       (reader-error ctx "EOF while reading character"))
-    (let [token (read-token-text ctx (inc start))]
-      (if (= 1 (count token))
-        (first token)
-        (host-read ctx (str "\\" token))))))
+    (char-token ctx (read-token-text ctx (inc start)))))
 
 ;; ============================================================================
 ;; Forms
@@ -421,13 +529,11 @@
 (defn- unquote-splicing? [form]
   (and (seq? form) (= 'clojure.core/unquote-splicing (first form))))
 
-(defn- class-name
-  "The name syntax-quote gives a class: java.lang.String on the JVM."
-  [c]
-  (str/replace (str c) #"^(class|interface) " ""))
-
 (defn- resolve-symbol
-  "clojure.lang.Compiler/resolveSymbol against *ns*."
+  "clojure.lang.Compiler/resolveSymbol, with the referred vars and imported
+   classes of *ns* taken from jvm-names (a fresh JVM user namespace) rather
+   than from the host's ns-map, which differs per host. Aliases and the
+   fallback namespace are still those of *ns*."
   [sym]
   (let [ns-part (namespace sym)
         nm      (name sym)]
@@ -441,13 +547,14 @@
           (symbol (str (ns-name target)) nm)
           sym))
 
+      (contains? jvm-names/core-vars nm)
+      (symbol "clojure.core" nm)
+
+      (contains? jvm-names/classes nm)
+      (symbol (get jvm-names/classes nm))
+
       :else
-      (let [mapping (get (ns-map *ns*) sym)]
-        (cond
-          (nil? mapping) (symbol (str (ns-name *ns*)) nm)
-          (var? mapping) (let [m (meta mapping)]
-                           (symbol (str (ns-name (:ns m))) (str (:name m))))
-          :else          (symbol (class-name mapping)))))))
+      (symbol (str (ns-name *ns*)) nm))))
 
 (defn- syntax-quote-symbol
   [ctx sym]
@@ -470,16 +577,20 @@
       sym
 
       :else
-      (let [maybe-class (when ns-part (get (ns-map *ns*) (symbol ns-part)))]
-        (if (and maybe-class (not (var? maybe-class)))
-          (symbol (class-name maybe-class) nm)
-          (resolve-symbol sym))))))
+      (if-let [class-name (when ns-part (get jvm-names/classes ns-part))]
+        (symbol class-name nm)
+        (resolve-symbol sym)))))
 
 (declare syntax-quote syntax-quote-form)
 
 (defn- sq-expand-list
+  "Eager (mapv, not map): expanding resolves symbols against *ns* and names
+   foo# from the gensym env and the compilation's counter, which must all
+   happen while this syntax-quote is being read. Lazily, two syntax-quotes
+   shared one foo__N__auto__, and names were drawn whenever the analyzer
+   first walked the form."
   [ctx items]
-  (map (fn [item]
+  (mapv (fn [item]
          (cond
            (unquote? item)          (list 'clojure.core/list (second item))
            (unquote-splicing? item) (second item)

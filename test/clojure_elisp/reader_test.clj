@@ -77,6 +77,10 @@
    "reader macros" "'x @y #'z ~w ~@v (quote q)"
    "metadata"      "^:private (f) ^{:doc \"d\" :k 1} [v] ^String s ^:a ^:b (g)"
    "characters"    "[\\a \\newline \\space \\tab \\u0041 \\o101 \\( \\\\ \\é]"
+   "char names"    "[\\return \\formfeed \\backspace \\u00e9 \\o7 \\o377 \\u \\o \\x]"
+   "str escapes"   "[\"\\f\\b\\r\" \"\\101\\0\\377\\7 x\" \"\\u00e9\\u4e2d\" \"a\\\"b\"]"
+   "sq gensym env" "`(a x#) `(b x#) `(c [x# {:k x#}])"
+   "sq core names" "`(binding [a 1] (try (sync x) (test x) (catch Exception e (String. \"s\") (String/valueOf 1) (Math/abs 1))))"
    "numbers"       "[1 -2 +3 1.5 -0.5 1e10 6.02E23 3/4 -7/8 0x1F 017 2r101 36rZZ 1N 1.5M 0]"
    "infinities"    "[##Inf ##-Inf]"
    "strings"       "[\"a\" \"tab\\there\" \"q\\\"q\" \"u\\u00e9\" \"back\\\\slash\" \"multi\nline\"]"
@@ -161,6 +165,30 @@
   (is (= "Conditional read not allowed" (:message (read-error "#?(:clj 1)"))))
   (is (= "Nested #()s are not allowed" (:message (read-error "#(#(%))"))))
   (is (= "EOF while reading string" (:message (read-error "\"abc")))))
+
+(deftest literal-errors-are-lispreaders-on-every-host
+  (testing "strings and characters are decoded here, so the host's own
+            messages (ClojureWasm: \"EDN error (StringError)\") never surface"
+    (is (= "Unsupported escape character: \\q" (:message (read-error "\"a\\qb\""))))
+    (is (= "Octal escape sequence must be in range [0, 377]."
+           (:message (read-error "\"\\400\""))))
+    (is (= "Invalid character length: 2, should be: 4" (:message (read-error "\"\\u12\""))))
+    (is (= "Invalid digit: 8" (:message (read-error "\"\\8\""))))
+    (is (= "Unsupported character: \\xyz" (:message (read-error "\\xyz"))))
+    (is (= "Invalid character constant: \\ud800" (:message (read-error "\\uD800")))))
+  (testing "a character outside the BMP is two UTF-16 units: rejected everywhere"
+    (is (= "Unsupported character: \\😀" (:message (read-error "\\😀"))))))
+
+(deftest syntax-quote-resolves-without-the-host-namespace
+  (testing "core vars and java.lang classes resolve as in a fresh JVM user ns,
+            whatever the host's own ns-map holds"
+    (is (= '(clojure.core/seq
+             (clojure.core/concat (clojure.core/list (quote clojure.core/binding))
+                                  (clojure.core/list (quote java.lang.Exception))
+                                  (clojure.core/list (quote java.lang.String.))
+                                  (clojure.core/list (quote clel.reader-test.empty/pp))))
+           (binding [*ns* (create-ns 'clel.reader-test.empty)]
+             (first (reader/read-forms "`(binding Exception String. pp)")))))))
 
 (deftest invalid-numbers-are-typed
   (let [data (read-error "(a)\n(2+ c)")]
