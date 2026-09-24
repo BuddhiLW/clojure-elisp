@@ -56,18 +56,32 @@
   (let [el (clel/emit '(defn span "Span from START to END." ([start] (- 24 start)) ([start end] (- end start))))]
     (testing "dispatch still needs (&rest clel--args)"
       (is (str/starts-with? el "(defun span (&rest clel--args)\n")))
-    (testing "the docstring ends with the \\(fn ...) usage help and eldoc show"
-      (is (str/includes? el "Span from START to END.\\n\\n\\\\(fn START &optional END)\"")))
+    (testing "the docstring ends with the (fn ...) usage line help and eldoc
+              read, written \\( since it opens a line"
+      (is (str/includes? el "  \"Span from START to END.\n\n\\(fn START &optional END)\"\n")))
     (testing "checkdoc is told clel--args is not an argument to document"
       (is (str/includes? el "\n  ;; checkdoc-params: (clel--args)\n"))))
   (testing "optional and rest positions are named after the longest arity"
     (is (str/includes? (clel/emit '(defn v "V." ([] 0) ([x] x) ([x y & more] more)))
-                       "\\\\(fn &optional X Y &rest MORE)")))
+                       "\n\\(fn &optional X Y &rest MORE)\"")))
   (testing "a docstring that already carries a usage line keeps it"
-    (let [el (clel/emit '(defn w "W.\n\n\\(fn THING)" ([a] a) ([a b] b)))]
-      (is (= 1 (count (re-seq #"\\\\\(fn " el))))))
+    (let [el (clel/emit '(defn w "W.\n\n(fn THING)" ([a] a) ([a b] b)))]
+      (is (= 1 (count (re-seq #"\(fn " el))))))
   (testing "no docstring: nothing to annotate, output unchanged"
     (is (not (str/includes? (clel/emit '(defn n ([a] a) ([a b] b))) "checkdoc")))))
+
+(deftest docstrings-keep-their-lines
+  (testing "checkdoc reads a docstring by line: its first line must be a
+            sentence, which an escaped \\n hides"
+    (is (= "(defun f ()\n  \"First line.\nSecond line.\"\n  1)"
+           (clel/emit '(defn f "First line.\nSecond line." [] 1)))))
+  (testing "quotes and backslashes are escaped; a paren opening a line is \\("
+    (is (= "(defvar x 1 \"Say \\\"hi\\\" \\\\ now.\n\\(not code)\")"
+           (clel/emit '(def x "Say \"hi\" \\ now.\n(not code)" 1)))))
+  (testing "Elisp style, a string opening a body that goes on is the docstring"
+    (is (= "(defun v (&rest items)\n  \"Make a list of ITEMS.\"\n  items)"
+           (clel/emit '(defn v [& items] "Make a list of ITEMS." items))))
+    (is (= "(defun k ()\n  \"just a value\")" (clel/emit '(defn k [] "just a value"))))))
 
 (deftest generated-parameters-are-exempt-from-checkdoc
   (testing "a destructured parameter without :as is named by the compiler"

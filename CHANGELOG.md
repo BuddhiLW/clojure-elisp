@@ -94,6 +94,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `(&rest clel--args)`, ends its docstring with the signature `help` and eldoc
   show, `\(fn START &optional END)`, and a `;; checkdoc-params:` line exempts
   the compiler's own parameter names (`clel--args`, `p__1`) from checkdoc.
+- **Docstrings keep their lines.** A multi-line docstring was emitted on one
+  physical line with `\n` escapes, so checkdoc saw its whole text as the
+  first line ("First sentence should end with punctuation"). Docstrings are
+  now written with real newlines, and a `(` opening a line is written `\(`.
+  An Elisp-style `(defn f [x] "Doc." body)`, a string opening a body that goes
+  on, is taken as the docstring. The regenerated runtime's checkdoc
+  diagnostics drop from 36 to 16.
 
 ## [0.7.2] - 2026-09-05
 

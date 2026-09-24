@@ -71,6 +71,19 @@
          (map #(str prefix %))
          (str/join "\n"))))
 
+(defn docstring-literal
+  "Elisp string literal for a docstring. Newlines stay newlines: checkdoc
+   reads a docstring line by line and wants its first line to be a sentence.
+   A `(` opening a line is written `\\(`, as Emacs requires of a paren in
+   column 0 inside a string."
+  [s]
+  (str "\""
+       (-> s
+           (str/replace "\\" "\\\\")
+           (str/replace "\"" "\\\"")
+           (str/replace #"(?m)^\(" "\\\\("))
+       "\""))
+
 ;; ============================================================================
 ;; Namespace-Qualified Names
 ;; ============================================================================
@@ -199,7 +212,7 @@
                       (str "(" (emit-list (map str arglist)) ")")
                       "()")
         parts      (cond-> [(str "(transient-define-prefix " name-str " " arglist-str)]
-                     docstring (conj (str "  " (pr-str docstring)))
+                     docstring (conj (str "  " (docstring-literal docstring)))
                      (seq groups) (into (map #(str "  " (emit %)) groups)))]
     (str (str/join "\n" parts) ")")))
 
@@ -229,7 +242,7 @@
         elisp-body   (str/join "\n  " (map emit body))]
     (if docstring
       (format "(defmacro %s %s\n  %s\n  %s)"
-              elisp-name elisp-params (pr-str docstring) elisp-body)
+              elisp-name elisp-params (docstring-literal docstring) elisp-body)
       (format "(defmacro %s %s\n  %s)"
               elisp-name elisp-params elisp-body))))
 
@@ -273,7 +286,7 @@
         elisp-body (str/join "\n  " (map emit body))]
     (if docstring
       (format "(cl-defun %s %s\n  %s\n  %s)"
-              elisp-name elisp-arglist (pr-str docstring) elisp-body)
+              elisp-name elisp-arglist (docstring-literal docstring) elisp-body)
       (format "(cl-defun %s %s\n  %s)"
               elisp-name elisp-arglist elisp-body))))
 
@@ -282,7 +295,7 @@
   (let [elisp-name (ns-qualify-name name env)]
     (if init
       (emit-sexp "defvar" elisp-name (emit init)
-                 (when docstring (pr-str docstring)))
+                 (when docstring (docstring-literal docstring)))
       (format "(defvar %s)" elisp-name))))
 
 (defn- nth-accessor
@@ -388,7 +401,7 @@
   "(defun name arglist docstring? checkdoc-comment? body), one part per line."
   [elisp-name arglist docstring generated-params body-str]
   (let [lines (cond-> []
-                docstring (conj (pr-str docstring))
+                docstring (conj (docstring-literal docstring))
                 (checkdoc-params-comment docstring generated-params)
                 (conj (checkdoc-params-comment docstring generated-params))
                 true      (conj body-str))]
@@ -420,12 +433,14 @@
          ")")))
 
 (defn- with-usage
-  "docstring ending in a `\\(fn ...)` line, unless it already has one."
+  "docstring ending in a `(fn ...)` usage line, unless it already has one.
+   `help-split-fundoc` wants the line in the docstring's VALUE as `(fn ...)`;
+   `docstring-literal` writes it `\\(fn ...)`, a paren opening a line."
   [docstring usage]
   (when docstring
-    (if (str/includes? docstring "\\(fn ")
+    (if (re-find #"(?m)^\\?\(fn[ )]" docstring)
       docstring
-      (str docstring "\n\n\\" usage))))
+      (str docstring "\n\n" usage))))
 
 (defn- emit-multi-arity-defn
   "Emit a multi-arity defun with cl-case dispatch on arg count. The dispatch
@@ -777,13 +792,13 @@
   (let [elisp-name (mangle-name name)]
     (cond
       (and init docstring)
-      (format "(defvar %s %s\n  %s)" elisp-name (emit init) (pr-str docstring))
+      (format "(defvar %s %s\n  %s)" elisp-name (emit init) (docstring-literal docstring))
 
       init
       (format "(defvar %s %s)" elisp-name (emit init))
 
       docstring
-      (format "(defvar %s nil\n  %s)" elisp-name (pr-str docstring))
+      (format "(defvar %s nil\n  %s)" elisp-name (docstring-literal docstring))
 
       :else
       (format "(defvar %s)" elisp-name))))
@@ -1334,7 +1349,7 @@
                           (str/join "\n  " (map emit body)))
         ;; Build the full form
         parts           (cond-> [(str "(define-minor-mode " mode-name)]
-                          docstring (conj (str "  " (pr-str docstring)))
+                          docstring (conj (str "  " (docstring-literal docstring)))
                           (seq options-str) (conj (str "  " options-str))
                           (seq body-str) (conj (str "  " body-str)))]
     (str (str/join "\n" parts) ")")))
@@ -1362,7 +1377,7 @@
                              (str/join "\n  "))
         ;; Build the full form
         parts           (cond-> [(str "(defgroup " group-name " " value-str)]
-                          docstring (conj (str "  " (pr-str docstring)))
+                          docstring (conj (str "  " (docstring-literal docstring)))
                           (seq options-str) (conj (str "  " options-str)))]
     (str (str/join "\n" parts) ")")))
 
@@ -1391,7 +1406,7 @@
                              (str/join "\n  "))
         ;; Build the full form
         parts           (cond-> [(str "(defcustom " var-name " " default-str)]
-                          docstring (conj (str "  " (pr-str docstring)))
+                          docstring (conj (str "  " (docstring-literal docstring)))
                           (seq options-str) (conj (str "  " options-str)))]
     (str (str/join "\n" parts) ")")))
 

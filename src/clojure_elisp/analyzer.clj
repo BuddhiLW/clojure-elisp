@@ -211,6 +211,14 @@
         [attrs fdecl]     (if (map? (first fdecl))
                             [(first fdecl) (rest fdecl)]
                             [nil fdecl])
+        ;; Elisp style, (defn f [x] "Doc." body): a string opening a body
+        ;; that goes on is the docstring there, and a no-op in Clojure.
+        [docstring fdecl] (if (and (nil? docstring)
+                                   (vector? (first fdecl))
+                                   (string? (second fdecl))
+                                   (seq (nnext fdecl)))
+                            [(second fdecl) (cons (first fdecl) (nnext fdecl))]
+                            [docstring fdecl])
         multi-arity?      (and (seq? (first fdecl))
                                (vector? (ffirst fdecl)))
         base-node         (if multi-arity?
