@@ -633,12 +633,16 @@
           (emit test)
           (str/join "\n    " (map emit body))))
 
+;; Clojure's single-binding when-let / if-let emit Emacs's STARRED macros:
+;; the unstarred ones are obsolete since Emacs 31.1, so the byte-compiler
+;; warns on every use, and with one binding the two spellings mean the same.
+
 (defmethod emit-node :when-let
   [{:keys [var val body]}]
   (let [var-str  (mangle-name var)
         val-str  (emit val)
         body-str (str/join "\n    " (map emit body))]
-    (format "(when-let ((%s %s))\n    %s)" var-str val-str body-str)))
+    (format "(when-let* ((%s %s))\n    %s)" var-str val-str body-str)))
 
 (defmethod emit-node :if-let
   [{:keys [var val then else]}]
@@ -646,8 +650,8 @@
         val-str  (emit val)
         then-str (emit then)]
     (if else
-      (format "(if-let ((%s %s))\n    %s\n  %s)" var-str val-str then-str (emit else))
-      (format "(if-let ((%s %s))\n    %s)" var-str val-str then-str))))
+      (format "(if-let* ((%s %s))\n    %s\n  %s)" var-str val-str then-str (emit else))
+      (format "(if-let* ((%s %s))\n    %s)" var-str val-str then-str))))
 
 (defmethod emit-node :when-let*
   [{:keys [bindings body]}]

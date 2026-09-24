@@ -40,6 +40,9 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`Installed clojure-elisp-runtime %s is too old ...`). checkdoc, which
   MELPA's melpazoid runs, reported "Messages should start with a capital
   letter" once in every compiled file.
+- **`when-let` / `if-let` emit `when-let*` / `if-let*`.** The unstarred Emacs
+  macros are obsolete since Emacs 31.1, so every use drew a byte-compile
+  warning, and MELPA asks for a clean byte-compile.
 
 ## [0.7.2] - 2026-09-05
 
