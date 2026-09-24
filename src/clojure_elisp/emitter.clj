@@ -232,6 +232,10 @@
       elisp-name
       (mangle-name name))
 
+    ;; elisp/NAME is the Emacs function or variable NAME itself
+    (= ns 'elisp)
+    (str name)
+
     ;; clojure.core namespace - only through the core mapping. The analyzer
     ;; refuses an unmapped one; a node built by hand must not bring back the
     ;; `clojure-core-NAME' fallback, a function nothing defines.
@@ -1519,11 +1523,14 @@
     (str (str/join "\n" parts) ")")))
 
 (defn- emit-option-val
-  "Render a defgroup/defcustom keyword option's value, written as data. A
-   function reference #'p reads as (var p) and must print as #'p: (var p)
-   is a call to the void function `var' when the defcustom is evaluated."
+  "Render a defgroup/defcustom keyword option's value. An analyzed node (a
+   defcustom's default and options) emits as any value does; anything else is
+   written as data. A function reference #'p reads as (var p) and must print
+   as #'p: (var p) is a call to the void function `var' when the defcustom is
+   evaluated."
   [v]
   (cond
+    (and (map? v) (:op v)) (emit v)
     (nil? v) "nil"
     (true? v) "t"
     (false? v) "nil"
@@ -1554,10 +1561,9 @@
 (defmethod emit-node :defcustom
   [{:keys [name default docstring options]}]
   (let [var-name        (mangle-name name)
-        ;; Emit default value (may be an analyzed AST node, e.g. :function-quote from #')
-        default-str     (if (and (map? default) (:op default))
-                          (emit default)
-                          (emit-option-val default))
+        ;; The analyzer hands over the default and the option values analyzed
+        ;; (see analyze-defcustom); a node built by hand may still hold data.
+        default-str     (emit-option-val default)
         ;; Emit options as keyword-value pairs
         options-str     (->> options
                              (map (fn [[k v]]

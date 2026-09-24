@@ -1349,10 +1349,14 @@
 
 (defn analyze-var
   "Analyze (var sym) forms — the reader expansion of #'sym.
-   Produces a :function-quote AST node for Elisp #'symbol emission."
+   Produces a :function-quote AST node for Elisp #'symbol emission. sym names
+   a var, never a local, and resolves as a symbol does, through the
+   namespace's aliases, refers and definitions: #'str/join quotes the function
+   (str/join ...) calls."
   [[_ sym]]
   (ast-node :function-quote
-            :symbol sym))
+            :expr (binding [*env* (dissoc *env* :locals :fn-locals)]
+                    (analyze-symbol sym))))
 
 ;; ============================================================================
 ;; Macro System
@@ -1426,6 +1430,9 @@
 (defn analyze-defcustom
   "Analyze (defcustom name default docstring? keyword-value-options...) forms.
    Options are keyword-value pairs like :type, :group, :safe, :set, :get, etc.
+   Emacs evaluates the default and every option value, so both are analyzed
+   as values: 'integer stays quoted data, and look/rules or #'look/set name
+   what they name anywhere else.
 
    Example:
    (defcustom hive-mcp-eca-timeout 30
@@ -1438,13 +1445,13 @@
         [docstring rest-forms] (if (string? (first rest-forms))
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
-        ;; Parse keyword options into a map
-        options                (source-ordered-options rest-forms)]
+        ;; Parse keyword options into a map of analyzed values
+        options                (source-ordered-options
+                                (map-indexed (fn [i x] (if (odd? i) (analyze x) x))
+                                             rest-forms))]
     (cond-> (ast-node :defcustom
                       :name var-name
-                      :default (if (and (seq? default) (= 'var (first default)))
-                                 (analyze-var default)
-                                 default)
+                      :default (analyze default)
                       :docstring docstring
                       :options options)
       (autoload? var-name nil) (assoc :autoload? true))))

@@ -1309,64 +1309,67 @@
 ;; ============================================================================
 
 (deftest analyze-defcustom-test
-  (testing "basic defcustom with nil default and docstring"
-    (let [ast (analyze '(defcustom hive-mcp-eca-auto-context nil
-                          "When non-nil, automatically include MCP context."))]
-      (is (= :defcustom (:op ast)))
-      (is (= 'hive-mcp-eca-auto-context (:name ast)))
-      (is (nil? (:default ast)))
-      (is (= "When non-nil, automatically include MCP context." (:docstring ast)))
-      (is (empty? (:options ast)))))
+  ;; Emacs evaluates a defcustom's default and options: both arrive analyzed.
+  (let [const  (juxt :op :val)
+        quoted (juxt :op :form)]
+    (testing "basic defcustom with nil default and docstring"
+      (let [ast (analyze '(defcustom hive-mcp-eca-auto-context nil
+                            "When non-nil, automatically include MCP context."))]
+        (is (= :defcustom (:op ast)))
+        (is (= 'hive-mcp-eca-auto-context (:name ast)))
+        (is (= [:const nil] (const (:default ast))))
+        (is (= "When non-nil, automatically include MCP context." (:docstring ast)))
+        (is (empty? (:options ast)))))
 
-  (testing "defcustom with integer default"
-    (let [ast (analyze '(defcustom hive-mcp-eca-timeout 30
-                          "Timeout in seconds."))]
-      (is (= :defcustom (:op ast)))
-      (is (= 'hive-mcp-eca-timeout (:name ast)))
-      (is (= 30 (:default ast)))
-      (is (= "Timeout in seconds." (:docstring ast)))))
+    (testing "defcustom with integer default"
+      (let [ast (analyze '(defcustom hive-mcp-eca-timeout 30
+                            "Timeout in seconds."))]
+        (is (= :defcustom (:op ast)))
+        (is (= 'hive-mcp-eca-timeout (:name ast)))
+        (is (= [:const 30] (const (:default ast))))
+        (is (= "Timeout in seconds." (:docstring ast)))))
 
-  (testing "defcustom with :type and :group options"
-    (let [ast (analyze '(defcustom my-var nil
-                          "My variable."
-                          :type 'boolean
-                          :group 'my-group))]
-      (is (= :defcustom (:op ast)))
-      (is (= ''boolean (:type (:options ast))))
-      (is (= ''my-group (:group (:options ast))))))
+    (testing "defcustom with :type and :group options"
+      (let [ast (analyze '(defcustom my-var nil
+                            "My variable."
+                            :type 'boolean
+                            :group 'my-group))]
+        (is (= :defcustom (:op ast)))
+        (is (= [:quote 'boolean] (quoted (:type (:options ast)))))
+        (is (= [:quote 'my-group] (quoted (:group (:options ast)))))))
 
-  (testing "defcustom with multiple options"
-    (let [ast (analyze '(defcustom hive-mcp-eca-timeout 30
-                          "Timeout in seconds."
-                          :type 'integer
-                          :group 'hive-mcp-eca
-                          :safe 'integerp))]
-      (is (= :defcustom (:op ast)))
-      (is (= ''integer (:type (:options ast))))
-      (is (= ''hive-mcp-eca (:group (:options ast))))
-      (is (= ''integerp (:safe (:options ast))))))
+    (testing "defcustom with multiple options"
+      (let [ast (analyze '(defcustom hive-mcp-eca-timeout 30
+                            "Timeout in seconds."
+                            :type 'integer
+                            :group 'hive-mcp-eca
+                            :safe 'integerp))]
+        (is (= :defcustom (:op ast)))
+        (is (= [:quote 'integer] (quoted (:type (:options ast)))))
+        (is (= [:quote 'hive-mcp-eca] (quoted (:group (:options ast)))))
+        (is (= [:quote 'integerp] (quoted (:safe (:options ast)))))))
 
-  (testing "defcustom with string default"
-    (let [ast (analyze '(defcustom my-prefix "prefix-"
-                          "The prefix to use."
-                          :type 'string))]
-      (is (= :defcustom (:op ast)))
-      (is (= "prefix-" (:default ast)))
-      (is (= ''string (:type (:options ast))))))
+    (testing "defcustom with string default"
+      (let [ast (analyze '(defcustom my-prefix "prefix-"
+                            "The prefix to use."
+                            :type 'string))]
+        (is (= :defcustom (:op ast)))
+        (is (= [:const "prefix-"] (const (:default ast))))
+        (is (= [:quote 'string] (quoted (:type (:options ast)))))))
 
-  (testing "defcustom without docstring"
-    (let [ast (analyze '(defcustom simple-var true))]
-      (is (= :defcustom (:op ast)))
-      (is (= 'simple-var (:name ast)))
-      (is (= true (:default ast)))
-      (is (nil? (:docstring ast)))))
+    (testing "defcustom without docstring"
+      (let [ast (analyze '(defcustom simple-var true))]
+        (is (= :defcustom (:op ast)))
+        (is (= 'simple-var (:name ast)))
+        (is (= [:const true] (const (:default ast))))
+        (is (nil? (:docstring ast)))))
 
-  (testing "defcustom with complex :type option"
-    (let [ast (analyze '(defcustom my-choice nil
-                          "A choice option."
-                          :type '(choice (const nil) (string :tag "Custom"))))]
-      (is (= :defcustom (:op ast)))
-      (is (some? (:type (:options ast)))))))
+    (testing "defcustom with complex :type option"
+      (let [ast (analyze '(defcustom my-choice nil
+                            "A choice option."
+                            :type '(choice (const nil) (string :tag "Custom"))))]
+        (is (= :defcustom (:op ast)))
+        (is (= :quote (:op (:type (:options ast)))))))))
 
 ;; ============================================================================
 ;; Iteration Forms - doseq/dotimes (clel-035, clel-045)
@@ -1667,14 +1670,18 @@
 ;; ============================================================================
 
 (deftest analyze-var-function-quote-test
-  (testing "var form produces :function-quote AST node"
+  (testing "var form produces :function-quote AST node over the resolved symbol"
     (let [ast (analyze '(var my-func))]
       (is (= :function-quote (:op ast)))
-      (is (= 'my-func (:symbol ast)))))
+      (is (= [:var 'my-func] ((juxt :op :name) (:expr ast))))))
   (testing "var form with predicate symbol"
     (let [ast (analyze '(var nil?))]
       (is (= :function-quote (:op ast)))
-      (is (= 'nil? (:symbol ast))))))
+      (is (= 'nil? (:name (:expr ast))))))
+  (testing "an aliased symbol resolves to its namespace"
+    (binding [ana/*env* (assoc ana/*env* :aliases '{str clojure.string})]
+      (is (= [:var 'join 'clojure.string]
+             ((juxt :op :name :ns) (:expr (analyze '(var str/join)))))))))
 
 (deftest analyze-defvar-ast-test
   (testing "defvar produces :defvar-elisp AST node"
