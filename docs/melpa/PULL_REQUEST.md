@@ -53,6 +53,9 @@ Maintainer.
 
 - melpazoid (Docker, `RECIPE=... LOCAL_REPO=... make`): no byte-compile,
   checkdoc, package-lint or load findings; MIT license detected.
+- CI runs `make lint-elisp` (byte-compile with warnings as errors, checkdoc,
+  package-lint) on Emacs 28.2, 29.1, 30.1 and 31.1: checkdoc before Emacs 31
+  checks more than melpazoid's Emacs does.
 - `make recipes/clel` in a melpa/melpa clone builds `clel-<date>.tar`, and
   `package-install` of it into a fresh `package-user-dir` works.
 

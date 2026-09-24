@@ -5,7 +5,7 @@
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.8.0
+;; Version: 0.8.1
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
@@ -35,7 +35,7 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst clel-runtime-version "0.8.0"
+(defconst clel-runtime-version "0.8.1"
   "Version of the ClojureElisp runtime library.
 Compiled files check this to refuse a runtime older than the one they
 were emitted against.")
@@ -428,7 +428,7 @@ target takes entries or [K V] pairs."
          t)))
 
 (defun clel--set-equal (a b)
-  "Return t if the hash set A holds exactly the items of B, a set or a list."
+  "Return t if the hash set A has exactly the items of B, a set or a list."
   (let* ((items
           (if (hash-table-p b)
               (hash-table-keys b)
@@ -549,17 +549,17 @@ MATCH is treated as a literal string."
   (if (null s) "" (string-trim-right s)))
 
 (defun clel-str-blank-p (s)
-  "Return t if S is nil, empty, or contains only whitespace."
+  "Return t if S is nil, empty, or only whitespace."
   (or (null s) (string-empty-p s) (string-match-p "\\`[[:space:]]*\\'" s)))
 
 (defun clel-str-includes-p (s substr)
-  "Return t if S contains SUBSTR."
+  "Return t if SUBSTR occurs in S."
   (if (or (null s) (null substr))
       nil
     (if (string-match-p (regexp-quote substr) s) t nil)))
 
 (defun clel-str-starts-with-p (s prefix)
-  "Return t if S starts with PREFIX."
+  "Return t if S begins with PREFIX."
   (if (or (null s) (null prefix)) nil (string-prefix-p prefix s)))
 
 (defun clel-str-ends-with-p (s suffix)
@@ -631,7 +631,7 @@ Optional FROM-INDEX specifies starting position."
       result)))
 
 (defun clel-constantly (x)
-  "Return a function that always returns X."
+  "Return a function whose value is always X, whatever its arguments."
   (lambda (&rest _) x))
 
 (defun clel-comp (&rest fns)
@@ -768,11 +768,12 @@ terminates on the real end of the sequence rather than on a pending thunk."
    (t nil)))
 
 (defun clel-next (s)
-  "Return the next of S, or nil if empty. Forces lazy seqs."
+  "Return the next of S, or nil if empty.
+A lazy S is forced."
   (let* ((r (clel-rest s))) (if r r nil)))
 
 (defun clel-seq-force (s)
-  "Ensure S is a realized sequence (list). Forces lazy seqs."
+  "Ensure S is a realized sequence (list), forcing lazy seqs."
   (cond
    ((null s) nil)
    ((clel-lazy-seq-p s) (clel-seq-force (clel-lazy-seq-force s)))
@@ -844,7 +845,8 @@ reach a raw Elisp primitive such as `length', `apply', `sort' or
         (apply f (append leading trailing))))))
 
 (defun clel-map (f &rest colls)
-  "Lazily map F over COLLS. With one coll, returns lazy seq."
+  "Lazily map F over COLLS.
+With one collection in COLLS, the result is a lazy seq."
   (let* ((f (clel--fn f)))
     (if (= 1 (clel-count colls))
         (let* ((s (clel-seq-force (car colls))))
@@ -938,7 +940,7 @@ reach a raw Elisp primitive such as `length', `apply', `sort' or
                    (clel-seq-force (clel-apply #'clel-interleave rests)))))))))
 
 (defun clel-partition (n s)
-  "Partition S into groups of N elements. Returns lazy seq of lists."
+  "Partition S into groups of N elements, as a lazy seq of lists."
   (clel-lazy-seq-create
    (lambda ()
      (let* ((forced (clel-seq-force s)))
@@ -968,7 +970,7 @@ Each group contains consecutive elements with the same (F elem) value."
            (cons (nreverse group) (clel-partition-by f cur))))))))
 
 (defun clel-split-at (n s)
-  "Split S at position N. Returns list of (take n s) and (drop n s)."
+  "Split S at position N into a list of (take n s) and (drop n s)."
   (list (clel-doall (clel-take n s)) (clel-doall (clel-drop n s))))
 
 (defun clel-split-with (pred s)
@@ -1047,7 +1049,7 @@ the collection.  KEYFN may be a keyword.  The sort is stable."
           (lambda (x y) (funcall pred (funcall keyfn x) (funcall keyfn y))))))
 
 (defun clel-group-by (f coll)
-  "Group elements of COLL by the result of F. Returns alist."
+  "Group the elements of COLL by the result of F, as an alist."
   (let* ((result nil) (f (clel--fn f)) (cur (clel-seq-force coll)))
     (while cur
       (let* ((item (clel-first cur))
@@ -1158,7 +1160,7 @@ Returns a hash-table where each item is a key with value t."
          is-set)))
 
 (defun clel-set-contains-p (s item)
-  "Return t if set S contains ITEM."
+  "Return t if ITEM is in set S."
   (if (hash-table-p s) (gethash item s nil) (if (member item s) t nil)))
 
 (defun clel-set-add (s item)
@@ -1170,7 +1172,8 @@ Returns a hash-table where each item is a key with value t."
   (let* ((new (copy-hash-table s))) (remhash item new) new))
 
 (defun clel-set-union (&rest sets)
-  "Return the union of SETS."
+  "Return the union of its arguments.
+Each of SETS is a set or a list."
   (let* ((result (make-hash-table :test 'equal)))
     (dolist (s sets)
       (if (hash-table-p s)
@@ -1179,7 +1182,8 @@ Returns a hash-table where each item is a key with value t."
     result))
 
 (defun clel-set-intersection (&rest sets)
-  "Return the intersection of SETS."
+  "Return the intersection of its arguments.
+Each of SETS is a set or a list."
   (if (null sets)
       (make-hash-table :test 'equal)
     (let* ((first-set (car sets))
@@ -1203,7 +1207,8 @@ Returns a hash-table where each item is a key with value t."
       result)))
 
 (defun clel-set-difference (s1 &rest sets)
-  "Return items in S1 not in any of SETS."
+  "Return the items of S1 that are in none of the other arguments.
+S1 and each of SETS are sets or lists."
   (let* ((result (make-hash-table :test 'equal)))
     (if (hash-table-p s1)
         (maphash
@@ -1241,7 +1246,7 @@ Returns a hash-table where each item is a key with value t."
   (clel-set-subset-p s2 s1))
 
 (defun clel-set-select (pred s)
-  "Return a set of items in S for which PRED returns true."
+  "Return the set of items in S that satisfy PRED."
   (let* ((result (make-hash-table :test 'equal)) (pred (clel--fn pred)))
     (if (hash-table-p s)
         (maphash (lambda (k _v) (when (funcall pred k) (puthash k t result))) s)
@@ -1510,7 +1515,7 @@ arguments, or INIT and COLL."
   (and (consp x) (eq (car x) 'clel-eduction)))
 
 (defun clel-map-xf (f)
-  "Return a mapping transducer that applies F to each element."
+  "Return a transducer that maps each element through F."
   (let* ((f (clel--fn f)))
     (lambda (rf)
       (lambda (&rest args)
@@ -1520,7 +1525,7 @@ arguments, or INIT and COLL."
           (2 (funcall rf (car args) (funcall f (cadr args)))))))))
 
 (defun clel-filter-xf (pred)
-  "Return a filtering transducer that keeps elements where PRED is true."
+  "Return a transducer that passes on each element for which PRED is true."
   (let* ((pred (clel--fn pred)))
     (lambda (rf)
       (lambda (&rest args)
@@ -1533,12 +1538,12 @@ arguments, or INIT and COLL."
              (car args))))))))
 
 (defun clel-remove-xf (pred)
-  "Return a transducer that removes elements where PRED is true."
+  "Return a transducer that drops each element for which PRED is true."
   (let* ((pred (clel--fn pred)))
     (clel-filter-xf (lambda (x) (not (funcall pred x))))))
 
 (defun clel-keep-xf (f)
-  "Return a transducer that keeps non-nil results of (F item)."
+  "Return a transducer that passes on the non-nil results of (F item)."
   (let* ((f (clel--fn f)))
     (lambda (rf)
       (lambda (&rest args)
@@ -1550,7 +1555,7 @@ arguments, or INIT and COLL."
              (if v (funcall rf (car args) v) (car args)))))))))
 
 (defun clel-keep-indexed-xf (f)
-  "Return a transducer that keeps non-nil results of (F index item)."
+  "Return a transducer that passes on the non-nil results of (F index item)."
   (lambda (rf)
     (let* ((idx -1))
       (lambda (&rest args)
@@ -1644,7 +1649,8 @@ arguments, or INIT and COLL."
              (car args))))))))
 
 (defun clel-partition-by-xf (f)
-  "Return a transducer that partitions by changes in (F item)."
+  "Return a transducer that partitions its input by the value of (F item).
+A new partition begins wherever that value differs from the previous one."
   (lambda (rf)
     (let* ((buffer nil) (prev-val 'clel--none))
       (lambda (&rest args)
@@ -1667,7 +1673,7 @@ arguments, or INIT and COLL."
                  (funcall rf (car args) group))))))))))
 
 (defun clel-dedupe-xf ()
-  "Return a transducer that removes consecutive duplicates."
+  "Return a transducer that drops consecutive duplicates."
   (lambda (rf)
     (let* ((prev 'clel--none))
       (lambda (&rest args)
@@ -1681,7 +1687,7 @@ arguments, or INIT and COLL."
                (progn (setq prev item) (funcall rf (car args) item))))))))))
 
 (defun clel-distinct-xf ()
-  "Return a transducer that removes all duplicates (not just consecutive)."
+  "Return a transducer that drops every duplicate, consecutive or not."
   (lambda (rf)
     (let* ((seen (make-hash-table :test 'equal)))
       (lambda (&rest args)
@@ -1889,7 +1895,7 @@ Returns the Elisp equivalent."
   (if (null s) nil (split-string s "\n")))
 
 (defun clel-peek (coll)
-  "Return the element of COLL that `clel-pop' removes.
+  "Return the element of COLL that `clel-pop' drops.
 That is the last element of a vector and the first element of a list."
   (let* ((coll (clel-realize coll)))
     (cond
@@ -1900,7 +1906,7 @@ That is the last element of a vector and the first element of a list."
      (t nil))))
 
 (defun clel-pop (coll)
-  "Return COLL without the element `clel-peek' returns.
+  "Return COLL without the element that `clel-peek' gives.
 That is all but the last element of a vector, and the rest of a list."
   (let* ((coll (clel-realize coll)))
     (cond

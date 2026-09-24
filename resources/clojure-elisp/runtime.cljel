@@ -429,7 +429,7 @@ target takes entries or [K V] pairs."
          true)))
 
 (defn clel--set-equal [a b]
-  "Return t if the hash set A holds exactly the items of B, a set or a list."
+  "Return t if the hash set A has exactly the items of B, a set or a list."
   (let [items (if (hash-table-p b) (hash-table-keys b) (delete-dups (copy-sequence b)))]
     (and (== (hash-table-count a) (length items))
          (cl-every (fn [x] (gethash x a)) items)
@@ -559,18 +559,18 @@ MATCH is treated as a literal string."
     (string-trim-right s)))
 
 (defn clel-str-blank-p [s]
-  "Return t if S is nil, empty, or contains only whitespace."
+  "Return t if S is nil, empty, or only whitespace."
   (or (nil? s)
       (string-empty-p s)
       (string-match-p "\\`[[:space:]]*\\'" s)))
 
 (defn clel-str-includes-p [s substr]
-  "Return t if S contains SUBSTR."
+  "Return t if SUBSTR occurs in S."
   (if (or (nil? s) (nil? substr)) nil
     (if (string-match-p (regexp-quote substr) s) true false)))
 
 (defn clel-str-starts-with-p [s prefix]
-  "Return t if S starts with PREFIX."
+  "Return t if S begins with PREFIX."
   (if (or (nil? s) (nil? prefix)) nil
     (string-prefix-p prefix s)))
 
@@ -645,7 +645,7 @@ Optional FROM-INDEX specifies starting position."
 ;;; Function Utilities
 
 (defn clel-constantly [x]
-  "Return a function that always returns X."
+  "Return a function whose value is always X, whatever its arguments."
   (fn [& _] x))
 
 (defn clel-comp [& fns]
@@ -808,14 +808,15 @@ terminates on the real end of the sequence rather than on a pending thunk."
     :else nil))
 
 (defn clel-next [s]
-  "Return the next of S, or nil if empty. Forces lazy seqs."
+  "Return the next of S, or nil if empty.
+A lazy S is forced."
   (let [r (clel-rest s)]
     (if r
       r
       nil)))
 
 (defn clel-seq-force [s]
-  "Ensure S is a realized sequence (list). Forces lazy seqs."
+  "Ensure S is a realized sequence (list), forcing lazy seqs."
   (cond
     (nil? s) nil
     (clel-lazy-seq-p s) (clel-seq-force (clel-lazy-seq-force s))
@@ -902,7 +903,8 @@ reach a raw Elisp primitive such as `length', `apply', `sort' or
 ;;; Lazy Sequence Functions
 
 (defn clel-map [f & colls]
-  "Lazily map F over COLLS. With one coll, returns lazy seq."
+  "Lazily map F over COLLS.
+With one collection in COLLS, the result is a lazy seq."
   (let [f (clel--fn f)]
     (if (== 1 (count colls))
       (let [s (clel-seq-force (car colls))]
@@ -1002,7 +1004,7 @@ reach a raw Elisp primitive such as `length', `apply', `sort' or
            (append firsts (clel-seq-force (apply #'clel-interleave rests)))))))))
 
 (defn clel-partition [n s]
-  "Partition S into groups of N elements. Returns lazy seq of lists."
+  "Partition S into groups of N elements, as a lazy seq of lists."
   (clel-lazy-seq-create
    (fn []
      (let [forced (clel-seq-force s)]
@@ -1037,7 +1039,7 @@ Each group contains consecutive elements with the same (F elem) value."
                  (clel-partition-by f cur))))))))
 
 (defn clel-split-at [n s]
-  "Split S at position N. Returns list of (take n s) and (drop n s)."
+  "Split S at position N into a list of (take n s) and (drop n s)."
   (list (clel-doall (clel-take n s))
         (clel-doall (clel-drop n s))))
 
@@ -1125,7 +1127,7 @@ the collection.  KEYFN may be a keyword.  The sort is stable."
     (elisp-sort lst (fn [x y] (funcall pred (funcall keyfn x) (funcall keyfn y))))))
 
 (defn clel-group-by [f coll]
-  "Group elements of COLL by the result of F. Returns alist."
+  "Group the elements of COLL by the result of F, as an alist."
   (let [result nil
         f (clel--fn f)
         cur (clel-seq-force coll)]
@@ -1272,7 +1274,7 @@ Returns a hash-table where each item is a key with value t."
          is-set)))
 
 (defn clel-set-contains-p [s item]
-  "Return t if set S contains ITEM."
+  "Return t if ITEM is in set S."
   (if (hash-table-p s)
     (gethash item s nil)
     ;; Handle list-based sets for compatibility
@@ -1291,7 +1293,8 @@ Returns a hash-table where each item is a key with value t."
     new))
 
 (defn clel-set-union [& sets]
-  "Return the union of SETS."
+  "Return the union of its arguments.
+Each of SETS is a set or a list."
   (let [result (make-hash-table :test 'equal)]
     (dolist [s sets]
       (if (hash-table-p s)
@@ -1302,7 +1305,8 @@ Returns a hash-table where each item is a key with value t."
     result))
 
 (defn clel-set-intersection [& sets]
-  "Return the intersection of SETS."
+  "Return the intersection of its arguments.
+Each of SETS is a set or a list."
   (if (nil? sets)
     (make-hash-table :test 'equal)
     (let [first-set (car sets)
@@ -1328,7 +1332,8 @@ Returns a hash-table where each item is a key with value t."
       result)))
 
 (defn clel-set-difference [s1 & sets]
-  "Return items in S1 not in any of SETS."
+  "Return the items of S1 that are in none of the other arguments.
+S1 and each of SETS are sets or lists."
   (let [result (make-hash-table :test 'equal)]
     (if (hash-table-p s1)
       (maphash (fn [k _v]
@@ -1372,7 +1377,7 @@ Returns a hash-table where each item is a key with value t."
   (clel-set-subset-p s2 s1))
 
 (defn clel-set-select [pred s]
-  "Return a set of items in S for which PRED returns true."
+  "Return the set of items in S that satisfy PRED."
   (let [result (make-hash-table :test 'equal)
         pred (clel--fn pred)]
     (if (hash-table-p s)
@@ -1673,7 +1678,7 @@ arguments, or INIT and COLL."
 ;;; Transducer Factories
 
 (defn clel-map-xf [f]
-  "Return a mapping transducer that applies F to each element."
+  "Return a transducer that maps each element through F."
   (let [f (clel--fn f)]
     (fn [rf]
       (fn [& args]
@@ -1683,7 +1688,7 @@ arguments, or INIT and COLL."
           (2 (funcall rf (car args) (funcall f (cadr args)))))))))
 
 (defn clel-filter-xf [pred]
-  "Return a filtering transducer that keeps elements where PRED is true."
+  "Return a transducer that passes on each element for which PRED is true."
   (let [pred (clel--fn pred)]
     (fn [rf]
       (fn [& args]
@@ -1695,12 +1700,12 @@ arguments, or INIT and COLL."
                (car args))))))))
 
 (defn clel-remove-xf [pred]
-  "Return a transducer that removes elements where PRED is true."
+  "Return a transducer that drops each element for which PRED is true."
   (let [pred (clel--fn pred)]
     (clel-filter-xf (fn [x] (not (funcall pred x))))))
 
 (defn clel-keep-xf [f]
-  "Return a transducer that keeps non-nil results of (F item)."
+  "Return a transducer that passes on the non-nil results of (F item)."
   (let [f (clel--fn f)]
     (fn [rf]
       (fn [& args]
@@ -1713,7 +1718,7 @@ arguments, or INIT and COLL."
                  (car args)))))))))
 
 (defn clel-keep-indexed-xf [f]
-  "Return a transducer that keeps non-nil results of (F index item)."
+  "Return a transducer that passes on the non-nil results of (F index item)."
   (fn [rf]
     (let [idx -1]
       (fn [& args]
@@ -1808,7 +1813,8 @@ arguments, or INIT and COLL."
                (car args))))))))
 
 (defn clel-partition-by-xf [f]
-  "Return a transducer that partitions by changes in (F item)."
+  "Return a transducer that partitions its input by the value of (F item).
+A new partition begins wherever that value differs from the previous one."
   (fn [rf]
     (let [buffer nil
           prev-val 'clel--none]
@@ -1834,7 +1840,7 @@ arguments, or INIT and COLL."
                    (funcall rf (car args) group))))))))))
 
 (defn clel-dedupe-xf []
-  "Return a transducer that removes consecutive duplicates."
+  "Return a transducer that drops consecutive duplicates."
   (fn [rf]
     (let [prev 'clel--none]
       (fn [& args]
@@ -1849,7 +1855,7 @@ arguments, or INIT and COLL."
                    (funcall rf (car args) item))))))))))
 
 (defn clel-distinct-xf []
-  "Return a transducer that removes all duplicates (not just consecutive)."
+  "Return a transducer that drops every duplicate, consecutive or not."
   (fn [rf]
     (let [seen (make-hash-table :test 'equal)]
       (fn [& args]
@@ -2104,7 +2110,7 @@ Returns the Elisp equivalent."
 ;;; Additional Collection Functions
 
 (defn clel-peek [coll]
-  "Return the element of COLL that `clel-pop' removes.
+  "Return the element of COLL that `clel-pop' drops.
 That is the last element of a vector and the first element of a list."
   (let [coll (clel-realize coll)]
     (cond
@@ -2116,7 +2122,7 @@ That is the last element of a vector and the first element of a list."
       :else nil)))
 
 (defn clel-pop [coll]
-  "Return COLL without the element `clel-peek' returns.
+  "Return COLL without the element that `clel-peek' gives.
 That is all but the last element of a vector, and the rest of a list."
   (let [coll (clel-realize coll)]
     (cond

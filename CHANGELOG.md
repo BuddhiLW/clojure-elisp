@@ -5,7 +5,51 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.1] - 2026-09-24
+
+### Fixed
+
+- **`#'alias/f` names the function `(alias/f ...)` calls.** `(var sym)`
+  resolved nothing: `#'look/pick` compiled to `#'look-pick`, the alias rather
+  than the namespace, and a referred `#'join` or `#'elisp/message` kept its
+  bare or mangled name. It now resolves as a symbol does, through aliases,
+  refers and the namespace's own definitions (`#'app-look-pick`,
+  `#'clel-str-join`, `#'message`), and ignores locals, as Clojure's `var` does.
+- **A defcustom's default and options are values.** Emacs evaluates them, but
+  the compiler wrote them out as data: `(defcustom x look/rules ...)` emitted
+  `look/rules`, and `:set #'look/set` emitted `#'look/set`, names Emacs cannot
+  find. Both are now analyzed like a `def`'s value. Quoted data
+  (`:type '(repeat string)`) emits as before; a vector default is now a list,
+  as every other vector in compiled code is.
+- **`elisp/NAME` as a value is `NAME`.** `(map elisp/car xs)` passed
+  `#'elisp-car`; it passes `#'car`, as `(elisp/car x)` calls `car`.
+- **clel.el passes checkdoc on every Emacs it supports.** Before Emacs 31,
+  checkdoc flags a third-person verb anywhere on a docstring's first line
+  ("keeps", "returns", "Forces", even the argument name SETS), and 26 runtime
+  docstrings had one. melpazoid runs only the newest Emacs, so it did not see
+  them.
+
+### Added
+
+- **Name collisions are compile errors.** Emacs has one namespace for
+  functions and one for variables, so `tod/moment-at` and `tod.moment/at`,
+  both `tod-moment-at`, silently replaced each other, as `(defn foo? ...)` and
+  `(defn foo-p ...)` do inside one file. `compile-project` and
+  `compile-file-string` now refuse two definitions of one kind that compile to
+  one Emacs name, and two namespaces that compile to one `.el` file (`a.b-c`
+  and `a-b.c`), and name both. Macros are exempt: their calls are expanded
+  when each file compiles.
+- **The incremental cache knows its compiler.** `.clel-cache/manifest.edn`
+  records a fingerprint of the compiler's sources and VERSION, and a build by
+  any other compiler recompiles every file instead of trusting outputs the
+  old one wrote. A compiler change used to need `rm -rf .clel-cache`.
+- **`make lint-elisp`** byte-compiles clel.el with warnings as errors and runs
+  checkdoc and package-lint on it. CI runs it on Emacs 28.2, 29.1, 30.1 and
+  31.1.
+- A regression test for docstrings emitted with real line breaks, from the
+  `feat/package-headers` branch; the fix itself reached main separately.
+
+## [0.8.0] - 2026-09-24
 
 ### Changed
 
