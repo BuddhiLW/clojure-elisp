@@ -6,6 +6,7 @@
             [clojure-elisp.ast :as ast]
             [clojure-elisp.mappings :as mappings]
             [clojure-elisp.package-header :as package-header]
+            [clojure-elisp.reader :as reader]
             [clojure-elisp.schema :as schema]
             [clojure-elisp.version :as version]
             [malli.core :as m]))
@@ -128,6 +129,39 @@
 
 (declare emit)
 
+;; ============================================================================
+;; Printing literal data
+;; ============================================================================
+;; The host printer is not portable: ClojureWasm's pr-str writes \f and \b
+;; raw inside strings, and prints sets and large maps in its own hash order.
+;; These print read data the way the JVM prints it, but collections in the
+;; source order the reader recorded, so every host emits the same bytes.
+
+(def ^:private string-char-escapes
+  "clojure.core/char-escape-string: the chars pr-str escapes in a string."
+  {\newline "\\n" \tab "\\t" \return "\\r" \" "\\\"" \\ "\\\\"
+   \formfeed "\\f" \backspace "\\b"})
+
+(defn pr-string
+  "s as a double-quoted string literal, escaped as the JVM's pr-str does."
+  [s]
+  (str "\"" (str/escape s string-char-escapes) "\""))
+
+(defn pr-data
+  "Print a form read from source as the JVM's pr-str would, except that sets
+   and maps list their elements in source order (reader/ordered-keys,
+   reader/ordered-members) rather than in host hash order."
+  [x]
+  (cond
+    (string? x) (pr-string x)
+    (map? x)    (str "{" (str/join ", " (map #(str (pr-data %) " " (pr-data (get x %)))
+                                             (reader/ordered-keys x)))
+                     "}")
+    (set? x)    (str "#{" (str/join " " (map pr-data (reader/ordered-members x))) "}")
+    (vector? x) (str "[" (str/join " " (map pr-data x)) "]")
+    (seq? x)    (str "(" (str/join " " (map pr-data x)) ")")
+    :else       (pr-str x)))
+
 (defmulti emit-node
   "Emit an AST node to Elisp string."
   :op)
@@ -138,7 +172,7 @@
     :nil "nil"
     :bool (if val "t" "nil")
     :number (str val)
-    :string (pr-str val)
+    :string (pr-string val)
     :keyword (str ":" (name val))
     (str val)))
 
@@ -154,8 +188,8 @@
     (nil? v)     "nil"
     (true? v)    "t"
     (false? v)   "nil"
-    (string? v)  (pr-str v)
-    (char? v)    (pr-str (str v))
+    (string? v)  (pr-string v)
+    (char? v)    (pr-string (str v))
     (keyword? v) (str v)
     (symbol? v)  (str "'" v)
     (number? v)  (str v)
@@ -172,8 +206,8 @@
     (nil? v)     "'nil"
     (true? v)    "'t"
     (false? v)   "'nil"
-    (string? v)  (pr-str v)
-    (char? v)    (pr-str (str v))
+    (string? v)  (pr-string v)
+    (char? v)    (pr-string (str v))
     (keyword? v) (str v)
     (symbol? v)  (str "'" v)
     (number? v)  (str v)
@@ -256,11 +290,15 @@
 (defn- quoted-data
   "Render quoted Clojure data as Elisp read syntax. A map is an alist and a
    set a list, as they are when evaluated; `pr-str' would print {...} and
-   #{...}, which Elisp cannot read."
+   #{...}, which Elisp cannot read. Like `pr-data`, strings are escaped
+   portably and maps and sets keep their source order."
   [x]
   (cond
-    (map? x)    (str "(" (str/join " " (map (fn [[k v]] (str "(" (quoted-data k) " . " (quoted-data v) ")")) x)) ")")
-    (set? x)    (str "(" (str/join " " (map quoted-data x)) ")")
+    (string? x) (pr-string x)
+    (map? x)    (str "(" (str/join " " (map (fn [k] (str "(" (quoted-data k) " . " (quoted-data (get x k)) ")"))
+                                            (reader/ordered-keys x)))
+                     ")")
+    (set? x)    (str "(" (str/join " " (map quoted-data (reader/ordered-members x))) ")")
     (vector? x) (str "[" (str/join " " (map quoted-data x)) "]")
     (seq? x)    (str "(" (str/join " " (map quoted-data x)) ")")
     (true? x)   "t"
@@ -812,11 +850,11 @@
                                            (= pattern '_) "_"
                                            (symbol? pattern) (str "'" (name pattern))
                                            (keyword? pattern) (str "'" (name pattern))
-                                           (string? pattern) (pr-str pattern)
+                                           (string? pattern) (pr-string pattern)
                                            (number? pattern) (str pattern)
                                            ;; For list patterns like (or 'nil 'staged), (pred stringp), etc.
                                            ;; emit them raw
-                                           (seq? pattern) (pr-str pattern)
+                                           (seq? pattern) (pr-data pattern)
                                            :else (str pattern))]
                              (format "(%s %s)" pat-str
                                      (str/join " " (map emit body)))))
@@ -1150,27 +1188,54 @@
   [{:keys [protocol value]}]
   (format "(clel-satisfies-p '%s %s)" (mangle-name protocol) (emit value)))
 
-;; Reify type names must be unique in the whole Emacs image (cl-defstruct is
-;; global) and identical from one compile to the next (committed .el files
-;; must not churn). `emit-file` binds a per-file counter and the name carries
-;; the namespace prefix; a lone `emit` (the REPL) falls back to a process-wide
-;; counter, which keeps successive evaluations distinct.
-(def ^:private reify-counter (atom 0))
+;; Reify type names are content-addressed: the same reify form gets the same
+;; name in every compilation, on every host, and different forms get different
+;; names. A process-wide counter made the name depend on what the process had
+;; compiled before (a warm REPL and a fresh process disagreed), and restarted
+;; at 1 in every process, so two files compiled separately could both define
+;; clel--reify-1 and clobber each other once loaded into one Emacs. The name
+;; carries the namespace prefix, as every definition of a package must.
 
-(def ^:dynamic *reify-counter*
-  "Per-file reify counter bound by `emit-file`, or nil."
-  nil)
+(def ^:private reify-self
+  "Stands in for a reify type's name until the name, a hash of the emitted
+   definition, is known."
+  "clel--reify-SELF")
 
-(defn- generate-reify-name [env]
-  (let [ns (:ns env)
-        n  (swap! (or *reify-counter* reify-counter) inc)]
-    (if (and ns (not= ns 'user))
-      (str (mangle-name ns) "--reify-" n)
-      (str "clel--reify-" n))))
+(defn- utf-16-units
+  "The UTF-16 code units of code point cp: what a JVM string holds for it."
+  [cp]
+  (if (< cp 0x10000)
+    [cp]
+    (let [v (- cp 0x10000)]
+      [(+ 0xD800 (quot v 0x400)) (+ 0xDC00 (mod v 0x400))])))
+
+(defn- content-hash
+  "32-bit FNV-1a hash of s's UTF-16 code units, as 8 lowercase hex digits.
+   The same on every host: exact integer arithmetic that fits in a long, and
+   a host whose strings hold code points (ClojureWasm) hashes them as the
+   JVM's UTF-16 units."
+  [s]
+  (let [h (reduce (fn [h unit]
+                    (mod (* (bit-xor h unit) 16777619) 4294967296))
+                  2166136261
+                  (mapcat #(utf-16-units (int %)) s))]
+    (apply str (map #(nth "0123456789abcdef" (mod (quot h %) 16))
+                    [268435456 16777216 1048576 65536 4096 256 16 1]))))
+
+(declare emit-reify)
 
 (defmethod emit-node :reify
-  [{:keys [protocols closed-over env]}]
-  (let [reify-name  (generate-reify-name env)
+  [{:keys [env] :as node}]
+  (let [code   (emit-reify node)
+        ns     (:ns env)
+        prefix (if (and ns (not= ns 'user)) (mangle-name ns) "clel")]
+    (str/replace code reify-self
+                 (str prefix "--reify-" (content-hash (str ns "\n" code))))))
+
+(defn- emit-reify
+  "The reify definition with reify-self standing in for its type name."
+  [{:keys [protocols closed-over]}]
+  (let [reify-name  reify-self
         ;; Emit struct definition with closed-over slots
         struct-def  (if (seq closed-over)
                       (format "(cl-defstruct (%s (:constructor %s--create)\n               (:copier nil))\n  %s)"
@@ -1457,7 +1522,7 @@
     (nil? v) "nil"
     (true? v) "t"
     (false? v) "nil"
-    (string? v) (pr-str v)
+    (string? v) (pr-string v)
     (keyword? v) (str v)
     (and (seq? v) (= 'quote (first v)))
     (str "'" (quoted-data (second v)))
@@ -1560,8 +1625,7 @@
    If the first node is :ns, appends (provide 'ns-name) at the end."
   [ast-nodes]
   (let [ns-node  (when (= :ns (:op (first ast-nodes))) (first ast-nodes))
-        code     (binding [*reify-counter* (atom 0)]
-                   (str/join "\n\n" (mapv emit ast-nodes)))
+        code     (str/join "\n\n" (mapv emit ast-nodes))
         elisp-ns (when ns-node (mangle-name (:name ns-node)))]
     (if elisp-ns
       (str code "\n\n(provide '" elisp-ns ")\n"

@@ -32,6 +32,45 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The compiler runs on ClojureWasm (cljw).** cljw starts in about 20 ms, so
+  compiling one file takes 143 ms there against 239 ms on Babashka and 662 ms
+  from the uberjar (median wall time, `examples/demo.cljel`):
+
+  ```bash
+  cljw -A:cljw -m clojure-elisp.main compile src/app.cljel -o out/app.el
+  ```
+
+  `compile-string`, `compile-file-string`, `compile-file`, `compile-project`,
+  `compile-project-from-config` and `bundle-runtime!` all work. cljw fetches
+  no Maven artifacts, so the new `:cljw` alias in `deps.edn` takes hive-dsl,
+  malli and dynaload from Git at the commits their Maven releases were cut
+  from. On the large `runtime.cljel` Babashka is still quicker (440 ms against
+  597 ms): cljw's advantage is startup.
+
+  A self-contained binary (`cljw build -A:cljw -m clojure-elisp.main`) is not
+  possible yet, for reasons upstream in cljw 1.14.7:
+  - `cljw build` cannot serialize some compile-time constants: an integer
+    outside the immediate range (`(def x Long/MAX_VALUE)`), a host enum
+    (`TimeUnit/MILLISECONDS`), a protocol named as its interface
+    (`(instance? my.ns.Proto x)`), and hash-backed map and set literals.
+    malli uses the first three; `clojure-elisp.mappings` is made of the last.
+  - With those rewritten in a scratch copy the build succeeds (10.5 MB), but
+    the binary aborts at startup: `clojure-elisp.mappings` runs
+    `validate-tables!` at load, which panics cljw's bytecode VM. The same
+    panic is reproducible without a build:
+    `cljw --compare` on `(require 'clojure-elisp.mappings)` reports
+    `index out of bounds: index 16, len 16` (the tree-walking evaluator,
+    which a plain `cljw` run uses, is fine).
+- **`clojure-elisp.main`: one command line for every host.** `compile <file>
+  [-o out]`, `compile <dir> [-o dir]`, `compile` (the project in `./clel.edn`)
+  and `version`, the same under `cljw -m`, `bb -m` and `clojure -M -m`. `run`
+  returns the exit code, so the CLI is tested without exiting.
+- **`make parity`.** Compiles every `.cljel` under `examples/` and `test/`, and
+  the runtime, on the JVM, Babashka and cljw, and diffs the three output
+  trees. All eleven files are byte-identical, including
+  `test/parity/kitchen_sink.cljel`, which exercises every reader macro,
+  destructuring, `#()`, syntax-quote, sets and large maps.
+
 - **Package library headers from ns metadata.** A namespace whose attr-map
   carries `:elisp/package` compiles to a file package.el, lisp-mnt and MELPA
   can read:
@@ -145,6 +184,84 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `clojure-core-list` bridge variables are gone. Emitted code named them as
   functions (`#'clojure-core-vector`), which a variable never satisfied, and
   package-lint rejects their names.
+
+### Changed
+
+- **`.cljel` source is read by the compiler's own reader.**
+  `clojure-elisp.reader` replaces `clojure.core/read` over a
+  `LineNumberingPushbackReader`. ClojureWasm has neither; Babashka has both,
+  but its syntax-quote and `#()` expand to different forms than the JVM's, so
+  a `defmacro` compiled to different Elisp there. `clojure.tools.reader` does
+  not load on cljw (its number regex has eight capture groups; cljw allows
+  seven), and `edamame` depends on it. The new reader follows `LispReader`:
+  lists carry `{:line :column}`, syntax-quote expands to the same
+  `clojure.core/seq`/`concat` forms, `#()` to `fn*`. A new test checks that it
+  reads the examples, the runtime and a set of snippets to the same forms and
+  locations as `LispReader`. `#?` is rejected as before; `#=` is now rejected
+  instead of evaluated.
+- **Output is a pure function of the source.** Generated names (`#()`
+  parameters, `foo#`, destructuring temporaries) are numbered per compilation
+  from 1 (`p1__1`, `vec__7`) instead of from gensym's process-wide counter, so
+  a warm REPL, a fresh process and every host agree. A `reify` type is named
+  by a hash of its definition (`clel--reify-3fa2b1c0`) instead of a
+  process-wide counter; the counter restarted at 1 in every process, so two
+  files compiled separately could both define `clel--reify-1` and clobber each
+  other in one Emacs.
+- **Keyword options, sets and large maps are emitted in source order.**
+  `defcustom`, `defgroup` and `define-minor-mode` options came out in hash
+  order (`:group` before `:type`), and hash order differs per host. Only the
+  option order of `examples/hive-mcp-eca`, `hive-mcp-log` and `olympus-ui`
+  changes. `reify` struct slots are sorted by name for the same reason.
+- `compile-project` compiles independent namespaces in name order.
+- `clojure-elisp.core` no longer loads `malli.instrument`, and with it
+  test.check, when it loads; `instrument!` and `unstrument!` resolve it when
+  called.
+- The filesystem port runs on cljw: resources are found on the classpath
+  directories when `io/resource` finds nothing, and `file-mtime` may return
+  nil when the host cannot tell, which the project build treats as changed.
+- `;; Unknown node:` comments no longer print the whole analysis environment.
+- **`cond->`, `cond->>`, `some->`, `some->>`, `as->`, `doto`, `if-not`,
+  `when-some`, `if-some`, `when-first` and `condp` expand in the compiler**,
+  following clojure.core's definitions, instead of through the host's
+  `macroexpand`. Their temporaries were named from the host's gensym counter
+  (`G__8237` in one process, `G__19400` in the next), and ClojureWasm expands
+  several of them differently (its `if-not` swaps the branches). A
+  syntax-quoted `clojure.core/when-let`, `clojure.core/cond` and the like in a
+  macro's expansion now goes to the compiler's own analyzer rather than the
+  host's `macroexpand`, for the same reason.
+- **Syntax-quote resolves names from a fixed table**
+  (`clojure-elisp.jvm-names`): the clojure.core vars and java.lang classes of
+  a fresh JVM `user` namespace. It used the host's ns-map, so `` `(binding
+  ...) `` and `` `(catch Exception ...) `` read as `user/binding` and
+  `user/Exception` on ClojureWasm, and `` `(pp x) `` as `clojure.pprint/pp`
+  on Babashka.
+- Quoted sets and maps (`'#{...}`) print in source order, and strings print
+  as the JVM prints them (`\f`, `\b` escaped) on every host.
+
+### Fixed
+
+- Elisp syntax preprocessing no longer indexes the source string char by
+  char. On ClojureWasm, where string indexing is O(n), that made compiling the
+  64 KB runtime quadratic; the scanners now walk a char vector.
+- String and character literals are decoded by the reader, with
+  `LispReader`'s escapes and error messages. ClojureWasm rejected octal
+  escapes (`"\101"`, `"\0"`) and reported every bad escape as
+  `EDN error (StringError)`.
+- Two syntax-quotes in one file no longer share an auto-gensym: `x#` in
+  `` `(a x#) `` and in `` `(b x#) `` are now different names, as with
+  `LispReader`. The expansion was lazy, so names were drawn when the analyzer
+  first walked the form rather than while the syntax-quote was read.
+
+### Known issues
+
+- On ClojureWasm 1.14.7, a file whose `defmacro` the compiler evaluates can
+  crash the process (segmentation fault or "General protection exception").
+  `eval` of any `fn` form corrupts cljw's heap: `(eval '(fn [x] x))` followed
+  by `(dotimes [_ 20000] (vec (range 50)))` crashes a bare `cljw`. Whether a
+  given file survives depends on how much it allocates afterwards;
+  `kitchen_sink.cljel` does, a file with six small macros does not. An `fn`
+  with keyword-argument destructuring (`[a & {:keys [b]}]`) crashes `eval`
+  immediately. Files without `defmacro` are unaffected.
 
 ## [0.7.2] - 2026-09-05
 

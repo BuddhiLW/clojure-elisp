@@ -8,8 +8,14 @@
             [clojure-elisp.analyzer :as ana]
             [clojure-elisp.emitter :as emit]
             [clojure-elisp.errors :as errors]
+            [clojure-elisp.names :as names]
+            [clojure-elisp.reader :as reader]
             [hive-dsl.result :as r]
             [malli.core :as m]))
+
+;; Every public entry point below is one compilation: it runs inside
+;; names/with-fresh-names, so generated names are numbered from 1 and the
+;; output is a pure function of the input on every host.
 
 ;; ============================================================================
 ;; Single-Form Compilation
@@ -18,28 +24,32 @@
 (defn emit
   "Compile a Clojure form to an Elisp string."
   [form]
-  (-> form ana/analyze emit/emit))
+  (names/with-fresh-names
+    (-> form ana/analyze emit/emit)))
 
 (defn emit-forms
   "Compile multiple forms to Elisp, joined by newlines."
   [forms]
-  (->> forms (map emit) (str/join "\n\n")))
+  (names/with-fresh-names
+    (->> forms (map emit) (str/join "\n\n"))))
 
 (defn emit-result
   "Compile a Clojure form to Elisp, returning a Result.
    On success: {:ok \"elisp-string\"}
    On error:   {:error :compile/analysis-error :message \"...\" ...}"
   [form]
-  (r/try-effect* :compile/analysis-error
-                 (-> form ana/analyze emit/emit)))
+  (names/with-fresh-names
+    (r/try-effect* :compile/analysis-error
+                   (-> form ana/analyze emit/emit))))
 
 (defn emit-forms-result
   "Compile multiple forms to Elisp, returning a Result."
   [forms]
-  (r/try-effect* :compile/analysis-error
-                 (->> forms
-                      (map (fn [f] (-> f ana/analyze emit/emit)))
-                      (str/join "\n\n"))))
+  (names/with-fresh-names
+    (r/try-effect* :compile/analysis-error
+                   (->> forms
+                        (map (fn [f] (-> f ana/analyze emit/emit)))
+                        (str/join "\n\n")))))
 
 ;; ============================================================================
 ;; Elisp syntax preprocessing
@@ -85,61 +95,69 @@
              s
              elisp-number-symbols-reverse))
 
+;; The scanners below index source text as a char vector (cs), never as a
+;; string: string indexing is O(n) on ClojureWasm, which made a char-by-char
+;; pass over the 64 KB runtime quadratic there.
+
+(defn- char-at
+  "The char at position i of cs, or nil past either end."
+  [cs i]
+  (when (< -1 i (count cs))
+    (nth cs i)))
+
+(defn- chars->str
+  "The text of cs between positions start (inclusive) and end (exclusive)."
+  [cs start end]
+  (apply str (subvec cs start end)))
+
 (defn- count-preceding-backslashes
-  "Count consecutive backslashes preceding position i in string s."
-  [^String s ^long i]
+  "Count consecutive backslashes preceding position i in cs."
+  [cs i]
   (loop [j (dec i) n 0]
-    (if (and (>= j 0) (= (.charAt s j) \\))
+    (if (= (char-at cs j) \\)
       (recur (dec j) (inc n))
       n)))
 
 (defn- token-start?
-  "True if position i in s is at a token boundary."
-  [^String s ^long i]
+  "True if position i in cs is at a token boundary."
+  [cs i]
   (or (zero? i)
-      (let [prev (.charAt s (dec i))]
-        (or (Character/isWhitespace prev)
+      (let [prev (char-at cs (dec i))]
+        (or (reader/whitespace-char? prev)
             (= prev \() (= prev \[) (= prev \{)
             (= prev \,) (= prev \')))))
 
 (defn- scan-elisp-source
   "Walk source text with string/comment awareness, calling handlers.
-   Handlers are {:on-code f, :on-string f}; each f takes (s, i) and returns
-   {:emit \"text\" :skip N} to replace chars, or nil to pass through."
-  [^String s {:keys [on-code on-string]}]
-  (let [sb  (StringBuilder.)
-        len (count s)]
-    (loop [i 0
-           in-string? false]
+   Handlers are {:on-code f, :on-string f}; each f takes (cs, i), cs being the
+   source as a char vector, and returns {:emit \"text\" :skip N} to replace
+   chars, or nil to pass through."
+  [s {:keys [on-code on-string]}]
+  (let [cs  (vec s)
+        len (count cs)]
+    (loop [i          0
+           in-string? false
+           out        (transient [])]
       (if (>= i len)
-        (.toString sb)
-        (let [ch (.charAt s i)]
+        (apply str (persistent! out))
+        (let [ch (nth cs i)]
           (cond
             (= ch \")
-            (do (.append sb ch)
-                (recur (inc i)
-                       (if (even? (count-preceding-backslashes s i))
-                         (not in-string?) in-string?)))
+            (recur (inc i)
+                   (if (even? (count-preceding-backslashes cs i))
+                     (not in-string?) in-string?)
+                   (conj! out ch))
 
             (and (not in-string?) (= ch \;))
-            (let [eol (let [nl (.indexOf s (int \newline) i)]
-                        (if (neg? nl) len nl))]
-              (.append sb (.substring s i eol))
-              (recur eol in-string?))
-
-            in-string?
-            (if-let [{:keys [emit skip]} (when on-string (on-string s i))]
-              (do (.append sb ^String emit)
-                  (recur (+ i (long skip)) in-string?))
-              (do (.append sb ch)
-                  (recur (inc i) in-string?)))
+            (let [eol (loop [j i]
+                        (if (or (>= j len) (= \newline (nth cs j))) j (recur (inc j))))]
+              (recur eol in-string? (conj! out (chars->str cs i eol))))
 
             :else
-            (if-let [{:keys [emit skip]} (when on-code (on-code s i))]
-              (do (.append sb ^String emit)
-                  (recur (+ i (long skip)) in-string?))
-              (do (.append sb ch)
-                  (recur (inc i) in-string?)))))))))
+            (let [handler (if in-string? on-string on-code)]
+              (if-let [{:keys [emit skip]} (when handler (handler cs i))]
+                (recur (+ i skip) in-string? (conj! out emit))
+                (recur (inc i) in-string? (conj! out ch))))))))))
 
 (def ^:private elisp-named-char-table
   "Named Elisp character escapes to their integer codepoints."
@@ -157,45 +175,67 @@
   (<= (int \0) (int c) (int \7)))
 
 (defn- collect-digits
-  "Collect up to max-n consecutive digits from s at pos passing pred?."
-  [^String s ^long pos ^long max-n pred?]
-  (let [len (count s)
+  "Collect up to max-n consecutive digits from cs at pos passing pred?."
+  [cs pos max-n pred?]
+  (let [len (count cs)
         end (loop [j pos]
               (if (and (< j (min len (+ pos max-n)))
-                       (pred? (.charAt s j)))
+                       (pred? (nth cs j)))
                 (recur (inc j))
                 j))]
-    (.substring s pos end)))
+    (chars->str cs pos end)))
+
+(defn- parse-digits
+  "Parse a string of hex or octal digits in the given radix."
+  [digits radix]
+  (reduce (fn [acc c]
+            (let [d (cond
+                      (<= (int \0) (int c) (int \9)) (- (int c) (int \0))
+                      (<= (int \a) (int c) (int \f)) (+ 10 (- (int c) (int \a)))
+                      :else                          (+ 10 (- (int c) (int \A))))]
+              (+ (* acc radix) d)))
+          0
+          digits))
+
+(defn- unicode-escape
+  "Clojure \\uXXXX escape for a code point below 0x10000, lowercase hex."
+  [code]
+  (let [hex (reduce (fn [acc shift]
+                      (str acc (nth "0123456789abcdef"
+                                    (mod (quot code shift) 16))))
+                    ""
+                    [4096 256 16 1])]
+    (str "\\u" hex)))
 
 (defn- translate-char-literal
-  "Recognize an Elisp char literal at position i in s.
+  "Recognize an Elisp char literal at position i in cs.
    Returns {:emit \"<int>\" :skip N} or nil. Handles ?\\s ?\\033 ?\\x1b ?a."
-  [^String s ^long i]
-  (let [len (count s)]
-    (when (and (= (.charAt s i) \?)
-               (token-start? s i)
+  [cs i]
+  (let [len (count cs)]
+    (when (and (= (nth cs i) \?)
+               (token-start? cs i)
                (< (inc i) len))
-      (let [next-ch (.charAt s (inc i))]
+      (let [next-ch (nth cs (inc i))]
         (cond
           (and (= next-ch \\) (< (+ i 2) len))
-          (let [esc-ch (.charAt s (+ i 2))]
+          (let [esc-ch (nth cs (+ i 2))]
             (cond
               (and (= esc-ch \x) (< (+ i 3) len))
-              (let [hex-str (collect-digits s (+ i 3) 2 hex-digit?)]
+              (let [hex-str (collect-digits cs (+ i 3) 2 hex-digit?)]
                 (when (pos? (count hex-str))
-                  {:emit (str (Integer/parseInt hex-str 16))
+                  {:emit (str (parse-digits hex-str 16))
                    :skip (+ 3 (count hex-str))}))
 
               (octal-digit? esc-ch)
-              (let [oct-str (collect-digits s (+ i 2) 3 octal-digit?)]
-                {:emit (str (Integer/parseInt oct-str 8))
+              (let [oct-str (collect-digits cs (+ i 2) 3 octal-digit?)]
+                {:emit (str (parse-digits oct-str 8))
                  :skip (+ 2 (count oct-str))})
 
               :else
               (when-let [code (get elisp-named-char-table (str \\ esc-ch))]
                 {:emit (str code) :skip 3})))
 
-          (and (not (Character/isWhitespace next-ch))
+          (and (not (reader/whitespace-char? next-ch))
                (not= next-ch \\))
           {:emit (str (int next-ch)) :skip 2}
 
@@ -209,10 +249,10 @@
 (defn- translate-string-escape
   "Recognize an Elisp-specific string escape at position i.
    Returns {:emit \"\\uXXXX\" :skip N} or nil. Handles \\e \\a \\0NNN."
-  [^String s ^long i]
-  (let [len (count s)]
-    (when (and (= (.charAt s i) \\) (< (inc i) len))
-      (let [next-ch (.charAt s (inc i))]
+  [cs i]
+  (let [len (count cs)]
+    (when (and (= (nth cs i) \\) (< (inc i) len))
+      (let [next-ch (nth cs (inc i))]
         (cond
           (= next-ch \e)
           {:emit "\\u001b" :skip 2}
@@ -222,10 +262,9 @@
 
           (and (<= (int \0) (int next-ch) (int \3))
                (< (+ i 2) len)
-               (octal-digit? (.charAt s (+ i 2))))
-          (let [digits (collect-digits s (inc i) 3 octal-digit?)
-                code   (Integer/parseInt digits 8)]
-            {:emit (format "\\u%04x" code)
+               (octal-digit? (nth cs (+ i 2))))
+          (let [digits (collect-digits cs (inc i) 3 octal-digit?)]
+            {:emit (unicode-escape (parse-digits digits 8))
              :skip (+ 1 (count digits))})
 
           (= next-ch \\)
@@ -257,44 +296,35 @@
 ;; Reader
 ;; ============================================================================
 
-(defn- number-format-cause?
-  "True when e (or its cause chain) originates from a NumberFormatException."
-  [^Throwable e]
-  (loop [^Throwable ex e]
-    (cond
-      (nil? ex) false
-      (instance? NumberFormatException ex) true
-      :else (recur (.getCause ex)))))
+(defn- reader-failure
+  "Wrap a clojure-elisp.reader error in the compiler's reader-error message."
+  [e]
+  (let [{:keys [line type]} (ex-data e)]
+    (if (= ::reader/invalid-number type)
+      (ex-info (str "Unhandled Elisp number symbol: " (ex-message e)
+                    " (line " line ")"
+                    " — add to elisp-number-symbols map")
+               {:line line}
+               e)
+      (ex-info (str "Reader error at line " line
+                    ": " (ex-message e)
+                    "\nHint: if you see \"Unsupported escape character\","
+                    " backslash-newline (\\<newline>) in strings is Elisp-only;"
+                    " use a plain string or \\n instead.")
+               {:line line}
+               e))))
 
 (defn read-all-forms
   "Read all forms from a string, preserving source line/column metadata.
-   Source should be preprocessed with preprocess-elisp-syntax first."
+   Source should be preprocessed with preprocess-elisp-syntax first.
+
+   Uses clojure-elisp.reader, not the host reader, so every host (JVM,
+   Babashka, ClojureWasm) reads the same forms with the same metadata."
   [s]
-  (let [rdr (clojure.lang.LineNumberingPushbackReader.
-             (java.io.StringReader. s))]
-    (loop [forms []]
-      (let [form (try
-                   (read rdr false ::eof)
-                   (catch Exception e
-                     (if (number-format-cause? e)
-                       (throw (ex-info (str "Unhandled Elisp number symbol: "
-                                            (if-let [cause (.getCause e)]
-                                              (.getMessage cause)
-                                              (.getMessage e))
-                                            " (line " (.getLineNumber rdr) ")"
-                                            " — add to elisp-number-symbols map")
-                                       {:line (.getLineNumber rdr)}
-                                       e))
-                       (throw (ex-info (str "Reader error at line " (.getLineNumber rdr)
-                                            ": " (.getMessage e)
-                                            "\nHint: if you see \"Unsupported escape character\","
-                                            " backslash-newline (\\<newline>) in strings is Elisp-only;"
-                                            " use a plain string or \\n instead.")
-                                       {:line (.getLineNumber rdr)}
-                                       e)))))]
-        (if (= ::eof form)
-          forms
-          (recur (conj forms form)))))))
+  (try
+    (reader/read-forms s)
+    (catch Exception e
+      (throw (reader-failure e)))))
 
 ;; ============================================================================
 ;; String Compilation
@@ -319,20 +349,22 @@
    own :elisp/package."
   ([s] (compile-file-string s nil))
   ([s {:keys [package]}]
-   (let [preprocessed (preprocess-elisp-syntax s)
-         forms        (read-all-forms preprocessed)
-         ast-nodes    (with-package (ana/analyze-file-forms forms) package)
-         raw-elisp    (emit/emit-file ast-nodes)]
-     (postprocess-elisp-syntax raw-elisp))))
+   (names/with-fresh-names
+     (let [preprocessed (preprocess-elisp-syntax s)
+           forms        (read-all-forms preprocessed)
+           ast-nodes    (with-package (ana/analyze-file-forms forms) package)
+           raw-elisp    (emit/emit-file ast-nodes)]
+       (postprocess-elisp-syntax raw-elisp)))))
 
 (defn compile-string
   "Compile a string of Clojure code to Elisp.
    For namespace-aware compilation, use compile-file-string instead."
   [s]
-  (let [preprocessed (preprocess-elisp-syntax s)
-        forms        (read-string (str "[" preprocessed "]"))
-        raw-elisp    (emit-forms forms)]
-    (postprocess-elisp-syntax raw-elisp)))
+  (names/with-fresh-names
+    (let [preprocessed (preprocess-elisp-syntax s)
+          forms        (read-all-forms preprocessed)
+          raw-elisp    (emit-forms forms)]
+      (postprocess-elisp-syntax raw-elisp))))
 
 (defn compile-string-in-ns
   "Compile s in the context of context-source: the buffer's (ns ...) form at
@@ -343,31 +375,33 @@
    context-source. Definitions carry the namespace prefix compile-file-string
    gives them."
   [context-source s]
-  (let [context-forms (if (str/blank? context-source)
-                        []
-                        (read-all-forms (preprocess-elisp-syntax context-source)))
-        forms         (read-all-forms (preprocess-elisp-syntax s))
-        ast-nodes     (ana/analyze-file-forms (into (vec context-forms) forms))
-        body          (drop (count context-forms) ast-nodes)]
-    (postprocess-elisp-syntax (str/join "\n\n" (map emit/emit body)))))
+  (names/with-fresh-names
+    (let [context-forms (if (str/blank? context-source)
+                          []
+                          (read-all-forms (preprocess-elisp-syntax context-source)))
+          forms         (read-all-forms (preprocess-elisp-syntax s))
+          ast-nodes     (ana/analyze-file-forms (into (vec context-forms) forms))
+          body          (drop (count context-forms) ast-nodes)]
+      (postprocess-elisp-syntax (str/join "\n\n" (map emit/emit body))))))
 
 (defn compile-string-in-ns-result
   "Compile s against context-source, returning a Result.
    Staged so the reader boundary tags failures :compile/read-error."
   [context-source s]
-  (r/let-ok [context-forms (r/try-effect*
-                            :compile/read-error
-                            (if (str/blank? context-source)
-                              []
-                              (read-all-forms (preprocess-elisp-syntax context-source))))
-             forms         (r/try-effect*
-                            :compile/read-error
-                            (read-all-forms (preprocess-elisp-syntax s)))]
-    (r/try-effect* :compile/analysis-error
-                   (-> (ana/analyze-file-forms (into (vec context-forms) forms))
-                       (->> (drop (count context-forms)) (map emit/emit)
-                            (str/join "\n\n"))
-                       postprocess-elisp-syntax))))
+  (names/with-fresh-names
+    (r/let-ok [context-forms (r/try-effect*
+                              :compile/read-error
+                              (if (str/blank? context-source)
+                                []
+                                (read-all-forms (preprocess-elisp-syntax context-source))))
+               forms         (r/try-effect*
+                              :compile/read-error
+                              (read-all-forms (preprocess-elisp-syntax s)))]
+      (r/try-effect* :compile/analysis-error
+                     (-> (ana/analyze-file-forms (into (vec context-forms) forms))
+                         (->> (drop (count context-forms)) (map emit/emit)
+                              (str/join "\n\n"))
+                         postprocess-elisp-syntax)))))
 
 (defn leading-ns-source
   "Return the source text of the leading (ns ...) form in source, or nil.
@@ -375,9 +409,7 @@
   [source]
   (when-not (str/blank? source)
     (try
-      (let [rdr   (clojure.lang.LineNumberingPushbackReader.
-                   (java.io.StringReader. (preprocess-elisp-syntax source)))
-            form  (read rdr false ::eof)]
+      (let [form (reader/read-first (preprocess-elisp-syntax source))]
         (when (and (seq? form) (= 'ns (first form)))
           (pr-str form)))
       (catch Exception _ nil))))
@@ -388,11 +420,12 @@
    mis-attributing them to :compile/analysis-error): preprocessing + reading are
    one stage, analysis + emit + postprocessing the next."
   [s]
-  (r/let-ok [forms (r/try-effect* :compile/read-error
-                                  (read-all-forms (preprocess-elisp-syntax s)))]
-    (r/try-effect* :compile/analysis-error
-                   (postprocess-elisp-syntax
-                    (emit/emit-file (ana/analyze-file-forms forms))))))
+  (names/with-fresh-names
+    (r/let-ok [forms (r/try-effect* :compile/read-error
+                                    (read-all-forms (preprocess-elisp-syntax s)))]
+      (r/try-effect* :compile/analysis-error
+                     (postprocess-elisp-syntax
+                      (emit/emit-file (ana/analyze-file-forms forms)))))))
 
 ;; ============================================================================
 ;; Namespace & Dependency Graph
@@ -435,15 +468,19 @@
 (defn topological-sort
   "Topologically sort a dependency graph using Kahn's algorithm.
    graph is {node -> #{dependency-nodes}}. Returns nodes in dependency
-   order (dependencies first). Throws on circular dependency."
+   order (dependencies first). Throws on circular dependency.
+
+   Ties are broken by name, so the order does not depend on the host's hash
+   order: the JVM, Babashka and ClojureWasm compile a project in the same
+   sequence."
   [graph]
-  (let [all-nodes (set (keys graph))
+  (let [by-name   (fn [nodes] (sort-by str nodes))
+        all-nodes (by-name (keys graph))
         in-degree (reduce-kv (fn [m node deps]
                                (assoc m node (count deps)))
                              {}
                              graph)]
-    (loop [queue            (into clojure.lang.PersistentQueue/EMPTY
-                                  (filter #(zero? (get in-degree %)) all-nodes))
+    (loop [queue            (vec (filter #(zero? (get in-degree %)) all-nodes))
            result           []
            remaining-degree in-degree]
       (if (empty? queue)
@@ -451,17 +488,16 @@
           result
           (throw (ex-info "Circular dependency detected"
                           {:unresolved (remove (set result) all-nodes)})))
-        (let [node        (peek queue)
-              queue       (pop queue)
-              dependents  (for [[n deps] graph
-                                :when    (contains? deps node)]
-                            n)
+        (let [node        (first queue)
+              dependents  (by-name (for [[n deps] graph
+                                         :when    (contains? deps node)]
+                                     n))
               new-degree  (reduce (fn [d dep]
                                     (update d dep dec))
                                   remaining-degree
                                   dependents)
               newly-ready (filter #(zero? (get new-degree %)) dependents)]
-          (recur (into queue newly-ready)
+          (recur (into (subvec queue 1) newly-ready)
                  (conj result node)
                  new-degree))))))
 

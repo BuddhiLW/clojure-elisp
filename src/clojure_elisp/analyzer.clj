@@ -4,10 +4,12 @@
    Transforms Clojure forms into an AST suitable for Elisp emission.
    We use a simplified approach rather than tools.analyzer for now,
    keeping it pragmatic and easy to understand."
-  (:require [clojure-elisp.macros :as macros]
+  (:require [clojure-elisp.core-macros :as core-macros]
+            [clojure-elisp.macros :as macros]
             [clojure-elisp.destructure :as destructure]
             [clojure-elisp.gensym :as gs]
             [clojure-elisp.mappings :as mappings]
+            [clojure-elisp.reader :as reader]
             [clojure-elisp.schema :as schema]
             [malli.core :as m]))
 
@@ -76,6 +78,11 @@
                 clauses)))
 
 (register-builtin-macro! 'elisp-cond elisp-cond-expand)
+
+;; clojure.core macros that name temporaries: expanded portably here, never by
+;; the host (see clojure-elisp.core-macros).
+(doseq [[sym expander] core-macros/expanders]
+  (register-builtin-macro! sym expander))
 
 ;; ============================================================================
 ;; Source Location
@@ -399,8 +406,8 @@
    result-fn with pred's answer; a trailing lone form is the default, and
    without one no match signals, as Clojure's IllegalArgumentException."
   [pred expr clauses]
-  (let [v     (gensym "condp__v")
-        p     (if (symbol? pred) pred (gensym "condp__pred"))
+  (let [v     (gs/fresh "condp__v")
+        p     (if (symbol? pred) pred (gs/fresh "condp__pred"))
         build (fn build [cls]
                 (cond
                   (empty? cls)
@@ -410,7 +417,7 @@
                   (first cls)
 
                   (= :>> (second cls))
-                  (let [r (gensym "condp__r")]
+                  (let [r (gs/fresh "condp__r")]
                     (list 'let [r (list p (first cls) v)]
                           (list 'if r (list (nth cls 2) r) (build (drop 3 cls)))))
 
@@ -543,7 +550,7 @@
   [[_ bindings & body]]
   (let [pairs    (partition 2 bindings)
         syms     (mapv (fn [[pat _]]
-                         (if (destructure/destructure-pattern? pat) (gensym "loop__") pat))
+                         (if (destructure/destructure-pattern? pat) (gs/fresh "loop__") pat))
                        pairs)
         inits    (mapv (comp analyze second) pairs)
         patterns (keep (fn [[[pat _] sym]]
@@ -908,7 +915,9 @@
         protocols     (analyze-reify-protocols body closed-locals)]
     (ast-node :reify
               :protocols protocols
-              :closed-over (vec closed-locals))))
+              ;; Sorted: the locals set iterates in host hash order, and the
+              ;; struct slots are emitted in this order.
+              :closed-over (vec (sort-by str closed-locals)))))
 
 ;; ============================================================================
 ;; Comment, Binding, Assert (clel-050)
@@ -922,10 +931,13 @@
 (defn analyze-binding
   "Analyze (binding [var val ...] body...) forms.
    In Elisp, dynamically-scoped variables are rebound via let,
-   so this maps directly to a let form with dynamic binding semantics."
+   so this maps directly to a let form with dynamic binding semantics.
+   A qualified var is resolved as a reference to it is, so an unmapped
+   clojure.core var (syntax-quote writes clojure.core/*out*) is refused."
   [[_ bindings & body]]
   (let [pairs (partition 2 bindings)
         analyzed-bindings (mapv (fn [[sym val]]
+                                  (when (qualified-symbol? sym) (analyze sym))
                                   {:name sym :init (analyze val)})
                                 pairs)
         analyzed-body (mapv analyze body)]
@@ -1032,7 +1044,7 @@
           ;; Destructuring binding: [[k v] m] binds each element to a fresh
           ;; symbol, then destructures it like let
           (destructure/destructure-pattern? item)
-          (let [elem (gensym "elem__")]
+          (let [elem (gs/fresh "elem__")]
             (recur (drop 2 remaining)
                    (conj clauses
                          {:type :binding :sym elem :coll (second remaining)}
@@ -1354,6 +1366,14 @@
             :feature (analyze feature)
             :body (mapv analyze body)))
 
+(defn- source-ordered-options
+  "Keyword options kvs (k1 v1 k2 v2 ...) as a map that iterates in source
+   order at any size. The emitter writes options in iteration order, and
+   hash-map order differs per host, so source order is what keeps the output
+   byte-identical on the JVM, Babashka and ClojureWasm."
+  [kvs]
+  (apply array-map kvs))
+
 (defn analyze-define-minor-mode
   "Analyze (define-minor-mode name docstring? options... body...) forms.
    Options are keyword-value pairs like :init-value, :lighter, :global, :group, :keymap.
@@ -1366,13 +1386,13 @@
         ;; Parse keyword options until we hit a non-keyword or run out
         parse-options          (fn [forms]
                                  (loop [remaining forms
-                                        options   {}]
+                                        kvs       []]
                                    (if (and (seq remaining)
                                             (keyword? (first remaining))
                                             (seq (rest remaining)))
                                      (recur (drop 2 remaining)
-                                            (assoc options (first remaining) (analyze (second remaining))))
-                                     [options remaining])))
+                                            (conj kvs (first remaining) (analyze (second remaining))))
+                                     [(source-ordered-options kvs) remaining])))
         [options body-forms]   (parse-options rest-forms)]
     (cond-> (ast-node :define-minor-mode
                       :name mode-name
@@ -1396,7 +1416,7 @@
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
         ;; Parse keyword options into a map
-        options                (apply hash-map rest-forms)]
+        options                (source-ordered-options rest-forms)]
     (ast-node :defgroup
               :name group-name
               :value value
@@ -1419,7 +1439,7 @@
                                  [(first rest-forms) (rest rest-forms)]
                                  [nil rest-forms])
         ;; Parse keyword options into a map
-        options                (apply hash-map rest-forms)]
+        options                (source-ordered-options rest-forms)]
     (cond-> (ast-node :defcustom
                       :name var-name
                       :default (if (and (seq? default) (= 'var (first default)))
@@ -1576,17 +1596,19 @@
                          v)))
 
 (defn analyze-map
-  "Analyze map literals."
+  "Analyze map literals, in source order where the reader recorded it (hash
+   order differs per host, and the emitter writes entries in this order)."
   [m]
-  (ast-node :map
-            :keys (mapv analyze (keys m))
-            :vals (mapv analyze (vals m))))
+  (let [ks (reader/ordered-keys m)]
+    (ast-node :map
+              :keys (mapv analyze ks)
+              :vals (mapv #(analyze (get m %)) ks))))
 
 (defn analyze-set
-  "Analyze set literals."
+  "Analyze set literals, in source order where the reader recorded it."
   [s]
   (ast-node :set
-            :items (mapv analyze s)))
+            :items (mapv analyze (reader/ordered-members s))))
 
 ;; ============================================================================
 ;; Interop Detection
@@ -1948,6 +1970,48 @@
 
 (declare analyze-form)
 
+(defn- compiler-owned?
+  "True when the compiler, not the host, expands op: it has an analyzer for
+   it or a built-in (portable) macro."
+  [op]
+  (or (contains? special-forms op)
+      (contains? @macros/builtin-macros op)))
+
+(defn- unqualify-core-head
+  "(clojure.core/when ...) -> (when ...) when the compiler owns when. A
+   syntax-quote qualifies every core name, so macro expansions arrive
+   qualified; left qualified they went to the host's macroexpand, whose
+   expansions differ per host (ClojureWasm's cond, when-let and fn are not
+   the JVM's). The compiler's own analyzer implements the same core form."
+  [form]
+  (let [op (first form)]
+    (if (and (symbol? op)
+             (= "clojure.core" (namespace op))
+             (compiler-owned? (symbol (name op))))
+      (with-meta (cons (symbol (name op)) (rest form)) (meta form))
+      form)))
+
+(defn- host-expandable?
+  [form]
+  (and (seq? form)
+       (symbol? (first form))
+       (not (compiler-owned? (first form)))
+       (not (interop-symbol? (first form)))))
+
+(defn- host-macroexpand
+  "Expand form with the host's macroexpand-1 until its head is something the
+   compiler owns or no macro at all. One step at a time, so that
+   (-> x (cond-> ...)) stops at cond-> instead of the host expanding it too."
+  [form]
+  (loop [form form]
+    (let [form (if (seq? form) (unqualify-core-head form) form)]
+      (if (host-expandable? form)
+        (let [expanded (macroexpand-1 form)]
+          (if (= expanded form)
+            form
+            (recur expanded)))
+        form))))
+
 (defn analyze
   "Analyze a Clojure form into an AST node.
    Captures source location from form metadata and propagates it
@@ -1971,17 +2035,14 @@
   (let [loc (extract-source-location form)
         ctx (or loc *source-context*)]
     (binding [*source-context* ctx]
-      ;; Macroexpand first to handle ->, ->>, doto, cond->, etc.
+      ;; Macroexpand first to handle ->, ->>, etc. Forms the compiler owns
+      ;; (special forms, built-in macros such as cond-> and doto) are never
+      ;; handed to the host, whose expansions and gensyms are not portable.
       ;; Skip macroexpand for interop forms (.method, .-field, elisp/fn)
       ;; since Clojure would try to handle them as Java interop. The
       ;; expansion's own gensyms (cond->'s G__N, condp's pred__N) are
       ;; renumbered like every other generated name.
-      (let [form (if (and (seq? form)
-                          (symbol? (first form))
-                          (not (contains? special-forms (first form)))
-                          (not (interop-symbol? (first form))))
-                   (gs/renumber-expansion form (macroexpand form))
-                   form)]
+      (let [form (gs/renumber-expansion form (host-macroexpand form))]
         (cond
           ;; Nil
           (nil? form)

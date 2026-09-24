@@ -131,5 +131,5 @@
       (is (= 'clojure.core/frobnicate (:symbol (ex-data e))))
       (is (= 2 (:line (ex-data e))) "the error points at the call")
       (testing "including one that a macro expanded on the JVM writes"
-        (is (= 'clojure.core/push-thread-bindings
+        (is (= 'clojure.core/*out*
                (:symbol (ex-data (refusal "(defn p [x] (with-out-str x))")))))))))

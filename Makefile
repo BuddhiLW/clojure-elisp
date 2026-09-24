@@ -9,7 +9,7 @@ INSTALL_JAR := $(INSTALL_DIR)/clel.jar
 BIN_DIR     := $(HOME)/.local/bin/blw
 BIN_LINK    := $(BIN_DIR)/clel
 
-.PHONY: build install uninstall runtime test test-clj test-elisp clean
+.PHONY: build install uninstall runtime test test-clj test-elisp parity clean
 
 RUNTIME_EL := resources/clojure-elisp/clel.el
 
@@ -102,3 +102,18 @@ test-elisp: $(GUARD_FIXTURE) $(PACKAGE_FIXTURE) $(MELPA_FIXTURE) $(SEMANTICS_FIX
 
 clean:
 	rm -rf target
+
+# Host parity: the compiler must emit the same bytes on the JVM, Babashka
+# and ClojureWasm. Every .cljel under examples/ and test/, plus the runtime,
+# is compiled on each host (test/parity/compile_corpus.clj) and the three
+# output trees are diffed. Needs clojure, bb and cljw on PATH.
+PARITY_OUT := target/parity
+
+parity:
+	rm -rf $(PARITY_OUT)
+	clojure -M test/parity/compile_corpus.clj $(PARITY_OUT)/jvm
+	bb test/parity/compile_corpus.clj $(PARITY_OUT)/bb
+	cljw -A:cljw -M test/parity/compile_corpus.clj $(PARITY_OUT)/cljw
+	diff -r $(PARITY_OUT)/jvm $(PARITY_OUT)/bb
+	diff -r $(PARITY_OUT)/jvm $(PARITY_OUT)/cljw
+	@echo "parity: the JVM, Babashka and ClojureWasm emit identical Elisp"
