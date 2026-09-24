@@ -264,7 +264,7 @@ Clojure core functions mapped to Elisp equivalents:
 
 ### Compiler
 
-- 3-stage pipeline: Reader (Clojure's) → Analyzer (AST + env) → Emitter (codegen)
+- 3-stage pipeline: Reader (portable) → Analyzer (AST + env) → Emitter (codegen)
 - Source location tracking with optional `;;; L<line>:C<col>` comments
 - Incremental compilation with mtime tracking (`.clel-cache/manifest.edn`)
 - Cross-file symbol table with compile-time warnings for missing symbols
@@ -276,18 +276,20 @@ Clojure core functions mapped to Elisp equivalents:
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────────┐
 │   Reader    │───▶│   Analyzer   │───▶│   Emitter   │───▶│  Elisp Code  │
-│ (Clojure's) │    │ (AST + env)  │    │ (codegen)   │    │   (.el)      │
+│ (portable)  │    │ (AST + env)  │    │ (codegen)   │    │   (.el)      │
 └─────────────┘    └──────────────┘    └─────────────┘    └──────────────┘
 ```
 
 | Component | File | Role |
 |---|---|---|
+| Reader | `src/clojure_elisp/reader.clj` | Source text → forms with `:line`/`:column`; the same forms on every host |
 | Analyzer | `src/clojure_elisp/analyzer.clj` | Parse forms → AST nodes, macro expansion, destructuring, env tracking |
 | Emitter | `src/clojure_elisp/emitter.clj` | AST nodes → Elisp source strings |
 | Core | `src/clojure_elisp/core.clj` | Public API, file/project compilation, dependency resolution |
 | Runtime | `resources/clojure-elisp/clojure-elisp-runtime.el` | 55+ Elisp functions implementing Clojure semantics |
 | MCP Server | `src/clojure_elisp/mcp.clj` | MCP stdio server exposing compiler as AI tools |
 | CLI | `src/clojure_elisp/cli.clj` | JVM uberjar entry point (compile, mcp, version) |
+| Portable CLI | `src/clojure_elisp/main.clj` | `compile`/`version` on the JVM, Babashka and cljw |
 | BB CLI | `bb/clel/main.clj` | Babashka CLI frontend (delegates to uberjar) |
 | nREPL kernel | `src/clojure_elisp/nrepl_kernel.clj` | Session registry, compile modes, op semantics (transport-free) |
 | nREPL middleware | `src/clojure_elisp/nrepl.clj` | JVM transport: `wrap-cljel` for a CIDER jack-in |
@@ -329,6 +331,45 @@ built this way:
 
 `bundle-runtime!` writes `clojure-elisp-runtime.el` out of the dependency, so
 nothing has to name a path into the ClojureElisp checkout.
+
+### Running under cljw (ClojureWasm)
+
+[ClojureWasm](https://github.com/BuddhiLW/ClojureWasm) starts in about
+20 ms, so it is the quickest way to compile a file from the command line. The
+compiler runs on it unchanged, through the portable entry point
+`clojure-elisp.main`. cljw does not fetch Maven artifacts; the `:cljw` alias in
+`deps.edn` takes the compile path's dependencies from Git instead (cloned once
+into `~/.cljw/gitlibs`):
+
+```bash
+# from a clojure-elisp checkout
+cljw -A:cljw -m clojure-elisp.main compile src/my_app.cljel -o out/my-app.el
+cljw -A:cljw -m clojure-elisp.main compile src/ -o out/
+cljw -A:cljw -m clojure-elisp.main compile      # the project in ./clel.edn
+```
+
+The same namespace is the CLI on every host (`bb -m clojure-elisp.main ...`,
+`clojure -M -m clojure-elisp.main ...`), and all of them emit the same bytes:
+`make parity` compiles every `.cljel` in `examples/` and `test/`, plus the
+runtime, on the JVM, Babashka and cljw, and diffs the results.
+
+Measured wall time, median, compiling `examples/demo.cljel` (14 lines) and the
+1,973-line `runtime.cljel` (cljw 1.14.7, Babashka 1.13.224, OpenJDK 25 uberjar):
+
+| Command | small file | runtime.cljel |
+|---|---|---|
+| `cljw -A:cljw -m clojure-elisp.main compile` | 143 ms | 597 ms |
+| `bb -m clojure-elisp.main compile` | 239 ms | 440 ms |
+| `java -jar target/clel-<version>.jar compile` | 662 ms | 850 ms |
+| `clel compile` (Babashka CLI delegating to the uberjar) | 692 ms | |
+| `clojure -M -m clojure-elisp.main compile` | 2,439 ms | |
+
+cljw wins wherever startup dominates, which is the usual case of one file per
+save; Babashka's interpreter is quicker on large inputs. On cljw the project
+build recompiles every file each time, because its `java.io.File` has no
+modification times to compare. `cljw build` cannot yet produce a
+self-contained binary of the compiler: see `CHANGELOG.md` for the upstream
+gaps that block it.
 
 ### Uberjar
 
@@ -404,8 +445,11 @@ clojure -T:build uber
 # Start REPL with dev dependencies (nREPL, CIDER)
 clojure -M:dev
 
-# Run tests (Kaocha, 598 tests, 3021 assertions)
+# Run tests (Kaocha)
 clojure -M:test
+
+# Check that the JVM, Babashka and cljw emit identical output
+make parity
 
 # Build uberjar
 clojure -T:build uber
