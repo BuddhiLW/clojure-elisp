@@ -20,8 +20,7 @@
             [clojure-elisp.config :as config]
             [clojure-elisp.fs :as fs]
             [clojure-elisp.errors :as errors]
-            [malli.core :as m]
-            [malli.instrument :as mi]))
+            [malli.core :as m]))
 
 ;; ============================================================================
 ;; Public API — instrumentable pipeline entry points
@@ -189,16 +188,26 @@
    'clojure-elisp.emitter
    'clojure-elisp.nrepl-kernel])
 
+(defn- instrumentation-opts
+  "Options selecting the boundary namespaces for malli.instrument.
+
+   malli.instrument is resolved on demand: it requires malli.generator and so
+   test.check, which the compile path must not carry (a host without
+   test.check, such as ClojureWasm, could not load clojure-elisp.core)."
+  []
+  {:filters [(apply (requiring-resolve 'malli.instrument/-filter-ns)
+                    instrumented-nses)]})
+
 (defn instrument!
   "Enable Malli instrumentation of the boundary fn contracts (core + compile +
    project). Call unstrument! to disable. Intended for dev/test."
   []
-  (mi/instrument! {:filters [(apply mi/-filter-ns instrumented-nses)]}))
+  ((requiring-resolve 'malli.instrument/instrument!) (instrumentation-opts)))
 
 (defn unstrument!
   "Disable Malli instrumentation of the boundary fn contracts."
   []
-  (mi/unstrument! {:filters [(apply mi/-filter-ns instrumented-nses)]}))
+  ((requiring-resolve 'malli.instrument/unstrument!) (instrumentation-opts)))
 
 (comment
   (emit '(defn foo [x] (+ x 1)))
