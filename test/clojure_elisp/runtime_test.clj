@@ -12,7 +12,9 @@
   (testing "into compiles to clel-into"
     (is (str/includes? (clel/emit '(into [] coll)) "clel-into"))
     (is (str/includes? (clel/emit '(into '() items)) "clel-into"))
-    (is (str/includes? (clel/emit '(into {} pairs)) "clel-into")))
+    ;; {} is nil at run time, the same value as [], so the literal target
+    ;; selects the map builder at compile time.
+    (is (= "(clel--into-map nil pairs)" (clel/emit '(into {} pairs)))))
 
   (testing "into with various targets"
     ;; Vector target (emits as list in elisp)
@@ -403,8 +405,8 @@
   (testing "sort compiles to clel-sort"
     (is (str/includes? (clel/emit '(sort < xs)) "clel-sort")))
 
-  (testing "sort preserves argument order"
-    (is (re-find #"clel-sort\s+cmp\s+coll" (clel/emit '(sort cmp coll))))))
+  (testing "sort preserves argument order; a free comparator names a function"
+    (is (re-find #"clel-sort\s+#'cmp\s+coll" (clel/emit '(sort cmp coll))))))
 
 (deftest seq-sort-by-compilation-test
   (testing "sort-by compiles to clel-sort-by"
@@ -819,17 +821,19 @@
     (is (re-find #"clel-contains-p\s+my-map\s+my-key" (clel/emit '(contains? my-map my-key))))))
 
 (deftest name-compilation-test
-  (testing "name compiles to symbol-name"
-    (is (= "(symbol-name :foo)" (clel/emit '(name :foo))))
-    (is (= "(symbol-name x)" (clel/emit '(name x)))))
+  ;; clel-name, not symbol-name: (symbol-name :foo) is ":foo", and Clojure's
+  ;; (name :foo) is "foo".
+  (testing "name compiles to clel-name"
+    (is (= "(clel-name :foo)" (clel/emit '(name :foo))))
+    (is (= "(clel-name x)" (clel/emit '(name x)))))
 
   (testing "name in expression context"
     (let [code (clel/emit '(let [n (name :keyword)] n))]
-      (is (str/includes? code "symbol-name"))
+      (is (str/includes? code "clel-name"))
       (is (str/includes? code "let"))))
 
   (testing "name preserves argument"
-    (is (re-find #"symbol-name\s+my-sym" (clel/emit '(name my-sym))))))
+    (is (re-find #"clel-name\s+my-sym" (clel/emit '(name my-sym))))))
 
 ;; ============================================================================
 ;; Nested Data Functions (clel-036)
@@ -1157,8 +1161,10 @@
       (is (re-find #"clel-str-join\s+sep\s+coll" code)))))
 
 (deftest clojure-string-split-test
+  ;; The separator is an Emacs regexp STRING: a #"..." literal is an analysis
+  ;; error (it used to splice a ";; Unknown node" comment into the call).
   (testing "clojure.string/split compiles to clel-str-split"
-    (is (str/includes? (clel/emit '(clojure.string/split s #",")) "clel-str-split")))
+    (is (= "(clel-str-split s \",\")" (clel/emit '(clojure.string/split s ",")))))
 
   (testing "split preserves argument order"
     (let [code (clel/emit '(clojure.string/split text pattern))]
@@ -1215,14 +1221,15 @@
     (is (str/includes? (clel/emit '(clojure.string/last-index-of s "x")) "clel-str-last-index-of"))))
 
 (deftest regex-string-functions-test
+  ;; Patterns are Emacs regexp strings; see unsupported-literal tests for #"...".
   (testing "re-find compiles to clel-str-re-find"
-    (is (str/includes? (clel/emit '(re-find #"\\d+" s)) "clel-str-re-find")))
+    (is (= "(clel-str-re-find \"[0-9]+\" s)" (clel/emit '(re-find "[0-9]+" s)))))
 
   (testing "re-matches compiles to clel-str-re-matches"
-    (is (str/includes? (clel/emit '(re-matches #"\\d+" s)) "clel-str-re-matches")))
+    (is (= "(clel-str-re-matches \"[0-9]+\" s)" (clel/emit '(re-matches "[0-9]+" s)))))
 
   (testing "re-seq compiles to clel-str-re-seq"
-    (is (str/includes? (clel/emit '(re-seq #"\\w+" s)) "clel-str-re-seq"))))
+    (is (= "(clel-str-re-seq \"[[:alnum:]]+\" s)" (clel/emit '(re-seq "[[:alnum:]]+" s))))))
 
 (deftest string-function-composition-test
   (testing "chained string operations"

@@ -34,9 +34,11 @@
   nil)
 
 (defn with-locals
-  "Add locals to the environment."
+  "Add locals to the environment. A new value binding shadows a letfn
+   function binding of the same name, so it leaves :fn-locals."
   [env locals]
-  (update env :locals into locals))
+  (cond-> (update env :locals into locals)
+    (seq (:fn-locals env)) (update :fn-locals #(reduce disj % locals))))
 
 ;; ============================================================================
 ;; Macro Registry (delegated to clojure-elisp.macros)
@@ -118,18 +120,25 @@
 
 (declare analyze)
 (declare analyze-literal-vector)
+(declare analyze-symbol)
+(declare assign-target)
 
 (defn analyze-def
-  "Analyze (def name expr) or (def name docstring expr)."
+  "Analyze (def name expr) or (def name docstring expr), and defonce, whose
+   Elisp form is the same defvar: defvar never re-initializes a bound
+   variable, which is defonce. ^:private names it ns--name, like defn-, and
+   ^{:doc ...} is a docstring."
   [[_ name & body]]
-  (let [[docstring init] (if (and (string? (first body))
-                                  (second body))
-                           [(first body) (second body)]
-                           [nil (first body)])]
-    (ast-node :def
-              :name name
-              :docstring docstring
-              :init (when init (analyze init)))))
+  (let [[docstring init-forms] (if (and (string? (first body))
+                                        (next body))
+                                 [(first body) (rest body)]
+                                 [(:doc (meta name)) body])]
+    ;; (def x nil) binds nil; only (def x) is a bare declaration.
+    (cond-> (ast-node :def
+                      :name name
+                      :docstring docstring
+                      :init (when (seq init-forms) (analyze (first init-forms))))
+      (:private (meta name)) (assoc :private? true))))
 
 (defn- analyze-arity-clauses
   "Build arity maps from ([params] body...) clauses — shared by multi-arity
@@ -384,6 +393,39 @@
                              pairs)
               :default (when default (analyze default)))))
 
+(defn- condp-form
+  "Expand (condp pred expr clause...) into nested ifs over one evaluation
+   of expr. A clause is `test result`, or `test :>> result-fn` which calls
+   result-fn with pred's answer; a trailing lone form is the default, and
+   without one no match signals, as Clojure's IllegalArgumentException."
+  [pred expr clauses]
+  (let [v     (gensym "condp__v")
+        p     (if (symbol? pred) pred (gensym "condp__pred"))
+        build (fn build [cls]
+                (cond
+                  (empty? cls)
+                  (list 'error "No matching clause: %S" v)
+
+                  (= 1 (count cls))
+                  (first cls)
+
+                  (= :>> (second cls))
+                  (let [r (gensym "condp__r")]
+                    (list 'let [r (list p (first cls) v)]
+                          (list 'if r (list (nth cls 2) r) (build (drop 3 cls)))))
+
+                  :else
+                  (list 'if (list p (first cls) v) (second cls) (build (drop 2 cls)))))]
+    (list 'let (cond-> [v expr] (not (symbol? pred)) (conj p pred))
+          (build clauses))))
+
+(defn analyze-condp
+  "Analyze (condp pred expr clause...). The JVM's expansion bound pred to a
+   local and called it with ((pred__ a b)), which a Lisp-2 cannot, and put
+   `=' in value position; this expansion calls pred directly."
+  [[_ pred expr & clauses :as form]]
+  (analyze (with-meta (condp-form pred expr clauses) (meta form))))
+
 (defn analyze-do
   "Analyze (do expr...) forms."
   [[_ & body]]
@@ -495,11 +537,21 @@
             :form form))
 
 (defn analyze-loop
-  "Analyze (loop [bindings] body) forms."
+  "Analyze (loop [bindings] body) forms.
+   A destructuring binding loops over a fresh symbol and destructures it at
+   the top of every iteration, so recur rebinds the whole pattern."
   [[_ bindings & body]]
-  (let [pairs (partition 2 bindings)
-        syms  (mapv first pairs)
-        inits (mapv (comp analyze second) pairs)]
+  (let [pairs    (partition 2 bindings)
+        syms     (mapv (fn [[pat _]]
+                         (if (destructure/destructure-pattern? pat) (gensym "loop__") pat))
+                       pairs)
+        inits    (mapv (comp analyze second) pairs)
+        patterns (keep (fn [[[pat _] sym]]
+                         (when (destructure/destructure-pattern? pat) [pat sym]))
+                       (map vector pairs syms))
+        body     (if (seq patterns)
+                   [(list* 'let (vec (mapcat identity patterns)) body)]
+                   body)]
     (ast-node :loop
               :bindings (mapv (fn [s i] {:name s :init i}) syms inits)
               :body (binding [*env* (with-locals *env* (set syms))]
@@ -587,18 +639,22 @@
 
 (defn analyze-letfn
   "Analyze (letfn [(name [params] body)...] body) forms.
-   Creates local recursive function bindings that can reference each other."
+   Creates local recursive function bindings that can reference each other.
+   The names live in the FUNCTION namespace (cl-labels), so they are recorded
+   as :fn-locals: called directly, referenced as values with #'."
   [[_ fn-specs & body]]
   (let [;; First pass: collect all function names for mutual recursion
         fn-names (mapv first fn-specs)
         ;; Add all fn names to environment before analyzing bodies
-        new-env  (with-locals *env* (set fn-names))
+        new-env  (-> (with-locals *env* (set fn-names))
+                     (update :fn-locals (fnil into #{}) fn-names))
         ;; Analyze each function spec
         fns      (binding [*env* new-env]
                    (mapv (fn [[fname params & fn-body]]
                            {:name fname
                             :params (vec params)
-                            :body (mapv analyze fn-body)})
+                            :body (binding [*env* (with-locals *env* (set (remove #{'&} params)))]
+                                    (mapv analyze fn-body))})
                          fn-specs))]
     (ast-node :letfn
               :fns fns
@@ -749,6 +805,7 @@
   [[_ target value]]
   (ast-node :set!
             :target target
+            :target-node (assign-target target)
             :value (analyze value)))
 
 (defn analyze-extend-type
@@ -795,6 +852,14 @@
     (ast-node :extend-protocol
               :name protocol-name
               :extensions (parse-extensions body))))
+
+(defn analyze-instance?
+  "Analyze (instance? Type value): a type test, not a call. Type is a class
+   name, kept as data."
+  [[_ type-sym value]]
+  (ast-node :instance?
+            :type type-sym
+            :value (analyze value)))
 
 (defn analyze-satisfies?
   "Analyze (satisfies? Protocol value) forms.
@@ -952,10 +1017,10 @@
           (recur (drop 2 remaining)
                  (conj clauses {:type :while :pred (second remaining)}))
 
-          ;; :let modifier
+          ;; :let modifier (its bindings may destructure)
           (= :let item)
           (let [let-vec (second remaining)
-                pairs   (vec (partition 2 let-vec))]
+                pairs   (vec (destructure/expand-bindings let-vec))]
             (recur (drop 2 remaining)
                    (conj clauses {:type :let :bindings pairs})))
 
@@ -964,9 +1029,20 @@
           (recur (drop 2 remaining)
                  (conj clauses {:type :binding :sym item :coll (second remaining)}))
 
-          ;; Unknown, skip
+          ;; Destructuring binding: [[k v] m] binds each element to a fresh
+          ;; symbol, then destructures it like let
+          (destructure/destructure-pattern? item)
+          (let [elem (gensym "elem__")]
+            (recur (drop 2 remaining)
+                   (conj clauses
+                         {:type :binding :sym elem :coll (second remaining)}
+                         {:type :let
+                          :bindings (vec (destructure/expand-destructuring item elem))})))
+
           :else
-          (recur (rest remaining) clauses))))))
+          (throw (analysis-error
+                  (str "Unsupported binding form in iteration bindings: " (pr-str item))
+                  {:form bindings})))))))
 
 (defn- analyze-iteration-clause
   "Analyze a single iteration clause, updating env as needed.
@@ -1175,6 +1251,17 @@
                                 :body (mapv analyze body)}))
                            clauses)))
 
+(defn- assign-target
+  "The variable a setq/set! of SYM assigns: a local, a def of this namespace
+   (so (setq counter ...) reaches ns-counter, private names included), a
+   qualified var, or nil for a global Elisp variable named as written."
+  [sym]
+  (when (symbol? sym)
+    (let [node (analyze-symbol sym)]
+      (when (or (= :local (:op node))
+                (and (= :var (:op node)) (:ns node) (not= 'clojure.core (:ns node))))
+        node))))
+
 (defn analyze-setq
   "Analyze (setq var val ...) forms. Pairs of symbol-value.
    An odd form count is malformed in both languages, so it is rejected rather
@@ -1187,7 +1274,9 @@
             {:form (cons 'setq pairs)})))
   (ast-node :setq
             :pairs (mapv (fn [[sym val]]
-                           {:name sym :value (analyze val)})
+                           {:name   sym
+                            :target (assign-target sym)
+                            :value  (analyze val)})
                          (partition 2 pairs))))
 
 (defn analyze-setf
@@ -1359,6 +1448,21 @@
               :docstring docstring
               :groups groups)))
 
+(defn cl-arglist-locals
+  "The parameter symbols a CL-style ARGLIST binds: plain symbols, the name
+   and supplied-p of (name default supplied-p), the variable of a &key
+   ((:kw name) default), and the name of a (name specializer) pair."
+  [arglist]
+  (letfn [(param-syms [p]
+            (cond
+              (symbol? p) (when-not (.startsWith (name p) "&") [p])
+              (and (seq? p) (symbol? (first p)))
+              (filter symbol? [(first p) (nth p 2 nil)])
+              (and (seq? p) (seq? (first p)) (symbol? (second (first p))))
+              (filter symbol? [(second (first p)) (nth p 2 nil)])
+              :else nil))]
+    (set (mapcat param-syms (when (sequential? arglist) arglist)))))
+
 (defn analyze-cl-defstruct
   "Analyze (cl-defstruct name-or-options & slots) forms.
    Passes through to Elisp as cl-defstruct. The name can be a symbol
@@ -1368,9 +1472,13 @@
    (cl-defstruct person name age email)
    (cl-defstruct (person (:constructor make-person)) name age email)"
   [[_ name-or-opts & slots]]
-  (ast-node :cl-defstruct
-            :name-or-opts name-or-opts
-            :slots (vec slots)))
+  (let [[docstring slots] (if (string? (first slots))
+                            [(first slots) (rest slots)]
+                            [nil slots])]
+    (cond-> (ast-node :cl-defstruct
+                      :name-or-opts name-or-opts
+                      :slots (vec slots))
+      docstring (assoc :docstring docstring))))
 
 (defn analyze-cl-defun
   "Analyze (cl-defun name arglist &optional docstring body...) forms.
@@ -1388,7 +1496,34 @@
               :name name
               :arglist arglist
               :docstring docstring
-              :body (mapv analyze body))))
+              :body (binding [*env* (with-locals *env* (cl-arglist-locals arglist))]
+                      (mapv analyze body)))))
+
+(defn analyze-cl-defmethod
+  "Analyze (cl-defmethod name qualifier... arglist docstring? body...).
+   The arglist passes through with its specializers; its parameters are
+   locals of the body, so a parameter named like a core fn stays itself."
+  [[_ name & more]]
+  (let [[qualifiers [arglist & body]] (split-with (complement seq?) more)
+        [docstring body]              (if (and (string? (first body)) (next body))
+                                        [(first body) (rest body)]
+                                        [nil body])]
+    (ast-node :cl-defmethod
+              :name name
+              :qualifiers (vec qualifiers)
+              :arglist arglist
+              :docstring docstring
+              :body (binding [*env* (with-locals *env* (cl-arglist-locals arglist))]
+                      (mapv analyze body)))))
+
+(defn analyze-cl-defgeneric
+  "Analyze (cl-defgeneric name arglist docstring? options...). Passed
+   through as written: an arglist and options are data, not code."
+  [[_ name arglist & more]]
+  (ast-node :cl-defgeneric
+            :name name
+            :arglist arglist
+            :more (vec more)))
 
 (defn analyze-defmacro
   "Analyze (defmacro name [params] body) forms.
@@ -1483,13 +1618,62 @@
   (vec
    (map-indexed
     (fn [idx arg]
-      (if (and slots
-               (or (= :all slots) (contains? slots idx))
-               (symbol? arg)
-               (not (contains? (:locals *env*) arg)))
-        (ast-node :function-quote :expr (analyze arg))
-        (analyze arg)))
+      (let [analyzed (analyze arg)]
+        (if (and slots
+                 (or (= :all slots) (contains? slots idx))
+                 (symbol? arg)
+                 (= :var (:op analyzed))
+                 (not (:value? analyzed)))
+          (ast-node :function-quote :expr analyzed)
+          analyzed)))
     args)))
+
+(defn- hof-slots
+  "Function-position arg indices of (hof args...). swap! applies its fn to
+   the atom's value and the trailing args, so (swap! a update :k f) also
+   quotes f: the inner fn's slots, shifted past the atom."
+  [hof args]
+  (let [slots (mappings/fn-arg-slots hof (count args))
+        inner (second args)]
+    (if (and (#{'swap! 'swap-vals!} hof)
+             (symbol? inner)
+             (or (nil? (namespace inner)) (= "clojure.core" (namespace inner))))
+      (let [inner-slots (mappings/fn-arg-slots (symbol (name inner)) (dec (count args)))]
+        (cond
+          (= :all inner-slots) (into slots (range 2 (count args)))
+          inner-slots          (into slots (keep #(when (pos? %) (inc %))) inner-slots)
+          :else                slots))
+      slots)))
+
+(defn- empty-map-target-form
+  "(into {} from) and (conj {} x...) name their target by its literal only:
+   the empty map is nil at run time, the same value as the empty vector, so
+   the runtime could not tell it is building a map. Rewritten to the map
+   builder; nil when FORM is not such a call."
+  [f args]
+  (when (and (#{'into 'clojure.core/into 'conj 'clojure.core/conj} f)
+             (not (contains? (:locals *env*) f))
+             (= {} (first args)))
+    (case (name f)
+      "into" (when (= 2 (count args))
+               (list 'clel--into-map nil (second args)))
+      "conj" (list 'clel--into-map nil (vec (rest args))))))
+
+(defn- collection-call-form
+  "Rewrite a keyword or map literal in function position into the `get` it
+   means: (:k m) and ({:k 1} :k). nil when F is neither."
+  [f args]
+  (cond
+    (keyword? f)
+    (if (<= 1 (count args) 2)
+      (list* 'clojure.core/get (first args) f (rest args))
+      (throw (analysis-error
+              (str "Keyword " f " called with " (count args)
+                   " arguments; a keyword takes a map and an optional default")
+              {:form (cons f args)})))
+
+    (map? f)
+    (list* 'clojure.core/get f args)))
 
 (defn analyze-invoke
   "Analyze function invocation (f args...).
@@ -1499,10 +1683,18 @@
    - (elisp/fn args..) → :elisp-call with :fn as raw Elisp name
    For a known higher-order fn, bare fn-name symbols in its function slot(s)
    are function-quoted (see analyze-hof-args) so Elisp receives #'f."
-  [[f & args]]
+  [[f & args :as form]]
   (let [f-name (when (symbol? f) (name f))
         f-ns   (when (symbol? f) (namespace f))]
     (cond
+      ;; (:k m), ({:k 1} :k) -> get
+      (or (keyword? f) (map? f))
+      (analyze (with-meta (collection-call-form f args) (meta form)))
+
+      ;; (into {} from), (conj {} x) -> the map builder
+      (empty-map-target-form f args)
+      (analyze (with-meta (empty-map-target-form f args) (meta form)))
+
       ;; Property access: (.-point) → zero-arg Elisp function call
       (and f-name (.startsWith f-name ".-"))
       (ast-node :interop-call
@@ -1525,10 +1717,13 @@
       :else
       (let [slots (when (and (symbol? f)
                              (or (nil? f-ns) (= f-ns "clojure.core"))
-                             (not (contains? (:locals *env*) f)))
-                    (get mappings/higher-order-fn-arg-slots (symbol f-name)))]
+                             (not (contains? (:locals *env*) f))
+                             (not (contains? (:fn-locals *env*) f)))
+                    (hof-slots (symbol f-name) args))]
         (ast-node :invoke
-                  :fn (analyze f)
+                  ;; Callee position: a symbol names the function itself,
+                  ;; never its #' value.
+                  :fn (if (symbol? f) (analyze-symbol f) (analyze f))
                   :args (analyze-hof-args args slots))))))
 
 ;; ============================================================================
@@ -1538,6 +1733,7 @@
 (def special-forms
   "Map of special form symbols to their analyzers."
   {'def analyze-def
+   'defonce analyze-def
    'defn analyze-defn
    'defn- analyze-defn
    'defmacro analyze-defmacro
@@ -1550,6 +1746,7 @@
    'extend-type analyze-extend-type
    'extend-protocol analyze-extend-protocol
    'satisfies? analyze-satisfies?
+   'instance? analyze-instance?
    'reify analyze-reify
    'fn analyze-fn
    'fn* analyze-fn
@@ -1561,6 +1758,7 @@
    'when analyze-when
    'cond analyze-cond
    'case analyze-case
+   'condp analyze-condp
    'do analyze-do
    'and analyze-and
    'or analyze-or
@@ -1610,17 +1808,37 @@
    'defvar analyze-defvar
    ;; CL passthrough forms (clel-fix)
    'cl-defstruct analyze-cl-defstruct
-   'cl-defun analyze-cl-defun})
+   'cl-defun analyze-cl-defun
+   'cl-defmethod analyze-cl-defmethod
+   'cl-defgeneric analyze-cl-defgeneric})
+
+(defn- warn-missing-export!
+  "Warn when a project namespace is known and does not export sym-name."
+  [resolved-ns sym-name]
+  (when (and *project-exports*
+             (contains? *project-exports* resolved-ns)
+             (not (contains? (get *project-exports* resolved-ns) sym-name)))
+    (binding [*out* *err*]
+      (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
+                    (when *source-context*
+                      (str " at " (:file *source-context*) ":" (:line *source-context*))))))))
+
+(defn- own-def-node
+  "A :var node for sym, defined in the current namespace. :private? follows
+   the definition, so every reference agrees with the defun's name. A value
+   (def) carries :value?; a function (defn) carries :fn?."
+  [sym]
+  (let [{:keys [private? kind]} (get (:defs *env*) sym)]
+    (cond-> (ast-node :var :name sym :ns (:ns *env*) :private? (boolean private?))
+      (= :def kind)  (assoc :value? true)
+      (= :defn kind) (assoc :fn? true))))
 
 (defn- qualified-var-node
-  "The :var node for sym-name in namespace resolved-ns.
-
-   A clojure.core var must have an Elisp mapping. The emitter used to fall
-   back to `clojure-core-NAME', which nothing defines, so the compiled file
-   called an undefined function and failed only when that code ran. The
-   reader's syntax-quote and macros expanded on the JVM (with-out-str,
-   binding) write clojure.core/NAME, which is how most such names get here."
-  [sym-name resolved-ns]
+  "A :var node for sym-name in resolved-ns. A reference to the CURRENT
+   namespace resolves through its own definitions. A clojure.core var must
+   have an Elisp mapping: syntax-quote and macros expanded on the JVM write
+   clojure.core/NAME, and an unmapped one would call an undefined function."
+  [resolved-ns sym-name]
   (when (and (= 'clojure.core resolved-ns)
              (not (contains? mappings/core-fn-mapping sym-name)))
     (throw (analysis-error
@@ -1628,14 +1846,26 @@
                  "so it would compile to a call to an undefined function. It may "
                  "come from a macro expanded on the JVM or from syntax-quote.")
             {:symbol (symbol "clojure.core" (str sym-name))})))
-  (ast-node :var :name sym-name :ns resolved-ns))
+  (if (and (= resolved-ns (:ns *env*))
+           (contains? (:defs *env*) sym-name))
+    (own-def-node sym-name)
+    (do (warn-missing-export! resolved-ns sym-name)
+        (cond-> (ast-node :var :name sym-name :ns resolved-ns)
+          (mappings/clojure-fn? (symbol (str resolved-ns) (str sym-name)))
+          (assoc :fn? true)))))
 
 (defn- analyze-symbol
-  "Analyze a symbol form, resolving locals, aliases, refers, and vars."
+  "Analyze a symbol form, resolving locals, aliases, refers, and vars.
+   A :var node that names a known function carries :fn?; see
+   `analyze-value-symbol` for what value position does with it."
   [form]
   (let [sym-ns-str (namespace form)
         sym-name   (symbol (name form))]
     (cond
+      ;; letfn function binding: lives in the function namespace
+      (contains? (:fn-locals *env*) form)
+      (ast-node :local :name form :fn-local? true)
+
       ;; Local takes priority
       (contains? (:locals *env*) form)
       (ast-node :local :name form)
@@ -1643,40 +1873,57 @@
       ;; Aliased qualified symbol: str/join -> clojure.string/join
       (and sym-ns-str
            (get (:aliases *env*) (symbol sym-ns-str)))
-      (let [resolved-ns (get (:aliases *env*) (symbol sym-ns-str))]
-        (when (and *project-exports*
-                   (contains? *project-exports* resolved-ns)
-                   (not (contains? (get *project-exports* resolved-ns) sym-name)))
-          (binding [*out* *err*]
-            (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
-                          (when *source-context*
-                            (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
-        (qualified-var-node sym-name resolved-ns))
+      (qualified-var-node (get (:aliases *env*) (symbol sym-ns-str)) sym-name)
 
       ;; Already qualified symbol: clojure.string/join
       sym-ns-str
-      (let [resolved-ns (symbol sym-ns-str)]
-        (when (and *project-exports*
-                   (contains? *project-exports* resolved-ns)
-                   (not (contains? (get *project-exports* resolved-ns) sym-name)))
-          (binding [*out* *err*]
-            (println (str "WARNING: " sym-name " not found in namespace " resolved-ns
-                          (when *source-context*
-                            (str " at " (:file *source-context*) ":" (:line *source-context*)))))))
-        (qualified-var-node sym-name resolved-ns))
+      (qualified-var-node (symbol sym-ns-str) sym-name)
 
       ;; Referred symbol: join -> clojure.string/join
       (get (:refers *env*) form)
-      (qualified-var-node form (get (:refers *env*) form))
+      (qualified-var-node (get (:refers *env*) form) form)
 
       ;; Same-namespace definition (including defn- private functions)
       (get (:defs *env*) form)
-      (let [{:keys [private?]} (get (:defs *env*) form)]
-        (ast-node :var :name form :ns (:ns *env*) :private? private?))
+      (own-def-node form)
 
       ;; Unqualified, unresolved
       :else
-      (ast-node :var :name form))))
+      (cond-> (ast-node :var :name form)
+        (mappings/clojure-fn? form) (assoc :fn? true)))))
+
+(defn- analyze-value-symbol
+  "Analyze a symbol in VALUE position. Elisp is a Lisp-2: a function's name
+   read as a variable is void, so a symbol known to name a function becomes
+   #'f, which is what Clojure's value of that symbol is."
+  [form]
+  (let [node (analyze-symbol form)]
+    (if (and (= :var (:op node)) (:fn? node))
+      (ast-node :function-quote :expr node)
+      node)))
+
+(defn- unsupported-literal-error
+  "The analysis error for a reader literal Emacs Lisp has no counterpart
+   for. Splicing a placeholder into the output instead is how a regex once
+   compiled to a comment in the middle of a form."
+  [form]
+  (analysis-error
+   (cond
+     (instance? java.util.regex.Pattern form)
+     (str "Regex literal #\"" form "\" is not supported: Java and Emacs regexps differ "
+          "in syntax (groups, alternation, \\d, \\s, \\w). Write the Emacs regexp as a "
+          "string, e.g. \"^[0-9]+$\" for #\"^\\d+$\", or \"\\\\(a\\\\|b\\\\)\" for #\"(a|b)\".")
+
+     (char? form)
+     (str "Character literal " (pr-str form)
+          " is not supported: Emacs characters are integers, and a Clojure character is "
+          "not. Write the string " (pr-str (str form)) ", or Emacs ?c syntax for the "
+          "character's integer code.")
+
+     :else
+     (str "Literal " (pr-str form) " of type " (.getName (class form))
+          " has no Emacs Lisp equivalent."))
+   {:form form}))
 
 (defn- analyze-seq
   "Analyze a seq form: dispatch to special form, macro, or invocation.
@@ -1744,6 +1991,14 @@
           (boolean? form)
           (ast-node :const :val form :type :bool)
 
+          ;; Ratio: Elisp has no rational numbers
+          (ratio? form)
+          (throw (analysis-error
+                  (str "Ratio literal " form " is not supported: Emacs Lisp has no "
+                       "rational numbers. Write a float (" (double form) ") or "
+                       "a division such as (/ " (numerator form) ".0 " (denominator form) ").")
+                  {:form form}))
+
           ;; Number
           (number? form)
           (ast-node :const :val form :type :number)
@@ -1758,7 +2013,7 @@
 
           ;; Symbol
           (symbol? form)
-          (analyze-symbol form)
+          (analyze-value-symbol form)
 
           ;; Vector
           (vector? form)
@@ -1777,7 +2032,7 @@
           (analyze-seq form)
 
           :else
-          (ast-node :unknown :form form))))))
+          (throw (unsupported-literal-error form)))))))
 
 ;; ============================================================================
 ;; File-Level Analysis
@@ -1785,14 +2040,18 @@
 
 (defn- pre-scan-defs
   "Quick scan top-level forms to collect defn/defn-/def names.
-   Returns map of {name {:private? bool}} for same-namespace resolution."
+   Returns map of {name {:private? bool :kind :defn|:def}} for same-namespace
+   resolution. :kind :def marks a VALUE (a defvar), which a call site must
+   funcall rather than call by name."
   [forms]
   (into {}
         (for [form forms
               :when (and (seq? form) (symbol? (second form)))
-              :let [head (first form)]
-              :when (#{'defn 'defn- 'def} head)]
-          [(second form) {:private? (= head 'defn-)}])))
+              :let [head (first form)
+                    sym  (second form)]
+              :when (#{'defn 'defn- 'def 'defonce} head)]
+          [sym {:private? (boolean (or (= head 'defn-) (:private (meta sym))))
+                :kind     (if (#{'def 'defonce} head) :def :defn)}])))
 
 (defn scan-exports
   "Public API for scanning top-level defs from forms. Returns set of defined symbols."

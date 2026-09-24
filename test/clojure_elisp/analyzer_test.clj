@@ -42,11 +42,11 @@
       (is (= :const (:op result)))
       (is (= 3.14 (:val result)))
       (is (= :number (:type result)))))
-  (testing "ratio"
-    (let [result (analyze 1/2)]
-      (is (= :const (:op result)))
-      (is (= 1/2 (:val result)))
-      (is (= :number (:type result))))))
+  ;; A ratio used to analyze as a :const and emit 1/2, which Emacs reads as a
+  ;; symbol; there is no Elisp rational to emit.
+  (testing "ratio is an analysis error"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Ratio literal 1/2 is not supported"
+                          (analyze 1/2)))))
 
 (deftest analyze-string-test
   (testing "simple string"
@@ -1068,9 +1068,10 @@
 
 (deftest analyze-aliased-symbol-test
   (testing "aliased qualified symbol resolves to full namespace"
+    ;; In value position a mapped function is its #' value (Lisp-2).
     (binding [ana/*env* (merge ana/*env*
                                {:aliases {'str 'clojure.string}})]
-      (let [ast (analyze 'str/join)]
+      (let [ast (:expr (analyze 'str/join))]
         (is (= :var (:op ast)))
         (is (= 'join (:name ast)))
         (is (= 'clojure.string (:ns ast))))))
@@ -1093,9 +1094,10 @@
 
 (deftest analyze-referred-symbol-test
   (testing "referred symbol resolves to source namespace"
+    ;; In value position a mapped function is its #' value, as for an alias.
     (binding [ana/*env* (merge ana/*env*
                                {:refers {'join 'clojure.string}})]
-      (let [ast (analyze 'join)]
+      (let [ast (:expr (analyze 'join))]
         (is (= :var (:op ast)))
         (is (= 'join (:name ast)))
         (is (= 'clojure.string (:ns ast))))))

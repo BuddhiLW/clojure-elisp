@@ -73,9 +73,19 @@ $(MELPA_FIXTURE): $(MELPA_SOURCES) $(wildcard src/clojure_elisp/*.clj)
 	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
 	  (clel/compile-project-from-config \"test/elisp/sources/melpa/clel.edn\")"
 
-test-elisp: $(GUARD_FIXTURE) $(PACKAGE_FIXTURE) $(MELPA_FIXTURE)
+SEMANTICS_FIXTURE := test/elisp/fixtures/semantics.el
+
+$(SEMANTICS_FIXTURE): test/elisp/sources/semantics.cljel $(wildcard src/clojure_elisp/*.clj)
+	@mkdir -p $(dir $@)
+	clojure -M -e "(require '[clojure-elisp.core :as clel]) \
+	  (spit \"$@\" (clel/compile-file-string (slurp \"$<\")))"
+
+test-elisp: $(GUARD_FIXTURE) $(PACKAGE_FIXTURE) $(MELPA_FIXTURE) $(SEMANTICS_FIXTURE)
 	emacs -Q -batch -l ert \
 		-l test/elisp/cider-clojure-elisp-test.el \
+		-f ert-run-tests-batch-and-exit
+	emacs -Q -batch -l ert \
+		-l test/elisp/clojure-elisp-semantics-test.el \
 		-f ert-run-tests-batch-and-exit
 	emacs -Q -batch -l ert \
 		-l test/elisp/clojure-elisp-runtime-test.el \

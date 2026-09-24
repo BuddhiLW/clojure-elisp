@@ -39,7 +39,7 @@
   (testing "keyword"     (is (= ":foo"             (ae :foo))))
   (testing "ns keyword"  (is (= ":bar"             (ae :my.ns/bar))))
   (testing "vector"      (is (= "(list 1 2 3)"     (ae '[1 2 3]))))
-  (testing "map"         (is (= "(list (cons :a 1) (cons :b 2))" (ae '{:a 1 :b 2}))))
+  (testing "map"         (is (= "(clel-array-map :a 1 :b 2)" (ae '{:a 1 :b 2}))))
   (testing "quoted list" (is (= "'(1 2 3)"         (ae '(quote (1 2 3)))))))
 
 ;; ============================================================================
@@ -59,7 +59,8 @@
 ;; ============================================================================
 
 (deftest gold-comparisons
-  (testing "="   (is (= "(equal a b)" (ae '(= a b)))))
+  ;; Clojure = on maps ignores entry order, which `equal' on alists cannot.
+  (testing "="   (is (= "(clel-equal a b)" (ae '(= a b)))))
   (testing "<"   (is (= "(< a b)"     (ae '(< a b)))))
   (testing ">"   (is (= "(> a b)"     (ae '(> a b)))))
   (testing "<="  (is (= "(<= a b)"    (ae '(<= a b)))))
@@ -77,7 +78,7 @@
   (testing "str"      (is (= "(clel-str \"a\" \"b\")"  (ae '(str "a" "b")))))
   (testing "conj"     (is (= "(clel-conj coll 1)"      (ae '(conj coll 1)))))
   (testing "get"      (is (= "(clel-get m :key)"       (ae '(get m :key)))))
-  (testing "assoc"    (is (= "(clel-assoc m :key val)"  (ae '(assoc m :key val)))))
+  (testing "assoc"    (is (= "(clel-assoc m :key v)"   (ae '(assoc m :key v)))))
   (testing "not"      (is (= "(not x)"                 (ae '(not x)))))
   (testing "nil?"     (is (= "(null x)"                (ae '(nil? x)))))
   (testing "println"  (is (= "(message \"hi\")"        (ae '(println "hi"))))))
@@ -87,7 +88,7 @@
 ;; ============================================================================
 
 (deftest gold-def
-  (testing "def"  (is (= "(defvar x 42 )" (ae '(def x 42))))))
+  (testing "def"  (is (= "(defvar x 42)" (ae '(def x 42))))))
 
 (deftest gold-defn
   (testing "defn simple"

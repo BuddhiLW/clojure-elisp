@@ -181,8 +181,12 @@
     :else        (str v)))
 
 (defmethod emit-node :local
-  [{:keys [name]}]
-  (mangle-name name))
+  [{:keys [name fn-local?]}]
+  ;; A letfn binding lives in the function namespace (cl-labels): as a value
+  ;; it must be read with #', never as a variable.
+  (if fn-local?
+    (str "#'" (mangle-name name))
+    (mangle-name name)))
 
 (defmethod emit-node :var
   [{:keys [name ns private?]}]
@@ -234,22 +238,38 @@
 
 (defmethod emit-node :map
   [{:keys [keys vals]}]
-  ;; Emit an *evaluating* alist constructor, not a quoted literal: a quote
-  ;; would suppress evaluation of every key and value, so {:a x} would carry
-  ;; the symbol `x` instead of its runtime value. (list (cons k v) ...) keeps
-  ;; the alist shape while evaluating keys/vals; self-evaluating keys
-  ;; (keywords, numbers) are unaffected.
-  (let [pairs (map (fn [k v] (str "(cons " (emit k) " " (emit v) ")"))
-                   keys vals)]
-    (str "(list " (str/join " " pairs) ")")))
+  ;; An *evaluating* constructor, not a quoted literal: a quote would
+  ;; suppress evaluation of every key and value. clel-array-map builds the
+  ;; alist from entries the runtime records as entries, which is how a map
+  ;; whose value is a list stays distinguishable from a list. The empty map
+  ;; is nil.
+  (if (empty? keys)
+    "nil"
+    (str "(clel-array-map "
+         (str/join " " (mapcat (fn [k v] [(emit k) (emit v)]) keys vals))
+         ")")))
 
 (defmethod emit-node :set
   [{:keys [items]}]
   (str "(list " (emit-list (map emit items)) ")"))
 
+(defn- quoted-data
+  "Render quoted Clojure data as Elisp read syntax. A map is an alist and a
+   set a list, as they are when evaluated; `pr-str' would print {...} and
+   #{...}, which Elisp cannot read."
+  [x]
+  (cond
+    (map? x)    (str "(" (str/join " " (map (fn [[k v]] (str "(" (quoted-data k) " . " (quoted-data v) ")")) x)) ")")
+    (set? x)    (str "(" (str/join " " (map quoted-data x)) ")")
+    (vector? x) (str "[" (str/join " " (map quoted-data x)) "]")
+    (seq? x)    (str "(" (str/join " " (map quoted-data x)) ")")
+    (true? x)   "t"
+    (false? x)  "nil"
+    :else       (pr-str x)))
+
 (defmethod emit-node :quote
   [{:keys [form]}]
-  (str "'" (pr-str form)))
+  (str "'" (quoted-data form)))
 
 (defmethod emit-node :defmacro
   [{:keys [name docstring params body env]}]
@@ -263,27 +283,25 @@
               elisp-name elisp-params elisp-body))))
 
 (defmethod emit-node :cl-defstruct
-  [{:keys [name-or-opts slots]}]
+  [{:keys [name-or-opts docstring slots]}]
   (let [;; name-or-opts can be a symbol or a list with options
         name-str (if (symbol? name-or-opts)
                    (mangle-name name-or-opts)
                    ;; It's a list: (name (:constructor make-name) ...)
                    (str "(" (str/join " "
                                       (map (fn [x]
-                                             (cond
-                                               (symbol? x) (mangle-name x)
-                                               (seq? x) (str "(" (str/join " " (map str x)) ")")
-                                               (list? x) (str "(" (str/join " " (map str x)) ")")
-                                               :else (str x)))
+                                             (if (symbol? x) (mangle-name x) (quoted-data x)))
                                            name-or-opts)) ")"))
+        ;; A slot is a name or (name default options...): data, as written
         slots-str (str/join " " (map (fn [s]
                                        (if (symbol? s)
                                          (mangle-name s)
-                                         (str s)))
+                                         (quoted-data s)))
                                      slots))]
-    (if (seq slots)
-      (format "(cl-defstruct %s %s)" name-str slots-str)
-      (format "(cl-defstruct %s)" name-str))))
+    (str "(cl-defstruct " name-str
+         (when docstring (str "\n  " (docstring-literal docstring)))
+         (when (seq slots) (str (if docstring "\n  " " ") slots-str))
+         ")")))
 
 (defmethod emit-node :cl-defun
   [{:keys [name docstring arglist body]}]
@@ -306,13 +324,45 @@
       (format "(cl-defun %s %s\n  %s)"
               elisp-name elisp-arglist elisp-body))))
 
+(defn- emit-cl-arglist
+  "A CL-style arglist as written: parameter names mangled like the locals
+   that reference them, lambda-list keywords, defaults and specializers
+   passed through."
+  [arglist]
+  (str "("
+       (str/join " "
+                 (map (fn [p]
+                        (cond
+                          (symbol? p) (if (str/starts-with? (name p) "&") (str p) (mangle-name p))
+                          (and (seq? p) (symbol? (first p)))
+                          (str "(" (str/join " " (cons (mangle-name (first p)) (map quoted-data (rest p)))) ")")
+                          :else (quoted-data p)))
+                      arglist))
+       ")"))
+
+(defmethod emit-node :cl-defmethod
+  [{:keys [name qualifiers arglist docstring body]}]
+  (str "(cl-defmethod " (mangle-name name)
+       (str/join (map #(str " " (quoted-data %)) qualifiers))
+       " " (emit-cl-arglist arglist)
+       (when docstring (str "\n  " (docstring-literal docstring)))
+       (when (seq body) (str "\n  " (str/join "\n  " (map emit body))))
+       ")"))
+
+(defmethod emit-node :cl-defgeneric
+  [{:keys [name arglist more]}]
+  (str "(cl-defgeneric " (mangle-name name) " " (emit-cl-arglist arglist)
+       (str/join (map #(str "\n  " (quoted-data %)) more))
+       ")"))
+
 (defmethod emit-node :def
-  [{:keys [name docstring init env]}]
-  (let [elisp-name (ns-qualify-name name env)]
-    (if init
-      (emit-sexp "defvar" elisp-name (emit init)
-                 (when docstring (docstring-literal docstring)))
-      (format "(defvar %s)" elisp-name))))
+  [{:keys [name docstring init env private?]}]
+  (let [elisp-name (ns-qualify-name name env (boolean private?))]
+    (cond
+      (and init docstring) (emit-sexp "defvar" elisp-name (emit init) (docstring-literal docstring))
+      init                 (emit-sexp "defvar" elisp-name (emit init))
+      docstring            (emit-sexp "defvar" elisp-name "nil" (docstring-literal docstring))
+      :else                (format "(defvar %s)" elisp-name))))
 
 (defn- nth-accessor
   "Emit an efficient nth accessor for an args list.
@@ -773,10 +823,19 @@
                          clauses)]
     (format "(pcase %s\n  %s)" expr-str (str/join "\n  " clause-strs))))
 
+(defn- emit-assign-target
+  "The variable name a setq/set! writes: the analyzer's resolved TARGET node
+   when there is one, otherwise NAME as written (a global Elisp variable)."
+  [target name]
+  (cond
+    (nil? target)             (mangle-name name)
+    (= :local (:op target))   (mangle-name (:name target))
+    :else                     (emit-node target)))
+
 (defmethod emit-node :setq
   [{:keys [pairs]}]
-  (let [pair-strs (map (fn [{:keys [name value]}]
-                         (format "%s %s" (mangle-name name) (emit value)))
+  (let [pair-strs (map (fn [{:keys [name target value]}]
+                         (format "%s %s" (emit-assign-target target name) (emit value)))
                        pairs)]
     (format "(setq %s)" (str/join " " pair-strs))))
 
@@ -1021,8 +1080,8 @@
     (str/join "\n\n" (concat [struct-def ctor-def] method-defs))))
 
 (defmethod emit-node :set!
-  [{:keys [target value]}]
-  (format "(setf %s %s)" (mangle-name target) (emit value)))
+  [{:keys [target target-node value]}]
+  (format "(setf %s %s)" (emit-assign-target target-node target) (emit value)))
 
 ;; Clojure type → Elisp type specializer mapping
 (def ^:private clojure-to-elisp-type
@@ -1049,6 +1108,12 @@
     (or (get clojure-to-elisp-type type-str)
         ;; If not a built-in, assume it's a user-defined struct type
         (mangle-name type-sym))))
+
+(defmethod emit-node :instance?
+  [{:keys [type value]}]
+  ;; java.lang.String and String name the same class
+  (let [type-sym (symbol (str/replace (str type) #"^java\.lang\." ""))]
+    (format "(cl-typep %s '%s)" (emit value) (elisp-type-specializer type-sym))))
 
 (defn- emit-extend-method
   "Emit cl-defmethod for extend-type/extend-protocol method."
@@ -1342,15 +1407,28 @@
   (let [args-str (map emit args)]
     (apply emit-sexp fn args-str)))
 
+(defn- direct-call?
+  "True when the callee node can sit in Elisp function position as is: a
+   named function, a letfn binding, or a literal lambda. Anything else is a
+   function VALUE, which a Lisp-2 must funcall."
+  [{:keys [op fn-local? value?]}]
+  (case op
+    :var   (not value?)
+    :local (boolean fn-local?)
+    :fn    true
+    false))
+
 (defmethod emit-node :invoke
   [{:keys [fn args]}]
-  (let [fn-str   (emit fn)
-        args-str (map emit args)]
-    ;; Arity-aware dispatch for assoc: 2-arg = Elisp native alist lookup,
-    ;; 3+ = clel-assoc (Clojure put). Clojure assoc always needs 3+ args.
-    (if (and (= fn-str "clel-assoc") (= 2 (count args)))
-      (apply emit-sexp "assoc" args-str)
-      (apply emit-sexp fn-str args-str))))
+  (let [args-str (map emit args)]
+    (if (direct-call? fn)
+      (let [fn-str (if (= :local (:op fn)) (mangle-name (:name fn)) (emit fn))]
+        ;; Arity-aware dispatch for assoc: 2-arg = Elisp native alist lookup,
+        ;; 3+ = clel-assoc (Clojure put). Clojure assoc always needs 3+ args.
+        (if (and (= fn-str "clel-assoc") (= 2 (count args)))
+          (apply emit-sexp "assoc" args-str)
+          (apply emit-sexp fn-str args-str)))
+      (apply emit-sexp "funcall" (emit fn) args-str))))
 
 (defmethod emit-node :define-minor-mode
   [{:keys [name docstring options body]}]
@@ -1370,20 +1448,26 @@
                           (seq body-str) (conj (str "  " body-str)))]
     (str (str/join "\n" parts) ")")))
 
+(defn- emit-option-val
+  "Render a defgroup/defcustom keyword option's value, written as data. A
+   function reference #'p reads as (var p) and must print as #'p: (var p)
+   is a call to the void function `var' when the defcustom is evaluated."
+  [v]
+  (cond
+    (nil? v) "nil"
+    (true? v) "t"
+    (false? v) "nil"
+    (string? v) (pr-str v)
+    (keyword? v) (str v)
+    (and (seq? v) (= 'quote (first v)))
+    (str "'" (quoted-data (second v)))
+    (and (seq? v) (#{'var 'function} (first v)) (symbol? (second v)))
+    (str "#'" (second v))
+    :else (str v)))
+
 (defmethod emit-node :defgroup
   [{:keys [name value docstring options]}]
   (let [group-name      (mangle-name name)
-        ;; Helper to emit option values (handles quoted forms, etc.)
-        emit-option-val (fn [v]
-                          (cond
-                            (nil? v) "nil"
-                            (true? v) "t"
-                            (false? v) "nil"
-                            (string? v) (pr-str v)
-                            (keyword? v) (str v)
-                            (and (seq? v) (= 'quote (first v)))
-                            (str "'" (second v))
-                            :else (str v)))
         ;; Emit value (typically nil)
         value-str       (emit-option-val value)
         ;; Emit options as keyword-value pairs
@@ -1400,17 +1484,6 @@
 (defmethod emit-node :defcustom
   [{:keys [name default docstring options]}]
   (let [var-name        (mangle-name name)
-        ;; Helper to emit option values (handles quoted forms, etc.)
-        emit-option-val (fn [v]
-                          (cond
-                            (nil? v) "nil"
-                            (true? v) "t"
-                            (false? v) "nil"
-                            (string? v) (pr-str v)
-                            (keyword? v) (str v)
-                            (and (seq? v) (= 'quote (first v)))
-                            (str "'" (second v))
-                            :else (str v)))
         ;; Emit default value (may be an analyzed AST node, e.g. :function-quote from #')
         default-str     (if (and (map? default) (:op default))
                           (emit default)
@@ -1428,7 +1501,10 @@
 
 (defmethod emit-node :default
   [node]
-  (str ";; Unknown node: " (pr-str node)))
+  ;; A comment spliced into a form comments out the rest of its line, so the
+  ;; output silently loses code; refuse instead.
+  (throw (ex-info (str "No Emacs Lisp emitter for AST node :op " (pr-str (:op node)))
+                  (select-keys node [:op :form :line :column]))))
 
 ;; ============================================================================
 ;; Source Location Comments
