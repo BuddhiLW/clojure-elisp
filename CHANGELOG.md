@@ -33,6 +33,12 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `;;; Code:` now precedes the runtime guard in this mode. Namespaces without
   `:elisp/package` compile byte-for-byte as before. `package-buffer-info` and
   `lm-*` are the oracle in `test/elisp/clojure-elisp-package-header-test.el`.
+- **`;;;###autoload` cookies.** `^:autoload` on the name of a `defn`,
+  `define-minor-mode` or `defcustom` (or `{:autoload true}` in a `defn`
+  attr-map) puts the cookie on the line before the definition. package-lint
+  errors on a global minor mode that is not autoloaded. `defn` now accepts
+  Clojure's `(defn name doc? attr-map? ...)` shape; an attr-map used to be
+  read as the parameter vector.
 
 ### Fixed
 

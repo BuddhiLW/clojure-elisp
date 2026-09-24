@@ -1387,14 +1387,22 @@
 ;; Main Emit Function
 ;; ============================================================================
 
+(def autoload-cookie
+  "The magic comment package.el and loaddefs look for on the line before a
+   definition to autoload."
+  ";;;###autoload")
+
 (defn emit
   "Emit an AST node to Elisp source code.
    When *emit-source-comments* is true, prepends ;;; L<line>:C<col> comments.
-   When *validate-ast* is true, validates node structure before emission."
+   When *validate-ast* is true, validates node structure before emission.
+   A node marked :autoload? (^:autoload on a defn, define-minor-mode or
+   defcustom name) gets the autoload cookie on the line before it."
   [node]
   (when *validate-ast*
     (ast/validate-ast-node node))
-  (let [code    (emit-node node)
+  (let [code    (cond->> (emit-node node)
+                  (:autoload? node) (str autoload-cookie "\n"))
         comment (source-comment node)]
     (if comment
       (str comment "\n" code)

@@ -21,6 +21,29 @@
       (is (str/includes? el ":none")))
     (is (str/starts-with? (clel/emit '(if-let [x (f)] x)) "(if-let* ((x (f)))"))))
 
+(deftest autoload-metadata-emits-the-cookie-on-the-line-before
+  (let [cookie-before? (fn [el head] (str/starts-with? el (str ";;;###autoload\n(" head)))]
+    (testing "^:autoload on a defn name"
+      (is (cookie-before? (clel/emit '(defn ^:autoload now "Show." [] (interactive) 1))
+                          "defun now ()")))
+    (testing ":autoload in a defn attr-map, after the docstring"
+      (is (cookie-before? (clel/emit '(defn now "Show." {:autoload true} [] (interactive) 1))
+                          "defun now ()")))
+    (testing "multi-arity defn"
+      (is (cookie-before? (clel/emit '(defn ^:autoload f "F." ([] 1) ([x] x))) "defun f ")))
+    (testing "define-minor-mode: package-lint errors on an un-autoloaded global mode"
+      (is (cookie-before? (clel/emit '(define-minor-mode ^:autoload tod-mode "Toggle." :global true))
+                          "define-minor-mode tod-mode")))
+    (testing "defcustom"
+      (is (cookie-before? (clel/emit '(defcustom ^:autoload tod-x 1 "X." :type 'integer))
+                          "defcustom tod-x 1"))))
+  (testing "no metadata, no cookie; an attr-map without :autoload is just skipped"
+    (is (= "(defun f (x)\n  \"F.\"\n  x)" (clel/emit '(defn f "F." {:added "1.0"} [x] x))))
+    (is (not (str/includes? (clel/emit '(define-minor-mode m "M.")) "autoload"))))
+  (testing "in a file, the cookie sits on its own line directly above the defun"
+    (let [el (clel/compile-file-string "(ns my.pkg)\n(defn ^:autoload go \"Go.\" [] (interactive) 1)")]
+      (is (str/includes? el "\n;;;###autoload\n(defun my-pkg-go ()")))))
+
 (deftest clojure-namespaces-are-not-required-but-their-aliases-resolve
   (let [el (clel/compile-file-string
             "(ns my.app

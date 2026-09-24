@@ -190,13 +190,24 @@
               :body (binding [*env* (with-locals *env* all-locals)]
                       (mapv analyze effective-body)))))
 
+(defn- autoload?
+  "True when a definition asks for a ;;;###autoload cookie: ^:autoload on its
+   name, or :autoload in a defn attr-map."
+  [name attrs]
+  (boolean (or (:autoload (meta name)) (:autoload attrs))))
+
 (defn analyze-defn
   "Analyze (defn name [args] body) and (defn name ([args1] body1) ([args2] body2)) forms.
-   Also handles (defn- name ...) — the head symbol is checked for private semantics."
+   Also handles (defn- name ...) — the head symbol is checked for private semantics.
+   Accepts Clojure's (defn name doc? attr-map? ...) shape; ^:autoload on the
+   name or {:autoload true} in the attr-map marks the node :autoload?."
   [[head name & fdecl]]
   (let [private?          (or (= head 'defn-)
                               (:private (meta name)))
         [docstring fdecl] (if (string? (first fdecl))
+                            [(first fdecl) (rest fdecl)]
+                            [nil fdecl])
+        [attrs fdecl]     (if (map? (first fdecl))
                             [(first fdecl) (rest fdecl)]
                             [nil fdecl])
         multi-arity?      (and (seq? (first fdecl))
@@ -204,9 +215,9 @@
         base-node         (if multi-arity?
                             (analyze-multi-arity-defn name docstring fdecl)
                             (analyze-single-arity-defn name docstring fdecl))]
-    (if private?
-      (assoc base-node :private? true)
-      base-node)))
+    (cond-> base-node
+      private?               (assoc :private? true)
+      (autoload? name attrs) (assoc :autoload? true))))
 
 (defn analyze-fn
   "Analyze (fn [args] body) and multi-arity (fn ([x] a) ([x y] b)) forms.
@@ -1259,11 +1270,12 @@
                                             (assoc options (first remaining) (analyze (second remaining))))
                                      [options remaining])))
         [options body-forms]   (parse-options rest-forms)]
-    (ast-node :define-minor-mode
-              :name mode-name
-              :docstring docstring
-              :options options
-              :body (mapv analyze body-forms))))
+    (cond-> (ast-node :define-minor-mode
+                      :name mode-name
+                      :docstring docstring
+                      :options options
+                      :body (mapv analyze body-forms))
+      (autoload? mode-name nil) (assoc :autoload? true))))
 
 (defn analyze-defgroup
   "Analyze (defgroup name value docstring? keyword-value-options...) forms.
@@ -1304,13 +1316,14 @@
                                  [nil rest-forms])
         ;; Parse keyword options into a map
         options                (apply hash-map rest-forms)]
-    (ast-node :defcustom
-              :name var-name
-              :default (if (and (seq? default) (= 'var (first default)))
-                         (analyze-var default)
-                         default)
-              :docstring docstring
-              :options options)))
+    (cond-> (ast-node :defcustom
+                      :name var-name
+                      :default (if (and (seq? default) (= 'var (first default)))
+                                 (analyze-var default)
+                                 default)
+                      :docstring docstring
+                      :options options)
+      (autoload? var-name nil) (assoc :autoload? true))))
 
 (defn analyze-transient-define-prefix
   "Analyze (transient-define-prefix NAME ARGLIST DOCSTRING? GROUP...) forms.
