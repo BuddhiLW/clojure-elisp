@@ -93,3 +93,40 @@
 (deftest compare-is-mapped
   (is (= "(clel-compare a b)" (emit-form '(compare a b))))
   (is (= "(clel-sort #'clel-compare xs)" (emit-form '(sort compare xs)))))
+
+;;; Destructuring in iteration bindings
+
+(deftest doseq-destructures-instead-of-binding-nil
+  (let [out (emit-form '(doseq [[k v] m] (f k v)))]
+    (is (re-find #"\(dolist \(elem__\d+ \(clel-seq m\)\)" out)
+        "iterates m, not (clel-seq nil)")
+    (is (re-find #"\(k \(clel-nth vec__\d+ 0 nil\)\)" out))
+    (is (re-find #"\(v \(clel-nth vec__\d+ 1 nil\)\)" out))))
+
+(deftest for-destructures-bindings-and-let
+  (let [out (emit-form '(for [[a b] xs :let [[c] b]] c))]
+    (is (re-find #"\(clel-seq xs\)" out))
+    (is (re-find #"\(a \(clel-nth vec__\d+ 0 nil\)\)" out))
+    (is (re-find #"\(c \(clel-nth vec__\d+ 0 nil\)\)" out))))
+
+(deftest loop-destructures-every-iteration
+  (let [out (emit-form '(loop [[x & more] xs] (when x (recur more))))]
+    (is (re-find #"\(recur \(loop__\d+\)" out) "loops over a fresh symbol")
+    (is (re-find #"\(more \(clel-nthnext vec__\d+ 1\)\)" out))
+    (is (re-find #"\(recur xs\)\)$" out) "the init is the whole collection")))
+
+(deftest unknown-iteration-binding-is-an-error
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported binding form"
+                        (emit-form '(doseq [1 xs] x)))))
+
+;;; Destructuring shorter collections
+
+(deftest vector-destructuring-defaults-to-nil
+  (let [out (emit-form '(let [[a b] xs] b))]
+    (is (re-find #"\(b \(clel-nth vec__\d+ 1 nil\)\)" out)
+        "(nth coll i nil), as Clojure expands it")))
+
+(deftest nested-map-destructuring-expands
+  (let [out (emit-form '(let [{[x y] :pt} m] y))]
+    (is (re-find #"\(vec__\d+ \(clel-get map__\d+ :pt\)\)" out))
+    (is (re-find #"\(y \(clel-nth vec__\d+ 1 nil\)\)" out))))

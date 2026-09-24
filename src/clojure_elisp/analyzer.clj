@@ -477,11 +477,21 @@
             :form form))
 
 (defn analyze-loop
-  "Analyze (loop [bindings] body) forms."
+  "Analyze (loop [bindings] body) forms.
+   A destructuring binding loops over a fresh symbol and destructures it at
+   the top of every iteration, so recur rebinds the whole pattern."
   [[_ bindings & body]]
-  (let [pairs (partition 2 bindings)
-        syms  (mapv first pairs)
-        inits (mapv (comp analyze second) pairs)]
+  (let [pairs    (partition 2 bindings)
+        syms     (mapv (fn [[pat _]]
+                         (if (destructure/destructure-pattern? pat) (gensym "loop__") pat))
+                       pairs)
+        inits    (mapv (comp analyze second) pairs)
+        patterns (keep (fn [[[pat _] sym]]
+                         (when (destructure/destructure-pattern? pat) [pat sym]))
+                       (map vector pairs syms))
+        body     (if (seq patterns)
+                   [(list* 'let (vec (mapcat identity patterns)) body)]
+                   body)]
     (ast-node :loop
               :bindings (mapv (fn [s i] {:name s :init i}) syms inits)
               :body (binding [*env* (with-locals *env* (set syms))]
@@ -938,10 +948,10 @@
           (recur (drop 2 remaining)
                  (conj clauses {:type :while :pred (second remaining)}))
 
-          ;; :let modifier
+          ;; :let modifier (its bindings may destructure)
           (= :let item)
           (let [let-vec (second remaining)
-                pairs   (vec (partition 2 let-vec))]
+                pairs   (vec (destructure/expand-bindings let-vec))]
             (recur (drop 2 remaining)
                    (conj clauses {:type :let :bindings pairs})))
 
@@ -950,9 +960,20 @@
           (recur (drop 2 remaining)
                  (conj clauses {:type :binding :sym item :coll (second remaining)}))
 
-          ;; Unknown, skip
+          ;; Destructuring binding: [[k v] m] binds each element to a fresh
+          ;; symbol, then destructures it like let
+          (destructure/destructure-pattern? item)
+          (let [elem (gensym "elem__")]
+            (recur (drop 2 remaining)
+                   (conj clauses
+                         {:type :binding :sym elem :coll (second remaining)}
+                         {:type :let
+                          :bindings (vec (destructure/expand-destructuring item elem))})))
+
           :else
-          (recur (rest remaining) clauses))))))
+          (throw (analysis-error
+                  (str "Unsupported binding form in iteration bindings: " (pr-str item))
+                  {:form bindings})))))))
 
 (defn- analyze-iteration-clause
   "Analyze a single iteration clause, updating env as needed.

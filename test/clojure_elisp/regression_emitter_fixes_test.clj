@@ -69,10 +69,11 @@
     (is (= "(clel-nth coll 2)" (emit-form '(nth coll 2)))))
   (testing "vector destructuring element access uses clel-nth"
     (is (str/includes? (emit-form '(let [[a b] xs] a)) "(clel-nth")))
-  (testing "& rest destructuring uses (nthcdr idx coll) — elisp arg order, not (nthrest coll idx)"
+  (testing "& rest destructuring uses the runtime's (clel-nthnext coll idx)"
+    ;; Not (nthcdr idx coll): a raw nthcdr reads a lazy seq's struct, not its items.
     (let [out (emit-form '(let [[a & r] xs] r))]
-      (is (str/includes? out "(nthcdr 1 "))
-      (is (not (str/includes? out "nthrest"))))))
+      (is (re-find #"\(clel-nthnext vec__\d+ 1\)" out))
+      (is (not (str/includes? out "(nthcdr "))))))
 
 ;; ============================================================================
 ;; Fix 3: variadic fn & rest

@@ -114,5 +114,44 @@ three-way comparator."
   (should (equal 12 (clel-get (semantics-swap-update) :count)))
   (should (equal 11 (clel-get (semantics-update-extra-args) :a))))
 
+;;; Destructuring in iteration bindings
+
+(ert-deftest clel-semantics-doseq-destructures ()
+  "doseq destructures each element instead of binding the coll to nil."
+  (should (equal '(3 7) (semantics-doseq-pairs)))
+  (should (equal '((:a 1) (:b 2)) (semantics-doseq-map-entries))))
+
+(ert-deftest clel-semantics-for-destructures ()
+  (should (equal '(3 13) (clel-semantics-test--realize (semantics-for-pairs))))
+  (should (equal '(:y) (clel-semantics-test--realize (semantics-for-map-entries)))))
+
+(ert-deftest clel-semantics-loop-destructures ()
+  "recur rebinds the whole pattern."
+  (should (equal 10 (semantics-loop-rest '(1 2 3 4))))
+  (should (equal 0 (semantics-loop-rest nil)))
+  (should (equal 5000050000
+                 (semantics-loop-rest (number-sequence 1 100000)))))
+
+(ert-deftest clel-semantics-fn-destructures-map-entries ()
+  (should (equal '((1 :a) (2 :b))
+                 (clel-semantics-test--realize (semantics-map-fn-entries)))))
+
+;;; Destructuring shorter collections
+
+(ert-deftest clel-semantics-short-collections-bind-nil ()
+  "Names past the end of the collection bind nil, as in Clojure."
+  (should (equal '(1 2 nil) (semantics-short-vector)))
+  (should (equal '(1 nil) (semantics-short-rest))))
+
+(ert-deftest clel-semantics-rest-of-lazy-seq ()
+  "& rest walks a lazy sequence instead of the struct holding it."
+  (should (equal '(2 (3 4)) (clel-semantics-test--realize (semantics-rest-of-lazy)))))
+
+(ert-deftest clel-semantics-nested-map-destructuring ()
+  (should (equal '(1 2 3)
+                 (semantics-nested-map-destructure
+                  (list (cons :pt (list 1 2))
+                        (cons :inner (list (cons :z 3))))))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

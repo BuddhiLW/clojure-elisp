@@ -46,18 +46,20 @@
       (let [as-sym (second items)]
         (recur (drop 2 items) idx bindings [as-sym coll-sym]))
 
-      ;; Handle & rest
+      ;; Handle & rest: Clojure binds (nthnext coll idx). The runtime's
+      ;; nthnext walks a lazy seq, a vector or a map entry, where a bare
+      ;; Elisp `nthcdr' would read the lazy-seq struct itself.
       (= '& (first items))
-      (let [rest-sym     (second items)
+      (let [rest-pat     (second items)
             remaining    (drop 2 items)
-            ;; Elisp `nthcdr` is (nthcdr N LIST) — coll SECOND — and returns
-            ;; the remaining sublist, exactly Clojure rest-destructuring. The
-            ;; old (nthrest coll idx) emitted a void function AND had the args
-            ;; reversed.
-            rest-binding (when (and rest-sym (not= rest-sym '_))
-                           [rest-sym (list 'nthcdr idx coll-sym)])]
+            rest-init    (list 'clojure.core/nthnext coll-sym idx)
+            rest-binding (cond
+                           (or (nil? rest-pat) (= rest-pat '_)) nil
+                           (destructure-pattern? rest-pat)
+                           (expand-destructuring rest-pat rest-init)
+                           :else [[rest-pat rest-init]])]
         (recur remaining idx
-               (if rest-binding (conj bindings rest-binding) bindings)
+               (into bindings rest-binding)
                as-binding))
 
       ;; Handle _ (ignore binding)
@@ -71,16 +73,17 @@
             nested-bindings (expand-destructuring nested-pattern temp-sym)]
         (recur (rest items)
                (inc idx)
-               (into (conj bindings [temp-sym (list 'nth coll-sym idx)])
+               (into (conj bindings [temp-sym (list 'clojure.core/nth coll-sym idx nil)])
                      nested-bindings)
                as-binding))
 
-      ;; Simple symbol binding
+      ;; Simple symbol binding. (nth coll idx nil), as Clojure expands it: a
+      ;; shorter collection binds nil rather than signalling.
       :else
       (let [sym (first items)]
         (recur (rest items)
                (inc idx)
-               (conj bindings [sym (list 'nth coll-sym idx)])
+               (conj bindings [sym (list 'clojure.core/nth coll-sym idx nil)])
                as-binding)))))
 
 ;; ============================================================================
@@ -105,8 +108,8 @@
           ;; `contains?`, not `(get or-map sym)`: a declared default of nil or
           ;; false is a real default, and reading it as "no default" drops it.
           (if (contains? or-map sym)
-            (list 'get map-sym k (get or-map sym))
-            (list 'get map-sym k)))
+            (list 'clojure.core/get map-sym k (get or-map sym))
+            (list 'clojure.core/get map-sym k)))
         keys-syms         (:keys pattern)
         strs-syms         (:strs pattern)
         syms-syms         (:syms pattern)
@@ -130,13 +133,13 @@
 
       ;; Handle explicit bindings {a :a b :b}
       (seq explicit-bindings)
-      (into (for [[sym k] explicit-bindings
-                  :when   (not= sym '_)]
-              (if (destructure-pattern? sym)
-                ;; Nested destructuring
-                [(gensym "map__") (lookup k sym)]
-                ;; Simple binding
-                [sym (lookup k sym)])))
+      (into (mapcat (fn [[sym k]]
+                      (if (destructure-pattern? sym)
+                        ;; Nested destructuring: {[a b] :k} or {{:keys [x]} :k}
+                        (expand-destructuring sym (list 'clojure.core/get map-sym k))
+                        ;; Simple binding
+                        [[sym (lookup k sym)]])))
+            (remove (fn [[sym _]] (= sym '_)) explicit-bindings))
 
       ;; Handle :as binding
       as-sym

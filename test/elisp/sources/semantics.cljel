@@ -73,3 +73,33 @@
     @a))
 
 (defn update-extra-args [] (update {:a 1} :a + 10))
+
+;;; Destructuring in iteration bindings
+
+(defn doseq-pairs []
+  (let [acc (atom [])]
+    (doseq [[a b] [[1 2] [3 4]]] (swap! acc conj (+ a b)))
+    @acc))
+
+(defn doseq-map-entries []
+  (let [acc (atom [])]
+    (doseq [[k v] {:a 1 :b 2}] (swap! acc conj [k v]))
+    @acc))
+
+(defn for-pairs [] (for [[a b] [[1 2] [3 4]] :let [[c] [(* a b)]]] (+ c 1)))
+
+(defn for-map-entries [] (for [[k v] {:x 10 :y 20} :when (> v 10)] k))
+
+(defn loop-rest [xs] (loop [[x & more] xs acc 0] (if x (recur more (+ acc x)) acc)))
+
+(defn map-fn-entries [] (map (fn [[k v]] [v k]) {:a 1 :b 2}))
+
+;;; Destructuring shorter collections
+
+(defn short-vector [] (let [[a b c] [1 2]] [a b c]))
+
+(defn short-rest [] (let [[a & [b]] [1]] [a b]))
+
+(defn rest-of-lazy [] (let [[a & more] (map inc [1 2 3])] [a more]))
+
+(defn nested-map-destructure [m] (let [{[x y] :pt {:keys [z]} :inner} m] [x y z]))

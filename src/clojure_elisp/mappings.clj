@@ -116,6 +116,8 @@
    'conj "clel-conj"
    'count "clel-count"
    'nth "clel-nth"
+   'nthnext "clel-nthnext"
+   'nthrest "clel-nthrest"
    'get "clel-get"
    'contains? "clel-contains-p"
    'assoc "clel-assoc"

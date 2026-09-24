@@ -33,7 +33,7 @@
  :let-map
  "(let* ((map__N m)\n        (x (clel-get map__N :x))\n        (y (clel-get map__N :y)))\n    (+ x y))",
  :let-vec
- "(let* ((vec__N xs)\n        (a (clel-nth vec__N 0))\n        (b (clel-nth vec__N 1)))\n    (+ a b))",
+ "(let* ((vec__N xs)\n        (a (clel-nth vec__N 0 nil))\n        (b (clel-nth vec__N 1 nil)))\n    (+ a b))",
  :loop
  "(cl-labels ((recur (i)\n      (if (< i 10) (recur (1+ i)) i)))\n    (recur 0))",
  :map "(clel-map #'f xs)",

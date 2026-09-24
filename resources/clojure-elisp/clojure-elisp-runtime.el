@@ -154,9 +154,21 @@ were emitted against.")
 
 (cl-defun clel-nth (coll n &optional (not-found nil not-found-p))
   "Clojure-style nth: the N-th element of COLL, coll FIRST and 0-indexed.\nElisp `nth' is (nth N LIST) — index first — so a bare mapping reversed the\nargs. With NOT-FOUND supplied, return it for an out-of-range index instead\nof signalling, matching clojure.core/nth's 3-arity."
-  (let* ((coll (clel-realize coll))
-        (len (if (sequencep coll) (clel-count coll) 0)))
-    (if (and (integerp n) (>= n 0) (< n len)) (elt coll n) (if not-found-p not-found (error "clel-nth: index %s out of bounds (length %d)" n len)))))
+  (if (or (vectorp coll) (stringp coll)) (if (and (integerp n) (>= n 0) (< n (length coll))) (aref coll n) (if not-found-p not-found (error "clel-nth: index %s out of bounds (length %d)" n (length coll)))) (let* ((s (clel-nthnext coll n)))
+    (if (and (integerp n) (>= n 0) (consp s)) (car s) (if not-found-p not-found (error "clel-nth: index %s out of bounds" n))))))
+
+(defun clel-nthnext (coll n)
+  "Clojure `nthnext': the items of COLL after the first N, or nil.\nWalks a lazy seq, a vector or a map entry one cell at a time, which\nElisp `nthcdr' cannot."
+  (let* ((s (clel-seq-force (clel--entry-seq coll)))
+        (i n))
+    (while (and s (> i 0))
+    (setq s (clel-rest s))
+    (setq i (1- i)))
+    (if (clel-lazy-seq-p s) (clel-seq-force s) s)))
+
+(defun clel-nthrest (coll n)
+  "Clojure `nthrest': the items of COLL after the first N, as a list."
+  (clel-nthnext coll n))
 
 (defun clel-contains-p (coll key)
   "Return t if KEY exists in COLL.\nFor maps/alists, checks if key is present.\nFor sets (represented as lists), checks if element is present.\nFor vectors, checks if index is valid."
@@ -486,6 +498,7 @@ were emitted against.")
   (cond
   ((null s) nil)
   ((clel-lazy-seq-p s) (clel-rest (clel-lazy-seq-force s)))
+  ((not (listp (cdr-safe s))) (list (cdr s)))
   ((listp s) (let* ((tail (cdr s)))
     (if (clel-lazy-seq-p tail) (clel-seq-force tail) tail)))
   ((vectorp s) (if (> (clel-count s) 1) (cdr (append s nil)) nil))
@@ -516,14 +529,19 @@ were emitted against.")
     found))
   (t nil)))
 
+(defun clel--entry-seq (x)
+  "Return X as a sequence: a map entry (K . V) is the two items (K V).\nAnything else is returned unchanged."
+  (if (and (consp x) (not (listp (cdr x)))) (list (car x) (cdr x)) x))
+
 (defun clel-realize (s)
-  "Return S with every lazy cell of its spine forced into a plain list.\nValues with no lazy spine are returned unchanged, vectors included.\nCall it wherever a sequence is about to reach a raw Elisp primitive\nsuch as `length', `apply', `sort' or `reverse', which cannot force."
-  (if (clel-lazy-spine-p s) (let* ((acc nil)
+  "Return S with every lazy cell of its spine forced into a plain list.\nValues with no lazy spine are returned unchanged, vectors included, and a\nmap entry becomes its two items.  Call it wherever a sequence is about to\nreach a raw Elisp primitive such as `length', `apply', `sort' or\n`reverse', which cannot force."
+  (let* ((s (clel--entry-seq s)))
+    (if (clel-lazy-spine-p s) (let* ((acc nil)
         (cur (clel-seq-force s)))
     (while cur
     (push (clel-first cur) acc)
     (setq cur (clel-rest cur)))
-    (nreverse acc)) s))
+    (nreverse acc)) s)))
 
 (defun clel-count (coll)
   "Return the number of items in COLL."

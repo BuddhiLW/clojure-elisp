@@ -182,13 +182,35 @@ Unlike Elisp `last' which returns a cons cell, this returns the element itself."
 Elisp `nth' is (nth N LIST) — index first — so a bare mapping reversed the
 args. With NOT-FOUND supplied, return it for an out-of-range index instead
 of signalling, matching clojure.core/nth's 3-arity."
-  (let [coll (clel-realize coll)
-        len (if (sequencep coll) (count coll) 0)]
-    (if (and (integerp n) (>= n 0) (< n len))
-      (elt coll n)
+  (if (or (vectorp coll) (stringp coll))
+    (if (and (integerp n) (>= n 0) (< n (length coll)))
+      (aref coll n)
       (if not-found-p
         not-found
-        (error "clel-nth: index %s out of bounds (length %d)" n len)))))
+        (error "clel-nth: index %s out of bounds (length %d)" n (length coll))))
+    ;; Walk N cells only: realizing the whole spine made (nth xs 0) on a
+    ;; long list cost the list's length, and a destructuring loop quadratic.
+    (let [s (clel-nthnext coll n)]
+      (if (and (integerp n) (>= n 0) (consp s))
+        (car s)
+        (if not-found-p
+          not-found
+          (error "clel-nth: index %s out of bounds" n))))))
+
+(defn clel-nthnext [coll n]
+  "Clojure `nthnext': the items of COLL after the first N, or nil.
+Walks a lazy seq, a vector or a map entry one cell at a time, which
+Elisp `nthcdr' cannot."
+  (let [s (clel-seq-force (clel--entry-seq coll))
+        i n]
+    (while (and s (> i 0))
+      (setq s (clel-rest s))
+      (setq i (dec i)))
+    (if (clel-lazy-seq-p s) (clel-seq-force s) s)))
+
+(defn clel-nthrest [coll n]
+  "Clojure `nthrest': the items of COLL after the first N, as a list."
+  (clel-nthnext coll n))
 
 (defn clel-contains-p [coll key]
   "Return t if KEY exists in COLL.
@@ -600,6 +622,7 @@ terminates on the real end of the sequence rather than on a pending thunk."
   (cond
     (nil? s) nil
     (clel-lazy-seq-p s) (clel-rest (clel-lazy-seq-force s))
+    (not (list? (cdr-safe s))) (list (cdr s))
     (list? s) (let [tail (cdr s)]
                 (if (clel-lazy-seq-p tail) (clel-seq-force tail) tail))
     (vector? s) (if (> (count s) 1)
@@ -637,19 +660,28 @@ terminates on the real end of the sequence rather than on a pending thunk."
       found)
     :else nil))
 
+(defn clel--entry-seq [x]
+  "Return X as a sequence: a map entry (K . V) is the two items (K V).
+Anything else is returned unchanged."
+  (if (and (consp x) (not (list? (cdr x))))
+    (list (car x) (cdr x))
+    x))
+
 (defn clel-realize [s]
   "Return S with every lazy cell of its spine forced into a plain list.
-Values with no lazy spine are returned unchanged, vectors included.
-Call it wherever a sequence is about to reach a raw Elisp primitive
-such as `length', `apply', `sort' or `reverse', which cannot force."
-  (if (clel-lazy-spine-p s)
-    (let [acc nil
-          cur (clel-seq-force s)]
-      (while cur
-        (push (clel-first cur) acc)
-        (setq cur (clel-rest cur)))
-      (nreverse acc))
-    s))
+Values with no lazy spine are returned unchanged, vectors included, and a
+map entry becomes its two items.  Call it wherever a sequence is about to
+reach a raw Elisp primitive such as `length', `apply', `sort' or
+`reverse', which cannot force."
+  (let [s (clel--entry-seq s)]
+    (if (clel-lazy-spine-p s)
+      (let [acc nil
+            cur (clel-seq-force s)]
+        (while cur
+          (push (clel-first cur) acc)
+          (setq cur (clel-rest cur)))
+        (nreverse acc))
+      s)))
 
 ;;; Raw Elisp Boundary
 ;; Elisp primitives cannot force a `clel-lazy-seq', so every Clojure fn that
@@ -695,20 +727,20 @@ such as `length', `apply', `sort' or `reverse', which cannot force."
 (defn clel-map [f & colls]
   "Lazily map F over COLLS. With one coll, returns lazy seq."
   (let [f (clel--fn f)]
-  (if (== 1 (count colls))
-    (let [s (clel-seq-force (car colls))]
-      (clel-lazy-seq-create
-       (fn []
-         (when s
-           (cons (funcall f (clel-first s))
-                 (clel-map f (clel-rest s)))))))
-    ;; Multi-coll: zip-map
-    (let [seqs (mapcar #'clel-seq-force colls)]
-      (clel-lazy-seq-create
-       (fn []
-         (when (cl-every #'identity seqs)
-           (cons (apply f (mapcar #'clel-first seqs))
-                 (apply #'clel-map f (mapcar #'clel-rest seqs))))))))))
+    (if (== 1 (count colls))
+      (let [s (clel-seq-force (car colls))]
+        (clel-lazy-seq-create
+         (fn []
+           (when s
+             (cons (funcall f (clel-first s))
+                   (clel-map f (clel-rest s)))))))
+      ;; Multi-coll: zip-map
+      (let [seqs (mapcar #'clel-seq-force colls)]
+        (clel-lazy-seq-create
+         (fn []
+           (when (cl-every #'identity seqs)
+             (cons (apply f (mapcar #'clel-first seqs))
+                   (apply #'clel-map f (mapcar #'clel-rest seqs))))))))))
 
 (defn clel-filter [pred s]
   "Lazily filter S by PRED."
