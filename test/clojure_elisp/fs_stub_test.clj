@@ -10,9 +10,12 @@
 
 (defn stub-fs
   "An in-memory IFilesystem backed by an atom {path -> content}. Every file
-   reports mtime (0 unless given; nil models a host that cannot tell)."
+   reports mtime (0 unless given; nil models a host that cannot tell).
+   Classpath resources come from the atom resources {path -> content}, none
+   unless given."
   ([store] (stub-fs store 0))
-  ([store mtime]
+  ([store mtime] (stub-fs store mtime (atom {})))
+  ([store mtime resources]
    (reify fs/IFilesystem
      (read-file [_ path]
        (if-let [c (get @store path)]
@@ -22,7 +25,7 @@
      (file-exists? [_ path] (contains? @store path))
      (file-mtime [_ _] mtime)
      (list-files [_ dir] (filter #(str/starts-with? % dir) (keys @store)))
-     (read-resource [_ _] nil)
+     (read-resource [_ path] (get @resources path))
      (make-dirs! [_ _] nil))))
 
 (deftest compile-file-through-stub-fs
@@ -46,6 +49,28 @@
       (let [fs* (stub-fs (atom source) nil)]
         (project/compile-project fs* ["/virt/src"] "/virt/out")
         (is (not-any? :cached (project/compile-project fs* ["/virt/src"] "/virt/out")))))))
+
+(deftest compiler-change-invalidates-the-cache
+  (let [resources (atom {"clojure_elisp/emitter.clj" "(ns clojure-elisp.emitter)"})
+        fs*       (stub-fs (atom {"/virt/src/a.cljel" "(ns a)\n(defn f [] 1)"}) 0 resources)
+        build     #(project/compile-project fs* ["/virt/src"] "/virt/out")]
+    (build)
+    (testing "the same compiler reuses the cache"
+      (is (every? :cached (build))))
+    (testing "a changed compiler source recompiles every file"
+      (swap! resources update "clojure_elisp/emitter.clj" str "\n;; changed")
+      (is (not-any? :cached (build))))
+    (testing "and the new cache serves the new compiler"
+      (is (every? :cached (build))))))
+
+(deftest compiler-sources-are-the-compiler
+  (is (= (set (for [^java.io.File f (.listFiles (io/file "src/clojure_elisp"))
+                    :when (.isFile f)]
+                (str "clojure_elisp/" (.getName f))))
+         (set (remove #{"clojure-elisp/VERSION"} project/compiler-sources)))
+      "compiler-sources names every compiler source and nothing else")
+  (is (every? fs/find-resource project/compiler-sources)
+      "each is on the classpath"))
 
 (deftest resources-fall-back-to-classpath-directories
   (let [dir (doto (io/file (System/getProperty "java.io.tmpdir")

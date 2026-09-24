@@ -339,16 +339,20 @@
     (assoc-in (vec ast-nodes) [0 :package] package)
     ast-nodes))
 
+(declare assert-no-name-collisions)
+
 (defn compile-file-string
   "Compile a string of Clojure code as a file (with namespace context).
    (ns ...) establishes aliases/refers for subsequent forms; appends
-   (provide ...) when ns is present.
+   (provide ...) when ns is present. Refuses a file two of whose definitions
+   compile to one Emacs name (see `name-collisions`).
 
    opts: {:package pkg} gives the file the package map
    `package-header/project-packages` worked out for it, in place of its ns's
    own :elisp/package."
   ([s] (compile-file-string s nil))
   ([s {:keys [package]}]
+   (assert-no-name-collisions {"" s})
    (names/with-fresh-names
      (let [preprocessed (preprocess-elisp-syntax s)
            forms        (read-all-forms preprocessed)
@@ -518,6 +522,76 @@
                   raw))))
 
 ;; ============================================================================
+;; Name Collisions
+;; ============================================================================
+
+(def ^:private definition-kinds
+  "Top-level definition heads, by the Emacs namespace their name lands in.
+   Emacs keeps functions and variables apart: a function and a variable may
+   share a name, two functions or two variables may not. A defmacro is not
+   here: its calls are expanded when the file compiles, one file at a time."
+  {'defn :function 'defn- :function
+   'def :variable 'defonce :variable 'defcustom :variable})
+
+(defn- emacs-definitions
+  "The top-level definitions in source, a namespace's file, each as
+   {:kind :function|:variable :emacs-name string :var qualified-symbol}. A
+   defcustom keeps its own name; the others take the namespace's prefix, as
+   the emitter names them."
+  [source]
+  (when-let [ns-sym (extract-ns-name source)]
+    (for [form  (rest (read-all-forms (preprocess-elisp-syntax source)))
+          :when (and (seq? form) (symbol? (second form)))
+          :let  [head (first form)
+                 sym  (second form)
+                 kind (definition-kinds head)]
+          :when kind]
+      {:kind       kind
+       :var        (symbol (str ns-sym) (str sym))
+       :emacs-name (if (= 'defcustom head)
+                     (emit/mangle-name sym)
+                     (emit/ns-qualify-name sym {:ns ns-sym}
+                                           (boolean (or (= 'defn- head)
+                                                        (:private (meta sym))))))})))
+
+(defn name-collisions
+  "Where the sources in path->source compile to one Emacs name, as a seq of
+   {:kind :file|:function|:variable :emacs-name string :sources [symbol ...]}:
+   two namespaces whose .el files share a name, or two definitions that share
+   a function or variable name. Emacs has one global namespace of each, so
+   tod/moment-at and tod.moment/at, both tod-moment-at, would silently
+   replace each other."
+  [path->source]
+  (let [ns-syms (keep extract-ns-name (vals path->source))
+        files   (for [[file nss] (group-by #(str (emit/mangle-name %) ".el") ns-syms)
+                      :when (< 1 (count (distinct nss)))]
+                  {:kind :file :emacs-name file :sources (vec (sort-by str (distinct nss)))})
+        defs    (for [[[kind emacs-name] ds] (group-by (juxt :kind :emacs-name)
+                                                       (mapcat emacs-definitions (vals path->source)))
+                      :let  [vars (sort-by str (distinct (map :var ds)))]
+                      :when (< 1 (count vars))]
+                  {:kind kind :emacs-name emacs-name :sources (vec vars)})]
+    (sort-by (juxt (comp str :kind) :emacs-name) (concat files defs))))
+
+(defn- collision-line
+  "One sentence naming a collision and its sources."
+  [{:keys [kind emacs-name sources]}]
+  (let [names (str/join " and " sources)]
+    (if (= :file kind)
+      (str "The namespaces " names " both compile to " emacs-name ".")
+      (str names " both compile to the Emacs " (name kind) " " emacs-name "."))))
+
+(defn assert-no-name-collisions
+  "Throw when the sources in path->source compile to one Emacs name (see
+   `name-collisions`): one of the two would replace the other."
+  [path->source]
+  (when-let [collisions (seq (name-collisions path->source))]
+    (throw (ex-info (str (str/join "\n" (map collision-line collisions))
+                         "\nEmacs has one global namespace for functions, one for"
+                         " variables and one for files: rename one of each pair.")
+                    {:type :compile/name-collision :collisions (vec collisions)}))))
+
+;; ============================================================================
 ;; Function Contracts (Malli)
 ;; ============================================================================
 ;;
@@ -549,4 +623,8 @@
 (m/=> extract-ns-deps            [:=> [:cat :string] [:maybe [:sequential :symbol]]])
 (m/=> ns-derived-output-name     [:=> [:cat :string] [:maybe :string]])
 (m/=> build-dependency-graph     [:=> [:cat [:map-of :any :string]] dependency-graph-schema])
+(m/=> name-collisions
+      [:=> [:cat [:map-of :any :string]]
+       [:sequential [:map [:kind :keyword] [:emacs-name :string] [:sources [:vector :symbol]]]]])
+(m/=> assert-no-name-collisions [:=> [:cat [:map-of :any :string]] :nil])
 (m/=> topological-sort           [:=> [:cat dependency-graph-schema] [:vector :symbol]])
