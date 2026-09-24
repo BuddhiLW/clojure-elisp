@@ -3,7 +3,11 @@
 
    Pure functions that expand destructuring patterns (vector and map)
    into flat sequences of simple [symbol init-form] bindings.
-   Also handles function parameter processing with & rest args.")
+   Also handles function parameter processing with & rest args.
+
+   Temporaries (vec__N, map__N, p__N, rest__N) come from clojure-elisp.names,
+   so within one compilation they are numbered deterministically."
+  (:require [clojure-elisp.names :as names]))
 
 ;; ============================================================================
 ;; Pattern Detection
@@ -67,7 +71,7 @@
       ;; Handle nested destructuring
       (destructure-pattern? (first items))
       (let [nested-pattern  (first items)
-            temp-sym        (gensym "vec__")
+            temp-sym        (names/fresh-symbol "vec__")
             nested-bindings (expand-destructuring nested-pattern temp-sym)]
         (recur (rest items)
                (inc idx)
@@ -134,7 +138,7 @@
                   :when   (not= sym '_)]
               (if (destructure-pattern? sym)
                 ;; Nested destructuring
-                [(gensym "map__") (lookup k sym)]
+                [(names/fresh-symbol "map__") (lookup k sym)]
                 ;; Simple binding
                 [sym (lookup k sym)])))
 
@@ -160,13 +164,13 @@
 
     ;; Vector destructuring
     (vector? pattern)
-    (let [coll-sym (gensym "vec__")]
+    (let [coll-sym (names/fresh-symbol "vec__")]
       (into [[coll-sym value]]
             (expand-vector-destructuring pattern coll-sym)))
 
     ;; Map destructuring
     (map? pattern)
-    (let [map-sym (gensym "map__")]
+    (let [map-sym (names/fresh-symbol "map__")]
       (into [[map-sym value]]
             (expand-map-destructuring pattern map-sym)))
 
@@ -227,7 +231,7 @@
         (reduce (fn [acc param]
                   (if (destructure-pattern? param)
                     ;; Destructuring param - use gensym
-                    (let [gsym (gensym "p__")]
+                    (let [gsym (names/fresh-symbol "p__")]
                       (-> acc
                           (update :simple-params conj gsym)
                           (update :destructure-bindings conj [param gsym])))
@@ -242,7 +246,7 @@
         (if rest-sym
           (if (destructure-pattern? rest-sym)
             ;; Rest param with destructuring
-            (let [gsym (gensym "rest__")]
+            (let [gsym (names/fresh-symbol "rest__")]
               (-> regular-result
                   (assoc :rest-param gsym)
                   (update :destructure-bindings conj [rest-sym gsym])))

@@ -7,6 +7,7 @@
   (:require [clojure-elisp.macros :as macros]
             [clojure-elisp.destructure :as destructure]
             [clojure-elisp.mappings :as mappings]
+            [clojure-elisp.reader :as reader]
             [clojure-elisp.schema :as schema]
             [malli.core :as m]))
 
@@ -1418,17 +1419,19 @@
                          v)))
 
 (defn analyze-map
-  "Analyze map literals."
+  "Analyze map literals, in source order where the reader recorded it (hash
+   order differs per host, and the emitter writes entries in this order)."
   [m]
-  (ast-node :map
-            :keys (mapv analyze (keys m))
-            :vals (mapv analyze (vals m))))
+  (let [ks (reader/ordered-keys m)]
+    (ast-node :map
+              :keys (mapv analyze ks)
+              :vals (mapv #(analyze (get m %)) ks))))
 
 (defn analyze-set
-  "Analyze set literals."
+  "Analyze set literals, in source order where the reader recorded it."
   [s]
   (ast-node :set
-            :items (mapv analyze s)))
+            :items (mapv analyze (reader/ordered-members s))))
 
 ;; ============================================================================
 ;; Interop Detection
