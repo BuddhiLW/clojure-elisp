@@ -3,9 +3,12 @@
 ;; Copyright (C) 2025-2026 Pedro G. Branquinho
 
 ;; Author: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
+;; Assisted-by: Claude:claude-opus-4-5
+;; Assisted-by: Claude:claude-opus-4-6
+;; Assisted-by: Claude:claude-opus-4-8
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
-;; Version: 0.8.1
+;; Version: 0.8.2
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: languages, lisp, clojure
 ;; SPDX-License-Identifier: MIT
@@ -35,7 +38,7 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst clel-runtime-version "0.8.1"
+(defconst clel-runtime-version "0.8.2"
   "Version of the ClojureElisp runtime library.
 Compiled files check this to refuse a runtime older than the one they
 were emitted against.")

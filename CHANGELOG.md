@@ -5,6 +5,15 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-09-27
+
+### Changed
+
+- **clel.el names its coding assistants.** The package header carries one
+  `Assisted-by:` line per model under Author, as MELPA's CONTRIBUTING.org
+  asks: `Claude:claude-opus-4-5`, `Claude:claude-opus-4-6` and
+  `Claude:claude-opus-4-8`.
+
 ## [0.8.1] - 2026-09-24
 
 ### Fixed

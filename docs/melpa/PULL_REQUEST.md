@@ -42,7 +42,7 @@ Maintainer.
 
 - [x] The package is released under a GPL-Compatible Free Software License (MIT)
 - [x] I've read CONTRIBUTING.org
-- [ ] LLMs were used to generate some of the code, and if so, I've added an `Assisted-by:` line as described in CONTRIBUTING.org
+- [x] LLMs were used to generate some of the code, and if so, I've added an `Assisted-by:` line as described in CONTRIBUTING.org
 - [x] I understand the package must have been maintained in a public repository for 1 month or more (public since 2026-01-01)
 - [x] I've used the latest version of package-lint to check for packaging issues, and addressed its feedback
 - [x] My elisp byte-compiles cleanly
