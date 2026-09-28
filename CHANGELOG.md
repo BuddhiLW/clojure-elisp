@@ -11,8 +11,9 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **clel.el names its coding assistants.** The package header carries one
   `Assisted-by:` line per model under Author, as MELPA's CONTRIBUTING.org
-  asks: `Claude:claude-opus-4-5`, `Claude:claude-opus-4-6` and
-  `Claude:claude-opus-4-8`.
+  asks: `Claude:claude-opus-4-5`, `Claude:claude-opus-4-6`,
+  `Claude:claude-opus-4-8`, and by provider `ChatGPT`, `DeepSeek`, `GLM`
+  and `Kimi`, whose model versions were not recorded.
 
 ## [0.8.1] - 2026-09-24
 

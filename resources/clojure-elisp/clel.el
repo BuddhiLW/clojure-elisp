@@ -6,6 +6,10 @@
 ;; Assisted-by: Claude:claude-opus-4-5
 ;; Assisted-by: Claude:claude-opus-4-6
 ;; Assisted-by: Claude:claude-opus-4-8
+;; Assisted-by: ChatGPT
+;; Assisted-by: DeepSeek
+;; Assisted-by: GLM
+;; Assisted-by: Kimi
 ;; Maintainer: Pedro G. Branquinho <pedrogbranquinho@gmail.com>
 ;; URL: https://github.com/BuddhiLW/clojure-elisp
 ;; Version: 0.8.2
