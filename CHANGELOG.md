@@ -5,6 +5,20 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A keyword `pcase` arm matches the keyword.** `(pcase k (:a ...))`
+  compiled to `('a ...)`, a symbol pattern no keyword can match, so the arm
+  was dead and the call fell through to its default without a warning. It
+  now compiles to `(:a ...)`, namespace included.
+- **Keyword constants keep their namespace.** `:my.ns/bar` compiled to
+  `:bar` in expression position while `case` patterns and
+  `(keyword "my.ns" "bar")` kept `:my.ns/bar`, so a `case` on a namespaced
+  keyword never matched and `:a/x` equalled `:b/x`. It now compiles to
+  `:my.ns/bar`.
+
 ## [0.8.2] - 2026-09-27
 
 ### Changed

@@ -238,3 +238,11 @@
   (elevation 0 :read-only true))
 
 (defn make-event [] (let [e (make-semantics-event :kind :sunrise)] [(semantics-event-kind e) (semantics-event-elevation e)]))
+
+;;; Keyword dispatch
+
+(defn pcase-kw [k] (pcase k (:a :got-a) (:ns/b :got-ns-b) (_ :fallback)))
+
+(defn case-ns-kw [] (case (identity :ns/b) :ns/b :matched :missed))
+
+(defn ns-kw-identity [] [:ns/b (= :ns/b (keyword "ns" "b")) (= :a/x :b/x)])

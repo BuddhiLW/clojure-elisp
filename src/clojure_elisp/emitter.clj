@@ -174,7 +174,7 @@
     :bool (if val "t" "nil")
     :number (str val)
     :string (pr-string val)
-    :keyword (str ":" (name val))
+    :keyword (str val)
     (str val)))
 
 (defn emit-literal
@@ -856,7 +856,7 @@
                                            ;; pcase catch-all and must emit as bare _, not quoted '_
                                            (= pattern '_) "_"
                                            (symbol? pattern) (str "'" (name pattern))
-                                           (keyword? pattern) (str "'" (name pattern))
+                                           (keyword? pattern) (str pattern)
                                            (string? pattern) (pr-string pattern)
                                            (number? pattern) (str pattern)
                                            ;; For list patterns like (or 'nil 'staged), (pred stringp), etc.
