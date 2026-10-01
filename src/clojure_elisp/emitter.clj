@@ -668,6 +668,17 @@
         body-str (str/join "\n    " (map emit body))]
     (format "(let %s\n    %s)" bindings-block body-str)))
 
+(defmethod emit-node :cl-letf
+  [{:keys [sequential? bindings body]}]
+  (let [head (if sequential? "cl-letf*" "cl-letf")
+        binding-strs (map (fn [{:keys [place value]}]
+                            (format "(%s %s)" (emit place) (emit value)))
+                          bindings)
+        indent (apply str (repeat (+ 3 (count head)) \space))
+        bindings-block (str "(" (str/join (str "\n" indent) binding-strs) ")")
+        body-str (str/join "\n    " (map emit body))]
+    (format "(%s %s\n    %s)" head bindings-block body-str)))
+
 (defmethod emit-node :assert
   [{:keys [test message]}]
   (if message

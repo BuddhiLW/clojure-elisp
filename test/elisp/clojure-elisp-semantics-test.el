@@ -306,5 +306,14 @@ when its entries are dotted pairs, and `get' reads it either way."
   (should (equal '(cl-tag-slot kind elevation)
                  (mapcar #'car (cl-struct-slot-info 'semantics-event)))))
 
+;;; cl-letf places
+
+(ert-deftest clel-semantics-cl-letf-overrides-and-restores ()
+  "A cl-letf place is seen inside the body and restored after it."
+  (should (eq :overridden (semantics-letf-override)))
+  (should (eq :original (semantics-letf-target)))
+  (should (eq :second (semantics-letf-star-override)))
+  (should (eq :original (semantics-letf-target))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

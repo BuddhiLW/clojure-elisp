@@ -238,3 +238,16 @@
   (elevation 0 :read-only true))
 
 (defn make-event [] (let [e (make-semantics-event :kind :sunrise)] [(semantics-event-kind e) (semantics-event-elevation e)]))
+
+;;; cl-letf places
+
+(defn letf-target [] :original)
+
+(defn letf-override []
+  (cl-letf (((symbol-function 'semantics-letf-target) (lambda () :overridden)))
+    (letf-target)))
+
+(defn letf-star-override []
+  (cl-letf* (((symbol-function 'semantics-letf-target) (lambda () :first))
+             ((symbol-function 'semantics-letf-target) (lambda () :second)))
+    (letf-target)))

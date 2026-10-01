@@ -1930,3 +1930,24 @@
           (is (= 'helper (:name fn-node)))
           ;; Without project-exports, helper is unresolved (no :ns)
           (is (nil? (:ns fn-node))))))))
+
+(deftest analyze-cl-letf-test
+  (testing "cl-letf is a special form: places and values are expressions"
+    (let [ast (analyze '(cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+                          (y-or-n-p "ok?")))]
+      (is (= :cl-letf (:op ast)))
+      (is (false? (:sequential? ast)))
+      (is (= 1 (count (:bindings ast))))
+      (is (= :invoke (get-in ast [:bindings 0 :place :op])))
+      (is (= 1 (count (:body ast))))))
+  (testing "cl-letf* is sequential and keeps every binding"
+    (let [ast (analyze '(cl-letf* (((symbol-function 'f) (lambda () 1))
+                                   ((symbol-value 'x) 2))
+                          x))]
+      (is (true? (:sequential? ast)))
+      (is (= 2 (count (:bindings ast))))))
+  (testing "a vector of alternating places and values"
+    (is (= 1 (count (:bindings (analyze '(cl-letf [(symbol-function 'f) (fn [] 1)] (f))))))))
+  (testing "a malformed binding is refused"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (analyze '(cl-letf ((x)) nil))))))

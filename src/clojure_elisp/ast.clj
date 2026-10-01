@@ -96,6 +96,7 @@
    :unwind-protect      #{:body :cleanup}
    :while               #{:body :test}
    :binding             #{:bindings :body}
+   :cl-letf             #{:bindings :body}
    :assert              #{:test}
    :dolist              #{:body :list-form :var}
    :unless              #{:body :test}

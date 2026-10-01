@@ -68,6 +68,8 @@
           :default [:maybe [:ref ::node]]
           :expr [:ref ::node]}
    :cl-defun {:body [:vector [:ref ::node]]}
+   :cl-letf {:bindings [:vector [:ref ::setf-pair]]
+             :body [:vector [:ref ::node]]}
    :cl-defmethod {:body [:vector [:ref ::node]]}
    :cond {:clauses [:vector [:ref ::cond-clause]]}
    :condition-case {:body [:ref ::node]

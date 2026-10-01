@@ -2,7 +2,8 @@
   "Tests for the ClojureElisp emitter."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure-elisp.analyzer :as ana :refer [analyze]]
-            [clojure-elisp.emitter :as emit :refer [emit-node mangle-name]]))
+            [clojure-elisp.emitter :as emit :refer [emit-node mangle-name]]
+            [clojure-elisp.layout :as layout]))
 
 ;; ============================================================================
 ;; Helper Functions
@@ -1927,6 +1928,42 @@
       (is (clojure.string/includes? result "(let "))
       (is (clojure.string/includes? result "x"))
       (is (clojure.string/includes? result "42")))))
+
+(deftest emit-cl-letf-test
+  ;; Regression: since 0.8.0 a list in callee position is funcalled, and
+  ;; cl-letf was not a special form, so its binding list compiled to
+  ;; (cl-letf (funcall (funcall (symbol-function 'f) ...)) ...), which Emacs
+  ;; rejects at macro-expansion.
+  (let [laid-out (fn [form] (layout/layout-code (analyze-and-emit form)))]
+    (testing "a symbol-function place overrides the function in the body"
+      (is (= "(cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))) (y-or-n-p \"ok?\"))"
+             (laid-out '(cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+                          (y-or-n-p "ok?"))))))
+    (testing "cl-letf* with two places and a two-form body"
+      (is (= "(cl-letf* (((symbol-function 'f) (lambda () 1)) ((symbol-value 'x) 2)) (f) x)"
+             (laid-out '(cl-letf* (((symbol-function 'f) (lambda () 1))
+                                   ((symbol-value 'x) 2))
+                          (f) x)))))
+    (testing "a Clojure vector of alternating places and values"
+      (is (= "(cl-letf (((symbol-function 'f) (lambda () 1))) (f))"
+             (laid-out '(cl-letf [(symbol-function 'f) (fn [] 1)] (f))))))
+    (testing "no funcall is emitted for the binding list"
+      (is (not (clojure.string/includes?
+                (analyze-and-emit '(cl-letf (((symbol-function 'g) (lambda () 2))
+                                             ((symbol-function 'h) (lambda () 3)))
+                                     (+ (g) (h))))
+                "funcall"))))
+    (testing "two bindings in a defun break one place per line, aligned"
+      (is (clojure.string/includes?
+           (clojure-elisp.core/compile-file-string
+            (str "(ns letf-demo)\n"
+                 "(defn g [] (cl-letf* (((symbol-function 'y-or-n-p) (lambda (&rest _) t))"
+                 " ((symbol-value 'x) 3)) (message \"hi\") (y-or-n-p \"ok?\")))"))
+           (str "(defun letf-demo-g ()\n"
+                "  (cl-letf* (((symbol-function 'y-or-n-p) (lambda (&rest _) t))\n"
+                "             ((symbol-value 'x) 3))\n"
+                "    (message \"hi\")\n"
+                "    (y-or-n-p \"ok?\")))"))))))
 
 (deftest emit-assert-test
   (testing "assert emits cl-assert"

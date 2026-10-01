@@ -945,6 +945,29 @@
               :bindings analyzed-bindings
               :body analyzed-body)))
 
+(defn analyze-cl-letf
+  "Analyze (cl-letf ((PLACE VALUE) ...) body...) and cl-letf*.
+   Each PLACE is a generalized variable, such as (symbol-function 'f) or a
+   bare symbol, analyzed as an ordinary expression, so (symbol-function 'f)
+   stays a named call. The bindings are a list of (PLACE VALUE) lists, as
+   Elisp writes them, or a vector of alternating places and values, as
+   Clojure's let writes them. Without this the binding list was analyzed as
+   a call whose callee is a list, and emitted as (funcall ...)."
+  [[op bindings & body]]
+  (let [pairs (if (vector? bindings)
+                (partition 2 bindings)
+                bindings)]
+    (doseq [pair pairs]
+      (when-not (and (sequential? pair) (= 2 (count pair)))
+        (throw (ex-info (str op " binding must be (PLACE VALUE), got: " (pr-str pair))
+                        {:form bindings}))))
+    (ast-node :cl-letf
+              :sequential? (= 'cl-letf* op)
+              :bindings (mapv (fn [[place value]]
+                                {:place (analyze place) :value (analyze value)})
+                              pairs)
+              :body (mapv analyze body))))
+
 (defn analyze-assert
   "Analyze (assert test) or (assert test message) forms."
   [[_ test & [message]]]
@@ -1807,6 +1830,8 @@
    ;; Comment, binding, assert (clel-050)
    'comment analyze-comment
    'binding analyze-binding
+   'cl-letf analyze-cl-letf
+   'cl-letf* analyze-cl-letf
    'assert analyze-assert
    ;; Emacs buffer/process interop (clel-031)
    'save-excursion analyze-save-excursion

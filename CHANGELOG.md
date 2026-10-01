@@ -5,6 +5,20 @@ All notable changes to ClojureElisp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`cl-letf` and `cl-letf*` bind places again.** Since 0.8.0 a list in
+  callee position is called through `funcall`, and `cl-letf` was not a
+  special form, so its binding list was compiled as code:
+  `(cl-letf (((symbol-function 'f) v)) ...)` emitted
+  `(cl-letf (funcall (funcall (symbol-function 'f) v)) ...)`, which Emacs
+  rejects at load with "Eager macro-expansion failure: (wrong-type-argument
+  listp funcall)". Both are now special forms: each `(PLACE VALUE)` keeps its
+  shape, the place and value are compiled as expressions, and a Clojure
+  vector of alternating places and values is accepted too.
+
 ## [0.8.2] - 2026-09-27
 
 ### Changed
