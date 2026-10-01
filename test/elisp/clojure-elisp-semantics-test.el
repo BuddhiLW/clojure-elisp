@@ -306,5 +306,19 @@ when its entries are dotted pairs, and `get' reads it either way."
   (should (equal '(cl-tag-slot kind elevation)
                  (mapcar #'car (cl-struct-slot-info 'semantics-event)))))
 
+;;; Keyword dispatch
+
+(ert-deftest clel-semantics-pcase-keyword-arms-match ()
+  "A keyword pcase arm matches the keyword, namespaced or not."
+  (should (eq :got-a (semantics-pcase-kw :a)))
+  (should (eq :got-ns-b (semantics-pcase-kw :ns/b)))
+  (should (eq :fallback (semantics-pcase-kw 'a)))
+  (should (eq :fallback (semantics-pcase-kw :b))))
+
+(ert-deftest clel-semantics-namespaced-keywords-keep-identity ()
+  "A namespaced keyword constant is the keyword it names."
+  (should (eq :matched (semantics-case-ns-kw)))
+  (should (equal '(:ns/b t nil) (semantics-ns-kw-identity))))
+
 (provide 'clojure-elisp-semantics-test)
 ;;; clojure-elisp-semantics-test.el ends here

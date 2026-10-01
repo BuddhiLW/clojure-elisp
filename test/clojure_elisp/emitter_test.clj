@@ -76,7 +76,7 @@
   (testing "simple keyword"
     (is (= ":foo" (analyze-and-emit :foo))))
   (testing "namespaced keyword"
-    (is (= ":bar" (analyze-and-emit :my.ns/bar)))))
+    (is (= ":my.ns/bar" (analyze-and-emit :my.ns/bar)))))
 
 ;; ============================================================================
 ;; Symbols

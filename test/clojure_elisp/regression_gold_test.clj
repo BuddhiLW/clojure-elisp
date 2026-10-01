@@ -37,7 +37,7 @@
   (testing "float"       (is (= "3.14"             (ae 3.14))))
   (testing "string"      (is (= "\"hello world\""  (ae "hello world"))))
   (testing "keyword"     (is (= ":foo"             (ae :foo))))
-  (testing "ns keyword"  (is (= ":bar"             (ae :my.ns/bar))))
+  (testing "ns keyword"  (is (= ":my.ns/bar" (ae :my.ns/bar))))
   (testing "vector"      (is (= "(list 1 2 3)"     (ae '[1 2 3]))))
   (testing "map"         (is (= "(clel-array-map :a 1 :b 2)" (ae '{:a 1 :b 2}))))
   (testing "quoted list" (is (= "'(1 2 3)"         (ae '(quote (1 2 3)))))))
