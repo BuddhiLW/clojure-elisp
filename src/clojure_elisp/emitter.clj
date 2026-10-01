@@ -891,6 +891,14 @@
                        pairs)]
     (format "(setf %s)" (str/join " " pair-strs))))
 
+(defmethod emit-node :cl-letf
+  [{:keys [macro bindings body]}]
+  (let [binding-strs (map (fn [{:keys [place value]}]
+                            (format "(%s %s)" (emit place) (emit value)))
+                          bindings)]
+    (format "(%s (%s)\n  %s)" macro (str/join " " binding-strs)
+            (str/join "\n  " (map emit body)))))
+
 (defmethod emit-node :push
   [{:keys [value place]}]
   (format "(push %s %s)" (emit value) (emit place)))
