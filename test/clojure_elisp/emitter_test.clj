@@ -435,6 +435,26 @@
     (let [result (analyze-and-emit '(foo))]
       (is (= "(foo)" result)))))
 
+(deftest emit-cl-letf-test
+  (testing "a cl-letf binding's head is a PLACE, never a funcall"
+    (let [result (analyze-and-emit
+                  '(cl-letf (((symbol-function 'y-or-n-p) (fn [& _] t)))
+                     (ask)))]
+      (is (clojure.string/starts-with? result "(cl-letf (((symbol-function 'y-or-n-p) "))
+      (is (not (clojure.string/includes? result "funcall")) result)
+      (is (clojure.string/includes? result "(ask)"))))
+  (testing "cl-letf* keeps its name and every binding"
+    (let [result (analyze-and-emit
+                  '(cl-letf* (((symbol-function 'a) (fn [] 1))
+                              ((symbol-function 'b) (fn [] 2)))
+                     (a)))]
+      (is (clojure.string/starts-with? result "(cl-letf* (((symbol-function 'a) "))
+      (is (clojure.string/includes? result "((symbol-function 'b) "))
+      (is (not (clojure.string/includes? result "funcall")) result)))
+  (testing "a binding that is not (PLACE VALUE) is an analysis error"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (analyze-and-emit '(cl-letf ((x)) (x)))))))
+
 ;; ============================================================================
 ;; Core Function Mappings
 ;; ============================================================================

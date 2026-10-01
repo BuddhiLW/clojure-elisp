@@ -87,6 +87,7 @@
    ;; -- emitter-only ops (verified against the analyzer 2026-07-11) -----------
    :setq                #{:pairs}
    :setf                #{:pairs}
+   :cl-letf             #{:macro :bindings :body}
    :push                #{:place :value}
    :when-let            #{:body :val :var}
    :when-let*           #{:bindings :body}

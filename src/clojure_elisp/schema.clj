@@ -115,6 +115,8 @@
    :set {:items [:vector [:ref ::node]]}
    :set! {:value [:ref ::node]}
    :setf {:pairs [:vector [:ref ::setf-pair]]}
+   :cl-letf {:bindings [:vector [:ref ::setf-pair]]
+             :body [:vector [:ref ::node]]}
    :setq {:pairs [:vector [:ref ::setq-pair]]}
    :throw {:exception [:ref ::node]}
    :try {:body [:vector [:ref ::node]]

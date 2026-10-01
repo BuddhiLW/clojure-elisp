@@ -1307,6 +1307,25 @@
                            {:place (analyze place) :value (analyze val)})
                          (partition 2 pairs))))
 
+(defn analyze-cl-letf
+  "Analyze (cl-letf ((PLACE VALUE) ...) body...) and cl-letf*.
+   Each binding's head is a generalized PLACE such as (symbol-function 'f),
+   not a call: read as a call, ((symbol-function 'f) v) would emit as
+   (funcall (funcall ...)) and Emacs would refuse the whole form. Place and
+   value are analyzed as expressions; the binding list itself is structure."
+  [[head bindings & body]]
+  (doseq [b bindings]
+    (when-not (and (sequential? b) (= 2 (count b)))
+      (throw (analysis-error
+              (str head " expects (PLACE VALUE) bindings; got " (pr-str b))
+              {:form (list* head bindings body)}))))
+  (ast-node :cl-letf
+            :macro (name head)
+            :bindings (mapv (fn [[place val]]
+                              {:place (analyze place) :value (analyze val)})
+                            bindings)
+            :body (mapv analyze body)))
+
 (defn analyze-push
   "Analyze (push val place) forms. Elisp macro that pushes val
    onto the list stored in place."
@@ -1830,6 +1849,8 @@
    'pcase analyze-pcase
    'setq analyze-setq
    'setf analyze-setf
+   'cl-letf analyze-cl-letf
+   'cl-letf* analyze-cl-letf
    'push analyze-push
    'progn analyze-do  ;; progn is elisp's do
    'unwind-protect analyze-unwind-protect
