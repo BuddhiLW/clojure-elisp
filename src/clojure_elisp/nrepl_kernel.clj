@@ -98,36 +98,69 @@
 
 (defn- done [] {:status ["done"]})
 
+(def default-ns
+  "The namespace reported when the source names none."
+  "user")
+
+(defn source-ns-name
+  "The name of the leading (ns ...) form in source, or default-ns.
+   Never throws: unreadable or ns-less source reports default-ns."
+  [source]
+  (or (when-let [ns-src (cc/leading-ns-source source)]
+        (try
+          (some-> (cc/extract-ns-name ns-src) str)
+          (catch Exception _ nil)))
+      default-ns))
+
 (defn result->responses
   "Shape a compile Result into the responses to send.
    Compiled Elisp travels as :cljel-compiled-elisp rather than :value, which
-   CIDER's built-in display handler would try to render as a Clojure value."
-  [result]
-  (if (r/ok? result)
-    [{:cljel-compiled-elisp (:ok result) :ns "user"} (done)]
-    [{:err (str "Compilation error: " (:message result))} (done)]))
+   CIDER's built-in display handler would try to render as a Clojure value.
+   ns-name is the namespace the code was compiled in (default-ns when absent).
+   With mirror-value? true the Elisp is also sent as :value, for plain nREPL
+   clients that read only the standard keys."
+  ([result] (result->responses result default-ns false))
+  ([result ns-name] (result->responses result ns-name false))
+  ([result ns-name mirror-value?]
+   (if (r/ok? result)
+     [(cond-> {:cljel-compiled-elisp (:ok result) :ns (or ns-name default-ns)}
+        mirror-value? (assoc :value (:ok result)))
+      (done)]
+     [{:err (str "Compilation error: " (:message result))} (done)])))
 
 (defn request-context
   "The compilation context a request carries, or nil."
   [{:keys [cljel-context cljel-ns]}]
   (first (remove str/blank? [cljel-context cljel-ns])))
 
+(defn mirror-value?
+  "True when the request opts into the :value mirror with cljel-mirror-value."
+  [{:keys [cljel-mirror-value]}]
+  (contains? #{true "true" "1" 1} cljel-mirror-value))
+
 ;; ============================================================================
 ;; Pipeline — op semantics
 ;; ============================================================================
 
 (defn handle-eval
-  "Responses for an eval op, compiled against the request's context."
+  "Responses for an eval op, compiled against the request's context.
+   :ns names the context's namespace, else default-ns."
   [{:keys [code] :as request}]
-  (result->responses
-   (if-let [context (request-context request)]
-     (compile-in-context code context)
-     (compile-result code))))
+  (let [context (request-context request)]
+    (result->responses
+     (if context
+       (compile-in-context code context)
+       (compile-result code))
+     (source-ns-name context)
+     (mirror-value? request))))
 
 (defn handle-load-file
-  "Responses for a load-file op: the whole file, with its ns context."
-  [{:keys [file]}]
-  (result->responses (compile-result file :file)))
+  "Responses for a load-file op: the whole file, with its ns context.
+   :ns names the file's namespace, else default-ns."
+  [{:keys [file] :as request}]
+  (result->responses (compile-result file :file)
+                     (source-ns-name file)
+                     (mirror-value? request)))
 
 (defn handle-op
   "Dispatch one nREPL message.
@@ -170,7 +203,13 @@
                           errors/string-result-schema]])
 (m/=> compile-in-context
       [:=> [:cat :string [:maybe :string]] errors/string-result-schema])
-(m/=> result->responses [:=> [:cat errors/string-result-schema] responses-schema])
+(m/=> source-ns-name    [:=> [:cat [:maybe :string]] :string])
+(m/=> result->responses [:function
+                         [:=> [:cat errors/string-result-schema] responses-schema]
+                         [:=> [:cat errors/string-result-schema [:maybe :string]]
+                          responses-schema]
+                         [:=> [:cat errors/string-result-schema [:maybe :string] :boolean]
+                          responses-schema]])
 (m/=> request-context   [:=> [:cat eval-request-schema] [:maybe :string]])
 (m/=> handle-eval       [:=> [:cat eval-request-schema] responses-schema])
 (m/=> handle-op         [:=> [:cat [:map [:op {:optional true} [:maybe :string]]]]
