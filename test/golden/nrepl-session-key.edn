@@ -1,0 +1,10 @@
+{:close-unknown [{:op "close", :active? false, :registry []}],
+ :start-close-atom
+ [{:op "cljel-start", :active? true, :registry ["sk-1"]}
+  {:op "close", :active? false, :registry []}],
+ :start-close-string
+ [{:op "cljel-start", :active? true, :registry ["sk-1"]}
+  {:op "close", :active? false, :registry []}],
+ :start-stop-atom
+ [{:op "cljel-start", :active? true, :registry ["sk-1"]}
+  {:op "cljel-stop", :active? false, :registry []}]}

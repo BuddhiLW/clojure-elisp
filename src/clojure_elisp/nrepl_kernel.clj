@@ -49,6 +49,18 @@
   "Set of nREPL session IDs that have CLJEL compilation active."
   (atom #{}))
 
+(defn session-id
+  "The session-id string a message's :session names.
+   Behind nREPL's session middleware :session is the session ATOM, whose
+   meta carries the id; the Babashka server passes the id string itself.
+   Keying the registry by the string keeps it small, printable and
+   correlatable with nREPL's own session ids."
+  [session]
+  (cond
+    (nil? session)    nil
+    (string? session) session
+    :else             (some-> (meta session) :id str)))
+
 (defn cljel-active?
   "True when session-id has CLJEL compilation active."
   [session-id]
@@ -165,15 +177,19 @@
 (defn handle-op
   "Dispatch one nREPL message.
    Returns the responses to send, or nil when the op is not ours."
-  [{:keys [op session] :as msg}]
-  (case op
-    "cljel-start" (do (activate! session)
-                      [{:value "ClojureElisp session started" :status ["done"]}])
-    "cljel-stop"  (do (deactivate! session)
-                      [{:value "ClojureElisp session stopped" :status ["done"]}])
-    "eval"        (when (cljel-active? session) (handle-eval msg))
-    "load-file"   (when (cljel-active? session) (handle-load-file msg))
-    nil))
+  [{:keys [op] :as msg}]
+  (let [session (session-id (:session msg))]
+    (case op
+      "cljel-start" (do (activate! session)
+                        [{:value "ClojureElisp session started" :status ["done"]}])
+      "cljel-stop"  (do (deactivate! session)
+                        [{:value "ClojureElisp session stopped" :status ["done"]}])
+      "eval"        (when (cljel-active? session) (handle-eval msg))
+      "load-file"   (when (cljel-active? session) (handle-load-file msg))
+      ;; A closed session can never compile again: drop it, then return nil
+      ;; so the transport's own close handling still answers the client.
+      "close"       (do (deactivate! session) nil)
+      nil)))
 
 ;; ============================================================================
 ;; Compatibility
@@ -194,6 +210,7 @@
 ;; Function Contracts (Malli)
 ;; ============================================================================
 
+(m/=> session-id        [:=> [:cat :any] [:maybe :string]])
 (m/=> cljel-active?     [:=> [:cat [:maybe :string]] :boolean])
 (m/=> compile-result    [:function
                          [:=> [:cat :string] errors/string-result-schema]
