@@ -1,0 +1,18 @@
+{:eval-cljel-context
+ {:ns "my.app", :compiled? true, :value-mirror? false, :err? false},
+ :eval-cljel-ns
+ {:ns "my.app", :compiled? true, :value-mirror? false, :err? false},
+ :eval-compile-error
+ {:ns nil, :compiled? false, :value-mirror? false, :err? true},
+ :eval-mirror-off
+ {:ns "user", :compiled? true, :value-mirror? false, :err? false},
+ :eval-mirror-opt-in
+ {:ns "user", :compiled? true, :value-mirror? true, :err? false},
+ :eval-no-context
+ {:ns "user", :compiled? true, :value-mirror? false, :err? false},
+ :load-file-mirror
+ {:ns "my.app", :compiled? true, :value-mirror? true, :err? false},
+ :load-file-no-ns
+ {:ns "user", :compiled? true, :value-mirror? false, :err? false},
+ :load-file-ns
+ {:ns "my.app", :compiled? true, :value-mirror? false, :err? false}}
